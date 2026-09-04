@@ -70,6 +70,49 @@ ends, and `Msg('remove_suspender')` still reaches it from inside.
 **What we need from you:** whether a plan's own suspenders being invisible at the
 prompt is acceptable, given `RE.suspenders` is public API today.
 
+## 3. Clearing suspenders: a message, and a shutdown mode
+
+Caswell, unprompted:
+
+> do we have a message for clearing the suspenders?
+> so the 90% use of this is for testing when the beam is down
+> which maybe we should have some control on if the suspenders are installed during shutdowns
+> which usually goes like:
+> `RE(my_plan())` / C-c / `RE.clear_suspenders()` / `RE.resume()`
+
+**No, there is no `Msg('clear_suspenders')`** -- only `install_suspender` and
+`remove_suspender`. Whether to add one has a sharp answer under the permit design
+and it may not be the one wanted: a plan can clear its *own* suspenders, but not
+the session's, because plan-reaching-into-session is the direction the permit
+chain refuses. On `main` a plan can reach the durable ones, since
+`Msg('install_suspender')` installs durably there. So a message that clears
+durable suspenders from inside a plan conflicts with the design; one that clears
+the plan's own is easy.
+
+**The prompt workflow works, and it argues for narrowing `RE.suspenders`.** A
+beam-down suspender is durable, so it is the session's, and
+`RE.clear_suspenders()` reaching only the session's clears exactly what is holding
+the plan. `SuspenderBase.remove` grants the permit back, so `RE.resume()` is not
+immediately re-held.
+
+**But it is also the one case narrowing breaks.** If a plan-local suspender is
+tripped too, `RE.clear_suspenders()` cannot reach it and `resume()` hangs with no
+way out at the prompt. Proposal: split the symmetry deliberately -- `RE.suspenders`
+*reports* the session's, and `RE.clear_suspenders()` *clears* everything it can
+reach, the running plan's included. A report and an escape hatch need not agree.
+
+**Shutdown mode: an override reads better than clearing.** Clearing is
+destructive -- everything must be reinstalled afterwards, and in the workflow above
+nobody does, so the beamline runs unprotected until the RunEngine is rebuilt. A
+permit that can be overridden -- `granted` true regardless, while `reasons` still
+reports what *would* hold it -- is reversible, and inherits down the chain, so
+overriding the session's covers every plan. It does break the permit's invariant
+that it is withheld exactly when a reason stands, so it should be a deliberate
+second concept rather than a quiet flag.
+
+**What we need from you:** whether the message should exist at all given it can
+only cover a plan's own, and whether an override is the shutdown control you meant.
+
 # Closed questions
 
 ## Freezing at the launch of execute
@@ -112,14 +155,21 @@ executor takes one `dispatcher`, the way it takes one `permit`.
 
 > make this init state on RE
 
-On `main` it is a property over `self.dispatcher.ignore_exceptions`, and there is
-a single dispatcher, so plan-local subscribers -- from `RE(plan, subs=...)` and
-`Msg('subscribe')` -- are covered by it too. The rewrite gives the session a
-dispatcher and each plan its own, so a settable flag would have to be pushed to
-each in turn.
+**Built settable instead, deliberately.** Two reasons.
 
-Built as init state on the session, so there is nothing to push and a plan's
-subscribers cannot behave differently from the rest.
+Init-only breaks public API that bluesky's own tests use:
+`test_callbacks.py::test_raising_ignored_or_not` sets it `True`, runs a plan, sets
+it `False` and runs another, and `test_examples.py` does the same. There is no
+deprecation path that keeps those working.
+
+And the reason for making it init state has since gone. The answer came when a
+settable flag would have had to be pushed to each plan's dispatcher in turn --
+which is what `RunEngine` does today, writing the session's and the running plan's
+one after the other. Your *other* note, that a dispatcher should keep a reference
+to its parent, removes that: a plan's dispatcher reads the setting off its parent
+rather than copying it at construction. One value, live, nothing to push, and both
+the between-plans use those tests rely on and the mid-plan case this question asked
+about work by construction.
 
 ## 4. When two conditions overlap, whose pre-plan should run?
 

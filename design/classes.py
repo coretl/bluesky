@@ -37,6 +37,9 @@ SignalLike = Subscribable | OphydSubscribable
 class Dispatcher:
     """Sends each document to the subscribers registered for it."""
 
+    ignore_exceptions: bool
+    """Whether a raising subscriber is warned about; read from ``parent`` if there is one."""
+
     def __init__(self, parent: Dispatcher | None = None, *, ignore_exceptions: bool = False) -> None:
         """A dispatcher whose documents reach ``parent``'s subscribers first."""
 
@@ -190,6 +193,9 @@ class PlanSession:
 
     preprocessors: Sequence[Callable]
     """Applied to each plan as its executor is built, ``[f, g]`` as ``f(g(plan))``."""
+
+    ignore_exceptions: bool
+    """Whether a raising subscriber is warned about. Settable, and read live by every plan."""
 
     md_validator: Callable[[dict[str, Any]], None]
     md_normalizer: Callable[[dict[str, Any]], dict[str, Any]]
