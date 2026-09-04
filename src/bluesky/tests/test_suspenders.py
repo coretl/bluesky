@@ -46,7 +46,7 @@ def test_suspender(klass, sc_args, start_val, fail_val, resume_val, wait_time, R
             my_suspender = klass(sig, *sc_args, sleep=wait_time)
     else:
         my_suspender = klass(sig, *sc_args, sleep=wait_time)
-    my_suspender.install(RE)
+    my_suspender.install(RE.permit)
 
     def putter(val):
         sig.put(val)
@@ -209,11 +209,11 @@ def test_pre_suspend_plan(RE, pre_plan, post_plan, expected_list, hw):
 
     RE.remove_suspender(susp)
     RE(scan)
-    assert susp.RE is None
+    assert susp not in RE.suspenders
 
     RE.install_suspender(susp)
     RE.clear_suspenders()
-    assert susp.RE is None
+    assert susp not in RE.suspenders
     assert not RE.suspenders
 
 
