@@ -70,6 +70,20 @@ Changed
   clear the newer condition.
 - A suspension requested with no checkpoint to rewind to aborts without also
   queueing a suspension onto the plan stack being torn down.
+- A suspender a plan installs with ``Msg('install_suspender')`` now holds up
+  that plan alone, and is uninstalled when the plan ends.  Previously the
+  message was the same call as ``RunEngine.install_suspender``, so the
+  suspender outlived the plan and had to be removed by hand.
+  ``RunEngine.suspenders`` reports the durable suspenders together with the
+  running plan's, and ``RunEngine.clear_suspenders`` clears both.
+- ``RunEngine.ignore_callback_exceptions`` now covers the subscribers of the
+  plan already running, not only those installed afterwards.  Each plan's
+  subscribers live in their own dispatcher, and a dispatcher answers for its
+  parent rather than copying the setting when it is built.
+- ``RunEngine.emit`` is synchronous.  There was a synchronous ``emit_sync`` and
+  a coroutine ``emit`` doing the same work; awaiting the latter never
+  suspended.  ``RunBundler`` therefore takes one ``emit`` argument rather than
+  the pair, which matters to anyone passing a custom ``run_bundler_cls``.
 
 Removed
 -------
@@ -79,6 +93,7 @@ Removed
 
 Deprecated
 ----------
+- ``RunEngine.emit_sync``.  There is one ``emit`` now, and it is synchronous.
 - ``RunEngine.request_suspend``.  Suspension is raised by withholding
   ``RunEngine.permit``, which is what an installed suspender does.  A
   suspension raised through ``request_suspend`` does not merge with one raised

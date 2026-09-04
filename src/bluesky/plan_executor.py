@@ -1083,14 +1083,6 @@ class PlanExecutor:
         if self._hooks.on_pause is not None:
             self._hooks.on_pause()
 
-    async def _emit_async(self, name, doc) -> None:
-        """`RunBundler` awaits this for documents a plan produces itself.
-
-        Monitor callbacks fire on a device's thread and use `emit` directly,
-        which is why there are two spellings of one thing.
-        """
-        self.emit(name, doc)
-
     def emit(self, name, doc) -> None:
         """Give a document to every subscriber that should see it.
 
@@ -1859,7 +1851,6 @@ class PlanExecutor:
         current_run = self._run_bundlers[run_key] = self._env.run_bundler_cls(
             validated,
             self._env.record_interruptions,
-            self._emit_async,
             self.emit,
             self._env.log,
             strict_pre_declare=self._env.strict_pre_declare,

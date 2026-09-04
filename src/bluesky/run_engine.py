@@ -1183,18 +1183,20 @@ class RunEngine:
             return self._create_result(NO_PLAN_RETURN)
         return tuple(self._executor.run_start_uids)
 
-    # Emission belongs to the executor now, which hands a document to the
-    # session's subscribers and then to the plan's. Both of these are kept for
-    # callers written against the older pair. `emit` stays a coroutine while
-    # `PlanExecutor.emit` is not; awaiting it never suspended, because the body
-    # never awaited anything, so the difference costs nothing.
-    def emit_sync(self, name, doc):
+    # Emission belongs to the executor now, which hands a document to its
+    # dispatcher and lets the chain carry it to the session's subscribers.
+    def emit(self, name, doc):
         """Give a document to every subscriber."""
         self._executor.emit(name, doc)
 
-    async def emit(self, name, doc):
-        """Give a document to every subscriber."""
-        self._executor.emit(name, doc)
+    def emit_sync(self, name, doc):
+        """Deprecated. Use :meth:`emit`, which is synchronous."""
+        warn(  # noqa: B028
+            "RunEngine.emit_sync is deprecated. There is one emit now, and it "
+            "is synchronous: call RunEngine.emit.",
+            DeprecationWarning,
+        )
+        self.emit(name, doc)
 
 
 # Names the RunEngine used to hold itself, which now belong to the executor for
