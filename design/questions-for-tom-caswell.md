@@ -1,5 +1,10 @@
 # Questions for Tom Caswell
 
+> ?? command behaviour correct, freeze on launch of execute
+> ?? md should be frozen on launch
+> suspend is keep a reference to parent
+> subscribe keeps reference to parent dispatcher: make dispatcher keep the ref
+
 ## 1. Should monitor emission trampoline onto the loop?
 
 There is an asymmetry on `main` that predates the session/executor split, and that
@@ -37,6 +42,8 @@ help.
 
 ## 2. Should `RE.suspenders` report a plan's own suspenders?
 
+> report the session and the executors
+
 The rewrite gives suspension a `Permit`: an object that is granted unless
 something has a reason to withhold it. A session holds one, and each plan gets a
 child of it, so a suspender installed on the session holds up every plan and one
@@ -56,6 +63,8 @@ the union of both.
 that `RE.suspenders` is public API today.
 
 ## 3. Should `RE.ignore_callback_exceptions` reach a running plan's own subscribers?
+
+> make this init state on RE
 
 Same shape as question 2, from the same cause: one object becoming two.
 
@@ -117,7 +126,12 @@ only those whose pre-plan ran.
 work that must each happen, or a "make it safe" step where the first one is
 enough. We have not found a case in the repo that distinguishes them.
 
+> pre-plans all run in order they fired, at the time they fire, whether or not we are paused at the time. Write in docs that they should be idempotent to avoid open-close-open shutter
+> post-plans run in the opposite order they were triggered in
+
 ## 5. Does anyone use `suspender.install(RE)` or read `suspender.RE`?
+
+> The first form possibly (do an isinstance then call RE.install_suspender and warn) the second form no
 
 A suspender no longer holds the RunEngine. It withholds a `Permit` — permission
 to run, held open unless something has a reason to withhold it — and does not
@@ -138,6 +152,8 @@ reads `suspender.RE`. If it does, `install` can accept either a permit or
 something exposing one, at the cost of a line — we would rather know than guess.
 
 ## 6. Should `RunEngine.request_suspend` stay public?
+
+> make private
 
 `request_suspend(fut, ...)` suspends the plan until a future completes, and it is
 public API. Suspenders used to be its only real caller.

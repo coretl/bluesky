@@ -80,10 +80,22 @@ class SuspenderBase(metaclass=ABCMeta):
             something to ignore.
         """
         if self._implements_protocol and event_type is not None:
-            # Checked before anything is recorded, so a rejected install leaves
-            # the suspender uninstalled rather than holding an RE it never
-            # subscribed on.
+            # Checked before anything is recorded, and ahead of the deprecated
+            # route below, which drops `event_type` on its way to
+            # `install_suspender` and would otherwise ignore it silently.
             raise RuntimeError(f"Can not specify non-None event_type {event_type=} with Subscribable protocol")
+        if hasattr(permit, "install_suspender"):
+            # Was `install(RE)` before suspension went through permits. Do what
+            # it used to do, which is a durable install on that engine.
+            warn(
+                f"Passing a RunEngine to {type(self).__name__}.install is deprecated; "
+                "it now takes the permit to withhold. Use RE.install_suspender(suspender), "
+                "or suspender.install(RE.permit) to reach the same permit directly.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            permit.install_suspender(self)
+            return
         with self._lock:
             self._permit = permit
         if self._implements_protocol:

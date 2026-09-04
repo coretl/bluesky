@@ -263,7 +263,7 @@ def test_suspend(RE, hw):
         RE.loop.call_soon_threadsafe(_careful_event_set(ev))
 
     def local_suspend():
-        RE.request_suspend(ev.wait)
+        RE._suspend_until(ev.wait)
         # wait a second and then resume
         threading.Timer(1, resume_cb).start()
 

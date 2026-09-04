@@ -1206,14 +1206,34 @@ class RunEngine:
         for sus in self.suspenders:
             self.remove_suspender(sus)
 
+    async def _run_out_of_band(self, plan):
+        """Work off a short message sequence outside the plan stack.
+
+        A suspender's pre-plan runs when its condition fires, which may be
+        while the plan is already suspended for another condition, or while it
+        is paused. In both of those the run loop is not going to reach any
+        message pushed onto the plan stack -- suspended, it is parked in a
+        ``wait_for``; paused, it is parked on the run permit -- so a shutter
+        that must close now cannot be closed by queueing a message.
+
+        Only meant for the short, self-contained sequences a pre- or post-plan
+        is. There is no plan stack, no checkpoint and no rewind here, so
+        anything that expects those does not belong in one.
+        """
+        for msg in ensure_generator(plan() if callable(plan) else plan):
+            await self._command_registry[msg.command](msg)
+
     async def _supervise_permit(self):
         """Suspend the plan whenever permission to run is withheld.
 
-        One suspension per episode, however many conditions are standing:
-        that is not a rule enforced by a flag, it is where this loop is
-        sitting. A second suspender tripping while the loop is parked on
-        ``wait_granted`` extends the wait it is already doing and cannot start
-        a second rewind.
+        One suspension per episode, however many conditions are standing: that
+        is not a rule enforced by a flag, it is where this loop is sitting. A
+        second condition tripping while the loop is inside an episode joins the
+        wait rather than starting a second rewind.
+
+        Its pre-plan still runs, when it fires, out of band -- pre-plans go in
+        the order their conditions fired and post-plans in the reverse of it,
+        so the last condition to arrive is the first to be undone.
 
         The first ``wait_granted`` is what keeps this out of the way of the
         pre-plan wait in ``__call__``: a permit already withheld when the plan
@@ -1227,14 +1247,53 @@ class RunEngine:
             if suspension is None:
                 # Granted again before we got here; nothing to suspend for.
                 continue
-            self.request_suspend(
+            seen = dict(self._permit.reasons)
+            first = next(iter(seen.values()))
+            self._suspend_until(
                 self._permit.wait_granted,
-                pre_plan=suspension.pre_plan,
-                post_plan=suspension.post_plan,
+                pre_plan=first.pre_plan,
+                post_plan=first.post_plan,
                 justification=suspension.justification,
             )
+            await self._join_episode(seen)
+
+    async def _join_episode(self, seen):
+        """Run the pre-plans of conditions that arrive mid-suspension.
+
+        The first condition's plans belong to the suspension itself, and run in
+        band around its wait. Everything that joins afterwards is handled here,
+        and unwound in reverse when the last reason is granted.
+        """
+        joined = []
+        while not self._permit.granted:
+            await self._permit.wait_changed()
+            for key, reason in self._permit.reasons.items():
+                if key in seen:
+                    continue
+                seen[key] = reason
+                joined.append(reason)
+                if reason.pre_plan is not None:
+                    await self._run_out_of_band(reason.pre_plan)
+        for reason in reversed(joined):
+            if reason.post_plan is not None:
+                await self._run_out_of_band(reason.post_plan)
 
     def request_suspend(self, fut, *, pre_plan=None, post_plan=None, justification=None):
+        """Deprecated. Suspension is raised by withholding :attr:`permit`.
+
+        Kept working for one release. It bypasses the permit, so a suspension
+        raised this way does not merge with one raised by a suspender: two
+        overlapping conditions arriving by the two routes rewind twice.
+        """
+        warn(
+            "RunEngine.request_suspend is deprecated. Suspension is raised by withholding "
+            "RE.permit, which is what an installed suspender does.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self._suspend_until(fut, pre_plan=pre_plan, post_plan=post_plan, justification=justification)
+
+    def _suspend_until(self, fut, *, pre_plan=None, post_plan=None, justification=None):
         """Request that the run suspend itself until the future is finished.
 
         The two plans will be run before and after waiting for the future.
