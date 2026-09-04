@@ -271,8 +271,7 @@ class LoggingPropertyMachine(PropertyMachine):
     Expects the owning object to have an ``_on_state_change`` attribute that is
     ``None``, or a callable with signature ``f(new_value, old_value)``. One
     attribute rather than the ``log`` and ``state_hook`` pair this used to
-    duck-type, so that whoever builds the owner decides what an announcement
-    says -- see :func:`announce_state_change`.
+    duck-type -- see :func:`announce_state_change`.
     """
 
     def __init__(self, machine_type):
@@ -386,9 +385,6 @@ class PlanEnvironment:
         Like ``md_validator``, but returns the normalized metadata.
     run_bundler_cls
         The bundler used to compose documents for each open run.
-    run_engine_cls
-        What ``Msg('RE_class')`` reports. ``None`` means the executor answers
-        for itself, which is what a headless caller wants.
     record_interruptions
         Whether interruptions are recorded into their own event stream.
     strict_pre_declare
@@ -402,7 +398,6 @@ class PlanEnvironment:
     md_validator: Callable = _default_md_validator
     md_normalizer: Callable = _default_md_normalizer
     run_bundler_cls: type[RunBundler] = RunBundler
-    run_engine_cls: type | None = None
     record_interruptions: bool = False
     strict_pre_declare: bool = False
 
@@ -501,9 +496,11 @@ class PlanSession:
         `RunEngine` passes its own, so that overriding it on a `RunEngine`
         subclass keeps working.
 
-    run_engine_cls : type, optional
-        What ``Msg('RE_class')`` reports. A `RunEngine` passes its own class;
-        without one the executor answers for itself.
+    identity : object, optional
+        What a state change is logged as having happened to, and what
+        ``Msg('RE_class')`` reports the class of. A `RunEngine` passes itself,
+        because that is what a user recognises in their logs; without one each
+        executor answers for itself.
 
     Attributes
     ----------
@@ -531,7 +528,7 @@ class PlanSession:
     The rest are settings, read as `make_executor` builds each plan's
     `PlanEnvironment`, so that changing one affects the next plan and never the
     one already running: ``preprocessors``, ``md_validator``,
-    ``md_normalizer``, ``run_bundler_cls``, ``run_engine_cls``,
+    ``md_normalizer``, ``run_bundler_cls``, ``identity``,
     ``record_interruptions``, ``strict_pre_declare``, and ``rewindable`` --
     the last being only the *default*, since a running plan owns its own live
     value in `PlanExecutor.rewindable_flag`.
@@ -549,7 +546,7 @@ class PlanSession:
         log: LoggerAdapter | None = None,
         on_pause: typing.Callable[[], None] | None = None,
         run_bundler_cls: type[RunBundler] = RunBundler,
-        run_engine_cls: type | None = None,
+        identity: typing.Any = None,
     ):
         if loop is None:
             loop = _default_event_loop()
@@ -603,7 +600,7 @@ class PlanSession:
         self.md_validator = md_validator if md_validator is not None else _default_md_validator
         self.md_normalizer = md_normalizer if md_normalizer is not None else _default_md_normalizer
         self.run_bundler_cls = run_bundler_cls
-        self.run_engine_cls = run_engine_cls
+        self.identity = identity
         self.record_interruptions = False
         self.strict_pre_declare = False
         self.rewindable = True
@@ -657,10 +654,6 @@ class PlanSession:
             scan_id = await maybe_await(self.scan_id_source(self.md))
             self.md["scan_id"] = scan_id
             return scan_id
-
-    def _announce_state(self, value, old_value) -> None:
-        """Say that the plan in progress changed state."""
-        announce_state_change(self, self.hooks, old_value, value)
 
     @property
     def suspenders(self):
@@ -812,7 +805,6 @@ class PlanSession:
                 md_validator=self.md_validator,
                 md_normalizer=self.md_normalizer,
                 run_bundler_cls=self.run_bundler_cls,
-                run_engine_cls=self.run_engine_cls,
                 record_interruptions=self.record_interruptions,
                 strict_pre_declare=self.strict_pre_declare,
             ),
@@ -823,7 +815,7 @@ class PlanSession:
             prologue=prologue,
             dispatcher=Dispatcher(parent=self.dispatcher),
             hooks=self.hooks,
-            on_state_change=self._announce_state,
+            identity=self.identity,
             commands=dict(self._registered_commands),
             without_commands=self._unregistered_commands,
             permit=permit,
@@ -905,10 +897,13 @@ class PlanExecutor:
         single shared registry gave by construction.
     hooks : PlanHooks, optional
         The observation points. Shared with the session, and read live.
-    on_state_change : callable, optional
-        Called ``f(new_state, old_state)`` on every state change. Whoever built
-        this executor supplies it, because announcing a state change means
-        naming who changed state, and that is a `RunEngine` when there is one.
+    identity : object, optional
+        What a state change is logged as having happened to, and what
+        ``Msg('RE_class')`` reports the class of. A plan is executed by one of
+        these, but what a user recognises in their logs is the long-lived
+        `RunEngine` driving them, so whoever is driving names itself. Defaults
+        to this executor, which is what a headless caller wants. The hook that
+        *watches* state changes is ``hooks.state_hook``.
     commands : mapping, optional
         Extra `Msg` commands, composed over the built-ins. A session passes the
         ones a user registered, plus ``install_suspender`` and
@@ -943,7 +938,7 @@ class PlanExecutor:
         prologue=None,
         dispatcher: "Dispatcher | None" = None,
         hooks: PlanHooks | None = None,
-        on_state_change: Callable[[typing.Any, typing.Any], None] | None = None,
+        identity: typing.Any = None,
         commands: typing.Mapping[str, Callable] | None = None,
         without_commands: typing.Collection[str] = (),
         permit: Permit | None = None,
@@ -952,7 +947,7 @@ class PlanExecutor:
     ):
         self._env = env
         self._hooks = hooks if hooks is not None else PlanHooks()
-        self._on_state_change = on_state_change
+        self._identity = identity if identity is not None else self
 
         # When cleared, run() will pause until it is set again.
         self._run_permit = asyncio.Event()
@@ -1082,6 +1077,10 @@ class PlanExecutor:
         """Announce that this plan has reached a paused resting state."""
         if self._hooks.on_pause is not None:
             self._hooks.on_pause()
+
+    def _on_state_change(self, value, old_value) -> None:
+        """Say that this plan changed state, in the name of whoever drives it."""
+        announce_state_change(self._identity, self._hooks, old_value, value)
 
     def emit(self, name, doc) -> None:
         """Give a document to every subscriber that should see it.
@@ -2190,7 +2189,7 @@ class PlanExecutor:
         """
         A no-op message, mainly for debugging and testing.
         """
-        return self._env.run_engine_cls or type(self)
+        return type(self._identity)
 
     @tracer.start_as_current_span(f"{_SPAN_NAME_PREFIX} set")
     async def _set(self, msg):

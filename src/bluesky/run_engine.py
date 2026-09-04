@@ -331,11 +331,12 @@ class RunEngine:
             scan_id_source=scan_id_source,
             log=log,
             on_pause=self._blocking_event.set,
-            # Honour a RunBundler overridden on a RunEngine subclass, and let
-            # Msg('RE_class') keep reporting the RunEngine rather than the
-            # executor that happens to be running the plan.
+            # Honour a RunBundler overridden on a RunEngine subclass, and name
+            # this RunEngine as what a plan's state changes happen to and what
+            # Msg('RE_class') reports, rather than the executor that happens to
+            # be running the plan.
             run_bundler_cls=type(self).RunBundler,
-            run_engine_cls=type(self),
+            identity=self,
         )
 
         if context_managers is None:

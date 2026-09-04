@@ -428,3 +428,28 @@ def test_ignore_callback_exceptions_is_read_live_by_a_plan(RE):
 
     RE.ignore_callback_exceptions = False
     assert executor.dispatcher.ignore_exceptions is False
+
+
+def test_re_class_answers_for_whoever_is_driving(RE):
+    """``Msg('RE_class')`` reports the class of the executor's ``identity``.
+
+    A ``RunEngine`` names itself, so a plan asking what is running it gets the
+    RunEngine rather than the executor that happens to be executing it. With
+    nothing driving, an executor answers for itself, which is what a headless
+    caller wants. One field does what two used to: the same value names the
+    subject of a state change in the log.
+    """
+    seen = []
+
+    def note():
+        seen.append((yield Msg("RE_class")))
+
+    RE(note())
+    assert seen == [type(RE)]
+
+    async def headless():
+        seen.clear()
+        await PlanSession().make_executor(note()).run()
+
+    asyncio.run(headless())
+    assert seen == [PlanExecutor]
