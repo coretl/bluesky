@@ -2831,7 +2831,8 @@ class Dispatcher:
         self._parent = parent
         self.cb_registry = CallbackRegistry(allowed_sigs=DocumentNames, ignore_exceptions=ignore_exceptions)
         self._counter = count()
-        self._token_mapping = dict()  # noqa: C408
+        # public token -> the registry tokens it stands for
+        self._token_mapping: dict[int, list[typing.Any]] = {}
 
     def process(self, name, doc):
         """
