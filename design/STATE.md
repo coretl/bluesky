@@ -133,6 +133,17 @@ on every class in ``architecture.rst``.
 Put `/venv/bin` on `PATH` or the ruff pre-commit hook fails with "Executable `ruff`
 not found".
 
+`test_watch_finished_before_set_return_when_set_finishes` is worth watching on
+CI. It asserts a 0.2 s wall time to within 0.05 s and failed three times during
+the implementation session, always while another pytest or sphinx run was
+competing for the machine. It then passed 26 consecutive runs on the branch --
+five quiet, three under synthetic CPU load, and three on each of the six
+intermediate commits -- and `main` passed 11 under the same conditions. So it
+could not be pinned on any change, and could not be provoked deliberately
+either. If it appears on CI, which is roughly twice as slow as here, suspect the
+tolerance rather than the split; but it had not failed before this work, so do
+not write it off.
+
 `test_sigint_during_suspender_active` and its neighbours are a **known flake Tom
 Caswell is investigating**. They hang rather than fail, on CI too -- ubuntu jobs
 sitting at an hour on PR2's runs are this, not us. Ignore them; do not chase.
