@@ -295,10 +295,6 @@ class PlanExecutor:
     def deferred_pause_requested(self) -> bool:
         """Whether a pause is pending, waiting for the next checkpoint."""
 
-    @property
-    def suspenders(self) -> tuple[SuspenderBase, ...]:
-        """The suspenders this plan installed for itself, which end with it."""
-
     def emit(self, name: str, doc: dict[str, Any]) -> None:
         """Send a document to this plan's subscribers, and to those outliving it."""
 
