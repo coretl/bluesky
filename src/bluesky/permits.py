@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import threading
-import weakref
 from collections.abc import Callable, Hashable, Iterable
 from dataclasses import dataclass
 
@@ -70,12 +69,14 @@ class Permit:
         self._releases: dict[Hashable, asyncio.TimerHandle] = {}
         # Both edges, because an asyncio.Event can only be awaited for being
         # set, and the executor needs to wait for either direction.
+        # These track this permit's *own* reasons. Whether the plan may run is
+        # `granted`, which also asks the parent.
         self._is_granted = asyncio.Event()
         self._is_withheld = asyncio.Event()
         self._is_granted.set()
-        self._children: weakref.WeakSet[Permit] = weakref.WeakSet()
-        if parent is not None:
-            parent._children.add(self)
+        # Pulsed on every change, so a suspension already in progress can find
+        # out that another condition has joined it.
+        self._changed = asyncio.Event()
 
     def __repr__(self) -> str:
         state = "granted" if self.granted else f"withheld by {len(self._reasons)}"
@@ -89,9 +90,19 @@ class Permit:
         return self._parent.granted if self._parent is not None else True
 
     @property
+    def reasons(self) -> dict[Hashable, Suspension]:
+        """Every reason standing in the chain, keyed by whoever raised it.
+
+        In the order they were raised, outermost permit first, because a
+        suspension runs pre-plans in that order and post-plans in reverse.
+        """
+        above = self._parent.reasons if self._parent is not None else {}
+        return {**above, **self._reasons}
+
+    @property
     def suspension(self) -> Suspension | None:
         """Every reason standing in the chain merged into one, outermost first."""
-        reasons = self._chain_reasons()
+        reasons = list(self.reasons.values())
         if not reasons:
             return None
         return Suspension(
@@ -99,11 +110,6 @@ class Permit:
             pre_plan=_chain([r.pre_plan for r in reasons]),
             post_plan=_chain([r.post_plan for r in reasons]),
         )
-
-    def _chain_reasons(self) -> list[Suspension]:
-        """This permit's reasons, with everything above it in front."""
-        above = self._parent._chain_reasons() if self._parent is not None else []
-        return above + list(self._reasons.values())
 
     def withhold(
         self,
@@ -136,20 +142,49 @@ class Permit:
         self._reasons.pop(key, None)
         self._tell_the_loop()
 
+    async def wait_changed(self) -> None:
+        """Wait until a reason is raised or dropped, anywhere in the chain."""
+        waiters = [asyncio.ensure_future(self._changed.wait())]
+        if self._parent is not None:
+            waiters.append(asyncio.ensure_future(self._parent.wait_changed()))
+        try:
+            await asyncio.wait(waiters, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            for waiter in waiters:
+                waiter.cancel()
+        self._changed.clear()
+
     async def wait_granted(self) -> None:
         """Wait until no reason stands in the chain."""
         while not self.granted:
             self._sync()
             await self._is_granted.wait()
+            if self._parent is not None:
+                await self._parent.wait_granted()
 
     async def wait_withheld(self) -> None:
         """Wait until some reason stands in the chain."""
         while self.granted:
             self._sync()
-            await self._is_withheld.wait()
+            if self._parent is None:
+                await self._is_withheld.wait()
+                continue
+            # Either this permit or anything above it going withheld will do.
+            # A permit only ever looks upwards -- nothing holds a reference to
+            # a permit below it, so a finished plan's permit is not kept alive
+            # by the session's.
+            waiters = [
+                asyncio.ensure_future(self._is_withheld.wait()),
+                asyncio.ensure_future(self._parent.wait_withheld()),
+            ]
+            try:
+                await asyncio.wait(waiters, return_when=asyncio.FIRST_COMPLETED)
+            finally:
+                for waiter in waiters:
+                    waiter.cancel()
 
     def _tell_the_loop(self) -> None:
-        """Bring the loop's view of this permit, and its children's, into step."""
+        """Bring the loop's view of this permit into step."""
         self._on_loop(self._sync)
 
     def _on_loop(self, func: Callable[[], None]) -> None:
@@ -159,11 +194,11 @@ class Permit:
             self._loop.call_soon_threadsafe(func)
 
     def _sync(self) -> None:
-        if self.granted:
-            self._is_withheld.clear()
-            self._is_granted.set()
-        else:
+        """Bring the loop's view of this permit's own reasons into step."""
+        self._changed.set()
+        if self._reasons:
             self._is_granted.clear()
             self._is_withheld.set()
-        for child in list(self._children):
-            child._sync()
+        else:
+            self._is_withheld.clear()
+            self._is_granted.set()

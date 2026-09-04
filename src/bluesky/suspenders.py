@@ -66,6 +66,18 @@ class SuspenderBase(metaclass=ABCMeta):
         event_type : str, optional
             The event type (subscription type) to watch
         """
+        if hasattr(permit, "install_suspender"):
+            # Was `install(RE)` before suspension went through permits. Do what
+            # it used to do, which is a durable install on that engine.
+            warn(
+                f"Passing a RunEngine to {type(self).__name__}.install is deprecated; "
+                "it now takes the permit to withhold. Use RE.install_suspender(suspender), "
+                "or suspender.install(RE.permit) to reach the same permit directly.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            permit.install_suspender(self)
+            return
         with self._lock:
             self._permit = permit
         self._sig.subscribe(self, event_type=event_type, run=True)

@@ -218,3 +218,45 @@ def test_a_child_permit_is_withheld_whenever_its_parent_is():
 
     child.grant("shutter")
     assert child.granted
+
+
+def test_pre_plans_run_in_fire_order_and_post_plans_in_reverse(RE, hw):
+    """A condition joining a suspension still runs its own pre-plan, when it fires.
+
+    Pre-plans go in the order their conditions fired; post-plans in the reverse
+    of it, so the last thing done is the first undone. A condition that joins
+    an episode already in progress does not start a second rewind.
+    """
+    from ophyd import Signal
+
+    beam, shutter = hw.bool_sig, Signal(name="shutter_sig", value=0)
+    beam.put(0)
+    order = []
+
+    def note(tag):
+        def plan():
+            order.append(tag)
+            yield Msg("null")
+
+        return plan
+
+    RE.install_suspender(
+        SuspendBoolHigh(beam, pre_plan=note("beam-pre"), post_plan=note("beam-post"), tripped_message="beam")
+    )
+    RE.install_suspender(
+        SuspendBoolHigh(
+            shutter, pre_plan=note("shutter-pre"), post_plan=note("shutter-post"), tripped_message="shutter"
+        )
+    )
+    commands = []
+    RE.msg_hook = lambda msg: commands.append(msg.command)
+
+    _at(0.1, beam.put, 1)
+    _at(0.3, shutter.put, 1)
+    _at(0.6, beam.put, 0)
+    _at(0.6, shutter.put, 0)
+    RE(SCAN)
+
+    assert order == ["beam-pre", "shutter-pre", "shutter-post", "beam-post"]
+    # Still one rewind, however many conditions joined it.
+    assert commands.count("_start_suspender") == 1
