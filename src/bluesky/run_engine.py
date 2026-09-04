@@ -1223,7 +1223,7 @@ class RunEngine:
         for msg in ensure_generator(plan() if callable(plan) else plan):
             await self._command_registry[msg.command](msg)
 
-    async def _supervise_permit(self):
+    async def _supervise_permit(self, held_at_start=False):
         """Suspend the plan whenever permission to run is withheld.
 
         One suspension per episode, however many conditions are standing: that
@@ -1235,13 +1235,16 @@ class RunEngine:
         the order their conditions fired and post-plans in the reverse of it,
         so the last condition to arrive is the first to be undone.
 
-        The first ``wait_granted`` is what keeps this out of the way of the
-        pre-plan wait in ``__call__``: a permit already withheld when the plan
-        starts is being handled there, and must not also be suspended here,
-        where there is no checkpoint to rewind to.
+        ``held_at_start`` keeps this out of the way of the pre-plan wait in
+        ``__call__``: a permit already withheld when the plan starts is being
+        held there, and must not also be suspended here, where there is no
+        checkpoint to rewind to. It is passed in rather than tested here
+        because this task starts a turn of the loop later, and a condition
+        going bad in that window is a real trip that must be suspended for.
         """
-        while True:
+        if held_at_start:
             await self._permit.wait_granted()
+        while True:
             await self._permit.wait_withheld()
             suspension = self._permit.suspension
             if suspension is None:
@@ -1592,7 +1595,11 @@ class RunEngine:
         # when `.cancel` is called on it.
         with self._state_lock:
             self._task = current_task(self.loop)
-        supervisor = self.loop.create_task(self._supervise_permit())
+        # Whether the permit is already withheld is read here, synchronously,
+        # rather than by the task once it starts: a condition going bad in
+        # between would otherwise be taken for the one __call__ is already
+        # holding the plan for, and never suspend it.
+        supervisor = self.loop.create_task(self._supervise_permit(held_at_start=not self._permit.granted))
         stashed_exception = None
         debug = msg_logger.debug
         self._reason = ""

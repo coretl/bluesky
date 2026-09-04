@@ -25,14 +25,14 @@ class Suspension:
     post_plan: PlanLike | None = None
 
 
-def _chain(plans: list[PlanLike]) -> PlanLike | None:
+def _chain(plans: list[PlanLike | None]) -> PlanLike | None:
     """Compose several pre- or post-plans into one, or None if there are none."""
-    plans = [plan for plan in plans if plan is not None]
-    if not plans:
+    present: list[PlanLike] = [plan for plan in plans if plan is not None]
+    if not present:
         return None
 
     def chained():
-        for plan in plans:
+        for plan in present:
             yield from ensure_generator(plan() if callable(plan) else plan)
 
     return chained
@@ -144,7 +144,7 @@ class Permit:
 
     async def wait_changed(self) -> None:
         """Wait until a reason is raised or dropped, anywhere in the chain."""
-        waiters = [asyncio.ensure_future(self._changed.wait())]
+        waiters: list[asyncio.Future] = [asyncio.ensure_future(self._changed.wait())]
         if self._parent is not None:
             waiters.append(asyncio.ensure_future(self._parent.wait_changed()))
         try:
@@ -173,7 +173,7 @@ class Permit:
             # A permit only ever looks upwards -- nothing holds a reference to
             # a permit below it, so a finished plan's permit is not kept alive
             # by the session's.
-            waiters = [
+            waiters: list[asyncio.Future] = [
                 asyncio.ensure_future(self._is_withheld.wait()),
                 asyncio.ensure_future(self._parent.wait_withheld()),
             ]

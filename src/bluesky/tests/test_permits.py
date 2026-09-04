@@ -260,3 +260,33 @@ def test_pre_plans_run_in_fire_order_and_post_plans_in_reverse(RE, hw):
     assert order == ["beam-pre", "shutter-pre", "shutter-post", "beam-post"]
     # Still one rewind, however many conditions joined it.
     assert commands.count("_start_suspender") == 1
+
+
+def test_a_trip_just_after_the_plan_starts_still_suspends(RE, hw):
+    """The window between the plan starting and the supervisor's first turn.
+
+    A condition already bad when the plan starts is held by a wait before the
+    first message, not a suspension, because there is no checkpoint yet. That
+    must not swallow a condition going bad immediately afterwards, which is a
+    real trip and has to rewind.
+    """
+    sig = hw.bool_sig
+    sig.put(0)
+    RE.install_suspender(SuspendBoolHigh(sig))
+    commands = []
+
+    def trip_as_the_plan_starts(new_state, old_state):
+        if (old_state, new_state) == ("idle", "running"):
+            # The plan has started, so __call__ has read the permit already,
+            # and the supervisor has been created but has not had a turn.
+            sig.put(1)
+
+    RE.state_hook = trip_as_the_plan_starts
+    RE.msg_hook = lambda msg: commands.append(msg.command)
+    _at(0.5, sig.put, 0)
+    start = ttime.time()
+    RE(SCAN)
+    delta = ttime.time() - start
+
+    assert delta > 0.4, "the trip was not swallowed"
+    assert commands.count("_start_suspender") == 1, "and it suspended rather than merely waiting"
