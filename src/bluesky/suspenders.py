@@ -7,6 +7,8 @@ from warnings import warn
 
 from bluesky.protocols import Subscribable
 
+from .permits import Permit
+
 # How long install() and remove() wait for the RunEngine's event loop to
 # subscribe to a Subscribable signal, or unsubscribe from it, before giving up.
 SUBSCRIPTION_TIMEOUT = 10
@@ -89,7 +91,7 @@ class SuspenderBase(metaclass=ABCMeta):
             # route below, which drops `event_type` on its way to
             # `install_suspender` and would otherwise ignore it silently.
             raise RuntimeError(f"Can not specify non-None event_type {event_type=} with Subscribable protocol")
-        if hasattr(permit, "install_suspender"):
+        if not isinstance(permit, Permit):
             # Was `install(RE)` before suspension went through permits. Do what
             # it used to do, which is a durable install on that engine.
             warn(

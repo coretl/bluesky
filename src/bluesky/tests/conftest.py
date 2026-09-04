@@ -29,6 +29,16 @@ def RE(request):
                 pass
         loop.call_soon_threadsafe(loop.stop)
         RE._th.join()
+        # A suspender that trips leaves a fire-and-forget request_suspend task
+        # on the loop, which may still be pending once the loop has stopped.
+        # Closing the loop on a pending task makes asyncio report "Task was
+        # destroyed but it is pending!" whenever that task is finally
+        # collected, which is during some later, unrelated test's teardown.
+        pending = asyncio.all_tasks(loop)
+        for task in pending:
+            task.cancel()
+        if pending:
+            loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
         loop.close()
 
     request.addfinalizer(clean_event_loop)
