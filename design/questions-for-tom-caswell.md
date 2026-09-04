@@ -116,3 +116,44 @@ only those whose pre-plan ran.
 **What we need from you:** whether pre-plans are, in practice, per-suspender
 work that must each happen, or a "make it safe" step where the first one is
 enough. We have not found a case in the repo that distinguishes them.
+
+## 5. Does anyone use `suspender.install(RE)` or read `suspender.RE`?
+
+A suspender no longer holds the RunEngine. It withholds a `Permit` — permission
+to run, held open unless something has a reason to withhold it — and does not
+know what, or whether, anything is running. That is what lets the "is a plan
+running?" decision move off the device's thread, where it was made a whole loop
+iteration before it was acted on.
+
+So `install` takes a permit rather than a RunEngine, and `suspender.RE` is gone.
+`RunEngine.permit` is public, so the durable one is reached as
+`suspender.install(RE.permit)`.
+
+`RE.install_suspender(sus)` is unaffected, and it is the only form the docs show.
+But the test suite called `sus.install(RE)` directly, so the pattern exists
+somewhere, and `RE` was a plain public attribute that anything could read.
+
+**What we need from you:** whether facility code calls `suspender.install(RE)` or
+reads `suspender.RE`. If it does, `install` can accept either a permit or
+something exposing one, at the cost of a line — we would rather know than guess.
+
+## 6. Should `RunEngine.request_suspend` stay public?
+
+`request_suspend(fut, ...)` suspends the plan until a future completes, and it is
+public API. Suspenders used to be its only real caller.
+
+Now a suspender withholds the permit instead, and a supervisor turns that into a
+suspension. That makes `request_suspend` a second, parallel route to the same
+place — and one that bypasses the permit, so a suspension raised that way does
+not appear in `permit.suspension` and will not merge with a concurrent one. Two
+conditions arriving by the two different routes would rewind twice, which is the
+bug the permit exists to remove, reintroduced through the side door.
+
+The alternatives are to leave it as the escape hatch it is and accept that, or to
+reimplement it over the permit: withhold on the caller's behalf, and grant when
+their future completes. The second keeps one route into suspension, and the
+signature need not change.
+
+**What we need from you:** whether `request_suspend` is used outside bluesky, and
+whether you would expect a suspension raised through it to merge with one raised
+by a suspender.
