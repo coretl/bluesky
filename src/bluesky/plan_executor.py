@@ -1205,7 +1205,7 @@ class PlanExecutor:
 
             announce_suspend()
             self.loop.create_task(  # noqa: RUF006
-                self.request_suspend(
+                self._request_suspend(
                     self.permit.wait_granted,
                     pre_plan=first.pre_plan,
                     post_plan=unwind,
@@ -1371,7 +1371,7 @@ class PlanExecutor:
             if isinstance(obj, Pausable):
                 await maybe_await(obj.resume())
 
-    async def request_suspend(self, fut, *, pre_plan=None, post_plan=None, justification=None):
+    async def _request_suspend(self, fut, *, pre_plan=None, post_plan=None, justification=None):
         """Suspend until ``fut`` is finished. Must be called on the loop."""
         if not self.resumable:
             print("No checkpoint; cannot suspend.")

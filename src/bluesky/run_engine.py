@@ -1042,21 +1042,6 @@ class RunEngine:
         self._session.clear_suspenders()
         self._executor.clear_suspenders()
 
-    def request_suspend(self, fut, *, pre_plan=None, post_plan=None, justification=None):
-        """Deprecated. Suspension is raised by withholding :attr:`permit`.
-
-        Kept working for one release. It bypasses the permit, so a suspension
-        raised this way does not merge with one raised by a suspender: two
-        overlapping conditions arriving by the two routes rewind twice.
-        """
-        warn(
-            "RunEngine.request_suspend is deprecated. Suspension is raised by withholding "
-            "RE.permit, which is what an installed suspender does.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return self._suspend_until(fut, pre_plan=pre_plan, post_plan=post_plan, justification=justification)
-
     def _suspend_until(self, fut, *, pre_plan=None, post_plan=None, justification=None):
         """Suspend the plan until ``fut`` is finished.
 
@@ -1086,7 +1071,7 @@ class RunEngine:
         # executor this already has, and would announce it a second time.
         announce_suspend()
         asyncio.run_coroutine_threadsafe(
-            self._executor.request_suspend(
+            self._executor._request_suspend(
                 fut, pre_plan=pre_plan, post_plan=post_plan, justification=justification
             ),
             self.loop,

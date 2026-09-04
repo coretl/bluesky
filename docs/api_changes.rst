@@ -97,14 +97,16 @@ Removed
 - ``SuspenderBase.get_futures`` and ``SuspenderBase.RE``.  Whether a suspender
   is tripped is ``SuspenderBase.tripped``; what it holds up is
   ``RunEngine.permit``.
+- ``RunEngine.request_suspend``.  Suspension is raised by withholding
+  ``RunEngine.permit``, which is what an installed suspender does.  It was a
+  second route to the same place that bypassed the permit, so a suspension
+  raised through it did not merge with one raised by a suspender, and two
+  overlapping conditions arriving by the two routes rewound the plan twice --
+  the thing the permit exists to prevent.
 
 Deprecated
 ----------
 - ``RunEngine.emit_sync``.  There is one ``emit`` now, and it is synchronous.
-- ``RunEngine.request_suspend``.  Suspension is raised by withholding
-  ``RunEngine.permit``, which is what an installed suspender does.  A
-  suspension raised through ``request_suspend`` does not merge with one raised
-  by a suspender.
 
 v1.15.1 (2026-05-05)
 ====================
