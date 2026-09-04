@@ -316,9 +316,19 @@ def test_suspender_plans(RE, hw):
 
     putter(0)
 
-    # Do the messages work?
-    RE([Msg("install_suspender", None, my_suspender)])
-    assert my_suspender in RE.suspenders
+    # Do the messages work? A suspender a plan installs is that plan's: it
+    # withholds that plan's permit and is unsubscribed when the plan ends,
+    # so it is gone by the time RE(...) returns.
+    seen = []
+
+    def note_while_running():
+        yield Msg("install_suspender", None, my_suspender)
+        seen.append(my_suspender in RE.suspenders)
+        yield Msg("remove_suspender", None, my_suspender)
+
+    RE(note_while_running())
+    assert seen == [True], "installed while its own plan ran"
+    assert my_suspender not in RE.suspenders, "and gone once that plan ended"
     RE([Msg("remove_suspender", None, my_suspender)])
     assert my_suspender not in RE.suspenders
 

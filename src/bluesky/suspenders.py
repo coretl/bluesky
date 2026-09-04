@@ -3,6 +3,8 @@ import threading
 from abc import ABCMeta, abstractmethod, abstractproperty
 from warnings import warn
 
+from .permits import Permit
+
 
 class SuspenderBase(metaclass=ABCMeta):
     """An ABC to manage the callbacks between asyincio and pyepics.
@@ -71,7 +73,7 @@ class SuspenderBase(metaclass=ABCMeta):
         event_type : str, optional
             The event type (subscription type) to watch
         """
-        if hasattr(permit, "install_suspender"):
+        if not isinstance(permit, Permit):
             # Was `install(RE)` before suspension went through permits. Do what
             # it used to do, which is a durable install on that engine.
             warn(

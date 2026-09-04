@@ -70,11 +70,13 @@ def test_states():
 
 
 def test_panic_trap(RE):
-    RE._state = "panicked"
+    # The machine belongs to the executor: every non-idle state describes one
+    # plan's execution, and 'panicked' is the one-way latch out of all of them.
+    RE._executor._state = "panicked"
     for k in RunEngineStateMachine.States.states():
         if k != "panicked":
             with pytest.raises(TransitionError):
-                RE._state = k
+                RE._executor._state = k
 
 
 def test_state_is_readonly(RE):
