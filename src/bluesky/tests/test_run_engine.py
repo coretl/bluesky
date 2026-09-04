@@ -70,11 +70,13 @@ def test_states():
 
 
 def test_panic_trap(RE):
-    RE._state = "panicked"
+    # The machine belongs to the executor: every non-idle state describes one
+    # plan's execution, and 'panicked' is the one-way latch out of all of them.
+    RE._executor._state = "panicked"
     for k in RunEngineStateMachine.States.states():
         if k != "panicked":
             with pytest.raises(TransitionError):
-                RE._state = k
+                RE._executor._state = k
 
 
 def test_state_is_readonly(RE):
@@ -665,7 +667,7 @@ def test_unrewindable_det_suspend(RE, plan, motor, det, msg_seq):
 
     ev = _fabricate_asycio_event(loop)
 
-    timer = threading.Timer(0.5, RE.request_suspend, kwargs=dict(fut=ev.wait))  # noqa: C408
+    timer = threading.Timer(0.5, RE._suspend_until, kwargs=dict(fut=ev.wait))  # noqa: C408
     timer.start()
 
     def verbose_set():
@@ -1119,7 +1121,7 @@ def test_sigint_during_suspender_active(RE, hw):
 
     bool_signal = hw.bool_sig
     suspender = SuspendBoolHigh(bool_signal)
-    suspender.install(RE)
+    suspender.install(RE.permit)
     bool_signal.put(False)
 
     def send_sigints():
@@ -1463,7 +1465,7 @@ def test_invalid_generator(RE, hw, capsys):
 
     with pytest.raises(RunEngineInterrupted):
         RE(make_plan())
-    RE.request_suspend(None, pre_plan=pre_suspend_plan())
+    RE._suspend_until(None, pre_plan=pre_suspend_plan())
     capsys.readouterr()
     try:
         RE.resume()
@@ -1501,7 +1503,7 @@ def test_exception_cascade_REside(RE):
         RE(pausing_plan())
     ev = _fabricate_asycio_event(RE.loop)
     ev.set()
-    RE.request_suspend(ev.wait, pre_plan=pre_plan())
+    RE._suspend_until(ev.wait, pre_plan=pre_plan())
     with pytest.raises(KeyError):
         RE.resume()
     assert except_hit
@@ -1532,7 +1534,7 @@ def test_exception_cascade_planside(RE):
         RE(pausing_plan())
     ev = _fabricate_asycio_event(RE.loop)
     ev.set()
-    RE.request_suspend(ev.wait, pre_plan=pre_plan())
+    RE._suspend_until(ev.wait, pre_plan=pre_plan())
     with pytest.raises(RuntimeError):
         RE.resume()
     assert except_hit

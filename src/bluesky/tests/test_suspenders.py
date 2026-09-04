@@ -46,7 +46,7 @@ def test_suspender(klass, sc_args, start_val, fail_val, resume_val, wait_time, R
             my_suspender = klass(sig, *sc_args, sleep=wait_time)
     else:
         my_suspender = klass(sig, *sc_args, sleep=wait_time)
-    my_suspender.install(RE)
+    my_suspender.install(RE.permit)
 
     def putter(val):
         sig.put(val)
@@ -209,11 +209,11 @@ def test_pre_suspend_plan(RE, pre_plan, post_plan, expected_list, hw):
 
     RE.remove_suspender(susp)
     RE(scan)
-    assert susp.RE is None
+    assert susp not in RE.suspenders
 
     RE.install_suspender(susp)
     RE.clear_suspenders()
-    assert susp.RE is None
+    assert susp not in RE.suspenders
     assert not RE.suspenders
 
 
@@ -297,7 +297,7 @@ def test_unresumable_suspend_fail(RE):
     RE.msg_hook = m_coll
 
     ev = _fabricate_asycio_event(RE.loop)
-    threading.Timer(0.1, partial(RE.request_suspend, fut=ev.wait)).start()
+    threading.Timer(0.1, partial(RE._suspend_until, fut=ev.wait)).start()
     threading.Timer(1, ev.set).start()
     start = time.time()
     with pytest.raises(RunEngineInterrupted):
@@ -316,9 +316,19 @@ def test_suspender_plans(RE, hw):
 
     putter(0)
 
-    # Do the messages work?
-    RE([Msg("install_suspender", None, my_suspender)])
-    assert my_suspender in RE.suspenders
+    # Do the messages work? A suspender a plan installs is that plan's: it
+    # withholds that plan's permit and is unsubscribed when the plan ends,
+    # so it is gone by the time RE(...) returns.
+    seen = []
+
+    def note_while_running():
+        yield Msg("install_suspender", None, my_suspender)
+        seen.append(my_suspender in RE.suspenders)
+        yield Msg("remove_suspender", None, my_suspender)
+
+    RE(note_while_running())
+    assert seen == [True], "installed while its own plan ran"
+    assert my_suspender not in RE.suspenders, "and gone once that plan ended"
     RE([Msg("remove_suspender", None, my_suspender)])
     assert my_suspender not in RE.suspenders
 

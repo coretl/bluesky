@@ -1,10 +1,9 @@
-import asyncio
 import operator
 import threading
 from abc import ABCMeta, abstractmethod, abstractproperty
-from datetime import datetime, timedelta
-from functools import partial
 from warnings import warn
+
+from .permits import Permit
 
 
 class SuspenderBase(metaclass=ABCMeta):
@@ -22,10 +21,15 @@ class SuspenderBase(metaclass=ABCMeta):
         before marking the event as done.  Defaults to 0
 
     pre_plan : iterable or iterator or generator function, optional
-            a generator, list, or similar containing `Msg` objects
+            a generator, list, or similar containing `Msg` objects, run when
+            this suspender's condition goes bad. Make it idempotent: another
+            condition may already have suspended the plan, and each suspender
+            runs its own pre-plan when it fires.
 
     post_plan : iterable or iterator or generator function, optional
-            a generator, list, or similar containing `Msg` objects
+            a generator, list, or similar containing `Msg` objects, run before
+            the plan resumes. Post-plans run in the reverse of the order their
+            pre-plans did, so the last condition to go bad is the first undone.
 
     tripped_message : str, optional
         Message to include in the trip notification
@@ -33,8 +37,10 @@ class SuspenderBase(metaclass=ABCMeta):
 
     def __init__(self, signal, *, sleep=0, pre_plan=None, post_plan=None, tripped_message=""):
         """ """
-        self.RE = None
-        self._ev = None
+        # The permit to withhold while this reads as bad. A suspender does not
+        # know what is running, or whether anything is: everything that must be
+        # held up by this condition is waiting on that permit already.
+        self._permit = None
         self._tripped = False
         self._tripped_message = tripped_message
         self._sleep = sleep
@@ -53,22 +59,34 @@ class SuspenderBase(metaclass=ABCMeta):
             self._tripped_message,
         )
 
-    def install(self, RE, *, event_type=None):
-        """Install callback on signal
-
-        This (re)installs the required callbacks at the pyepics level
+    def install(self, permit, *, event_type=None):
+        """Subscribe to the signal, and withhold ``permit`` while it reads as bad.
 
         Parameters
         ----------
 
-        RE : RunEngine
-            The run engine instance this should work on
+        permit : `bluesky.permits.Permit`
+            Withheld while this suspender is tripped. Which permit decides how
+            far the suspension reaches: one that outlives any plan holds up
+            every plan run under it.
 
         event_type : str, optional
             The event type (subscription type) to watch
         """
+        if not isinstance(permit, Permit):
+            # Was `install(RE)` before suspension went through permits. Do what
+            # it used to do, which is a durable install on that engine.
+            warn(
+                f"Passing a RunEngine to {type(self).__name__}.install is deprecated; "
+                "it now takes the permit to withhold. Use RE.install_suspender(suspender), "
+                "or suspender.install(RE.permit) to reach the same permit directly.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            permit.install_suspender(self)
+            return
         with self._lock:
-            self.RE = RE
+            self._permit = permit
         self._sig.subscribe(self, event_type=event_type, run=True)
 
     def remove(self):
@@ -78,9 +96,12 @@ class SuspenderBase(metaclass=ABCMeta):
         """
         self._sig.clear_sub(self)
         with self._lock:
-            if self.RE is not None:
-                self.__set_event(self.RE._loop)
-            self.RE = None
+            if self._permit is not None:
+                # An uninstalled suspender must not go on suspending, and
+                # nothing else will drop its reason once it has stopped
+                # watching its signal.
+                self._permit.grant(self)
+            self._permit = None
             self._tripped = False
 
     @abstractmethod
@@ -128,90 +149,29 @@ class SuspenderBase(metaclass=ABCMeta):
         This expects the massive blob that comes from ophyd
         """
         with self._lock:
-            if self.RE is None:
+            if self._permit is None:
                 return
-            loop = self.RE._loop
-
             if self._should_suspend(value):
+                was_tripped = self._tripped
                 self._tripped = True
-                # this does dirty things with internal state
-                if self._ev is None and self.RE is not None:
-                    self.__make_event()
-                    if self._ev is None:
-                        raise RuntimeError("Could not create the suspender event")
-                    cb = partial(
-                        self.RE.request_suspend,
-                        self._ev.wait,
+                if not was_tripped:
+                    # Withheld on this thread, so that a plan started between
+                    # this trip and the loop noticing does not start unheld.
+                    self._permit.withhold(
+                        self,
+                        self._get_justification(),
                         pre_plan=self._pre_plan,
                         post_plan=self._post_plan,
-                        justification=self._get_justification(),
                     )
-                    if self.RE.state.is_running:
-                        loop.call_soon_threadsafe(cb)
             elif self._should_resume(value):
-                self.__set_event(loop)
+                if self._tripped:
+                    # Only release what actually tripped. Subscribing with
+                    # ``run=True`` calls back with the current reading, and an
+                    # already-nominal signal must not schedule a release: it
+                    # would come due `sleep` seconds later and drop a reason
+                    # raised by a trip in between.
+                    self._permit.grant(self, after=self._sleep)
                 self._tripped = False
-
-    def __make_event(self):
-        """Make or return the asyncio.Event to use as a bridge."""
-        assert self._lock.locked()
-        if self._ev is None and self.RE is not None:
-            if threading.get_ident() == getattr(self.RE._loop, "_thread_id", "unknown"):
-                self._ev = asyncio.Event()
-                return self._ev
-            else:
-                th_ev = threading.Event()
-
-                def really_make_the_event():
-                    self._ev = asyncio.Event()
-                    th_ev.set()
-
-                h = self.RE._loop.call_soon_threadsafe(really_make_the_event)
-                if not th_ev.wait(0.1):
-                    h.cancel()
-        return self._ev
-
-    def __set_event(self, loop):
-        """Notify the event that it can resume"""
-        assert self._lock.locked()
-        if self._ev:
-            ev = self._ev
-            sleep = self._sleep
-
-            def local():
-                ts = (datetime.now() + timedelta(seconds=sleep)).strftime("%Y-%m-%d %H:%M:%S")
-                print(
-                    f"Suspender {self!r} reports a return to nominal "
-                    f"conditions. Will sleep for {sleep} seconds and then "
-                    f"release suspension at {ts}."
-                )
-                # we can use call_later here because this function
-                # is scheduled to be run in the event loop thread
-                # by the `call_soon_threadsafe` call just below.
-                loop.call_later(sleep, ev.set)
-
-            loop.call_soon_threadsafe(local)
-        # clear that we have an event
-        self._ev = None
-
-    def get_futures(self):
-        """Return a list of futures to wait on.
-
-        This will only work correctly if this suspender is 'installed'
-        and watching a signal
-
-        Returns
-        -------
-        futs : list
-            List of futures to wait on
-
-        justification : str
-            String explaining why the suspender is tripped
-        """
-        if not self.tripped:
-            return [], ""
-        with self._lock:
-            return [self.__make_event().wait], self._get_justification()
 
     @property
     def tripped(self):
