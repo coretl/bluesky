@@ -216,7 +216,7 @@ class RunEngineStateMachine(StateMachine):
         ]
 
 
-def announce_state_change(identity, hooks: "Hooks", old_value, value) -> None:
+def announce_state_change(identity, hooks: "PlanHooks", old_value, value) -> None:
     """Log a state change, and tell the state hook about it.
 
     Split out of :meth:`LoggingPropertyMachine.__set__` so that a state change
@@ -408,7 +408,7 @@ class PlanEnvironment:
 
 
 @dataclass
-class Hooks:
+class PlanHooks:
     """The places a plan's progress can be observed from.
 
     Mutable, and shared by reference with every executor a session builds --
@@ -511,7 +511,7 @@ class PlanSession:
         The `Dispatcher` documents are emitted through.
 
     hooks
-        The `Hooks` record shared with every executor this session builds.
+        The `PlanHooks` record shared with every executor this session builds.
 
     suspenders
         Read-only collection of the durable
@@ -591,7 +591,7 @@ class PlanSession:
         # The observation points, shared by reference with every executor this
         # session builds, so that setting one mid-plan takes effect on that
         # plan.
-        self.hooks = Hooks(on_pause=on_pause)
+        self.hooks = PlanHooks(on_pause=on_pause)
 
         # Settings a plan is run under. Plain attributes, read when
         # `make_executor` builds the frozen `PlanEnvironment` it hands over,
@@ -903,7 +903,7 @@ class PlanExecutor:
         Subscribers that outlive this plan. Documents go to them before this
         plan's own, which is the order a single shared registry gave by
         construction.
-    hooks : Hooks, optional
+    hooks : PlanHooks, optional
         The observation points. Shared with the session, and read live.
     on_state_change : callable, optional
         Called ``f(new_state, old_state)`` on every state change. Whoever built
@@ -946,7 +946,7 @@ class PlanExecutor:
         subs=None,
         prologue=None,
         dispatcher: "Dispatcher | None" = None,
-        hooks: Hooks | None = None,
+        hooks: PlanHooks | None = None,
         on_state_change: Callable[[typing.Any, typing.Any], None] | None = None,
         commands: typing.Mapping[str, Callable] | None = None,
         without_commands: typing.Collection[str] = (),
@@ -956,7 +956,7 @@ class PlanExecutor:
         rewindable: bool = True,
     ):
         self._env = env
-        self._hooks = hooks if hooks is not None else Hooks()
+        self._hooks = hooks if hooks is not None else PlanHooks()
         self._on_state_change = on_state_change
         self._parent_dispatcher = dispatcher
 
@@ -1137,7 +1137,7 @@ class PlanExecutor:
         """
         return frozenset(self._durable_suspenders | self._plan_suspenders)
 
-    def install_suspender(self, suspender) -> None:
+    def _install_suspender_now(self, suspender) -> None:
         """Install a suspender for the duration of this plan only.
 
         This is what ``Msg('install_suspender', None, suspender)`` does. The
@@ -1147,7 +1147,7 @@ class PlanExecutor:
         self._plan_suspenders.add(suspender)
         suspender.install(self.permit)
 
-    def remove_suspender(self, suspender) -> None:
+    def _remove_suspender_now(self, suspender) -> None:
         """Uninstall a suspender, whether this plan's or a durable one.
 
         A durable suspender is the session's to unsubscribe, so removing one
@@ -1162,19 +1162,10 @@ class PlanExecutor:
         self._durable_suspenders.discard(suspender)
         self.permit.grant(suspender)
 
-    def adopt_suspender(self, suspender) -> None:
-        """Report ``suspender`` as covering this plan too, without owning it.
-
-        For a durable suspender installed while this plan is already running.
-        It writes to the session permit, which this plan is waiting on
-        already, so this only makes it visible in :attr:`suspenders`.
-        """
-        self._durable_suspenders.add(suspender)
-
     def _release_suspenders(self) -> None:
         """Let go of every suspender this plan installed. Once, as it ends."""
         for suspender in list(self._plan_suspenders):
-            self.remove_suspender(suspender)
+            self._remove_suspender_now(suspender)
         self._durable_suspenders.clear()
 
     async def _run_out_of_band(self, plan):
@@ -2692,11 +2683,11 @@ class PlanExecutor:
 
     async def _install_suspender(self, msg):
         """Install a suspender for this plan. Msg('install_suspender', None, suspender)"""
-        self.install_suspender(msg.args[0])
+        self._install_suspender_now(msg.args[0])
 
     async def _remove_suspender(self, msg):
         """Remove a suspender from this plan. Msg('remove_suspender', None, suspender)"""
-        self.remove_suspender(msg.args[0])
+        self._remove_suspender_now(msg.args[0])
 
     async def _start_suspender(self, msg):
         """

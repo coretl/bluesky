@@ -1023,7 +1023,6 @@ class RunEngine:
         :meth:`RunEngine.clear_suspenders`
         """
         self._session.remove_suspender(suspender)
-        self._executor.remove_suspender(suspender)
 
     def clear_suspenders(self):
         """
