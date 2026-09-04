@@ -5,6 +5,7 @@ import time as ttime
 from functools import partial
 
 import pytest
+from ophyd.signal import Signal
 
 from bluesky import Msg
 from bluesky.preprocessors import suspend_wrapper
@@ -540,3 +541,97 @@ def test_suspender_plans(RE, hw):
     stop = ttime.time()
     delta = stop - start
     assert delta < 0.9
+
+
+def test_two_conditions_suspend_once_each(RE):
+    """Characterization test: two conditions going bad at once produce two
+    suspensions, not one.
+
+    Each ``SuspenderBase`` guards its trip path with ``if self._ev is None``,
+    so the guard is per suspender: a second suspender tripping while the first
+    suspension is still in flight passes its own guard and calls
+    ``request_suspend`` again. The plan therefore rewinds once per condition
+    and the pre-plans run nested, in an order nobody chose. If those pre-plans
+    are not idempotent -- closing a shutter that is already closed -- the
+    second rewind runs them again.
+    """
+    sig_a = Signal(value=0, name="sig_a")
+    sig_b = Signal(value=0, name="sig_b")
+    susp_a = SuspendBoolHigh(sig_a, pre_plan=[Msg("null")], post_plan=[Msg("null")])
+    susp_b = SuspendBoolHigh(sig_b, pre_plan=[Msg("null")], post_plan=[Msg("null")])
+    RE.install_suspender(susp_a)
+    RE.install_suspender(susp_b)
+
+    m_coll = MsgCollector()
+    RE.msg_hook = m_coll
+
+    threading.Timer(0.2, sig_a.put, (1,)).start()
+    threading.Timer(0.25, sig_b.put, (1,)).start()
+    threading.Timer(0.8, sig_a.put, (0,)).start()
+    threading.Timer(0.85, sig_b.put, (0,)).start()
+
+    RE([Msg("checkpoint"), Msg("sleep", None, 0.5), Msg("null")])
+
+    commands = [msg.command for msg in m_coll.msgs]
+    assert commands.count("_start_suspender") == 2, "one suspension per condition"
+    assert commands.count("wait_for") == 2, "and the plan waits twice"
+    # Both pre-plans run, the second inside the first suspension.
+    assert commands.count("_resume_from_suspender") == 2
+
+
+def test_trip_while_paused_is_dropped(RE, hw):
+    """Characterization test: a condition that goes bad while the plan is
+    paused never suspends it.
+
+    ``SuspenderBase.__call__`` asks the RunEngine to suspend on the device's
+    thread. Paused, there is nothing to suspend, and nothing records that the
+    condition went bad -- so resuming runs straight through a tripped
+    suspender, and no later trip suspends that plan either.
+    """
+    sig = hw.bool_sig
+    sig.put(0)
+    susp = SuspendBoolHigh(sig)
+    RE.install_suspender(susp)
+
+    m_coll = MsgCollector()
+    RE.msg_hook = m_coll
+
+    threading.Timer(0.2, RE.request_pause).start()
+    with pytest.raises(RunEngineInterrupted):
+        RE([Msg("checkpoint"), Msg("sleep", None, 1), Msg("null")])
+    assert RE.state == "paused"
+
+    sig.put(1)
+    ttime.sleep(0.3)
+    assert susp.tripped, "the condition really is bad"
+
+    RE.resume()
+    commands = [msg.command for msg in m_coll.msgs]
+    assert "_start_suspender" not in commands, "the trip was dropped"
+    sig.put(0)
+
+
+def test_retrip_inside_sleep_does_not_release_early(RE, hw):
+    """Characterization test: a condition that recovers and goes bad again
+    inside the suspender's ``sleep`` window holds the plan until the *second*
+    recovery has settled.
+
+    This one must keep passing. The release a recovery schedules is a timer,
+    and the risk when suspension state is shared rather than per-suspension is
+    that the older timer comes due and drops the newer condition's hold.
+    """
+    sig = hw.bool_sig
+    sig.put(0)
+    susp = SuspendBoolHigh(sig, sleep=0.5)
+    RE.install_suspender(susp)
+
+    threading.Timer(0.1, sig.put, (1,)).start()  # goes bad
+    threading.Timer(0.3, sig.put, (0,)).start()  # recovers: release due at 0.8
+    threading.Timer(0.4, sig.put, (1,)).start()  # goes bad again, inside the window
+    threading.Timer(1.0, sig.put, (0,)).start()  # recovers for good: release due at 1.5
+
+    start = ttime.time()
+    RE([Msg("checkpoint"), Msg("sleep", None, 0.1), Msg("null")])
+    elapsed = ttime.time() - start
+
+    assert elapsed > 1.4, "the release scheduled by the first recovery must not free the plan"
