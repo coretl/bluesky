@@ -2,9 +2,10 @@
 
 Worktree `/workspaces/bluesky/.claude/worktrees/runengine-split`, branch
 `runengine-split`. **Rebased onto `origin/main` `a6a9ecfb6`**, tree clean, nothing
-pushed -- coretl `runengine-split` is stale by 43 commits because the rebase gave
-every commit a new SHA. coretl PR #3 is a private staging area for the upstream PR
-Tom will eventually make; force-pushing it needs no ceremony.
+pushed -- coretl `runengine-split` is stale, both because the rebase gave every
+commit a new SHA and because of the twelve commits added since. coretl PR #3 is a
+private staging area for the upstream PR Tom will eventually make; force-pushing
+it needs no ceremony.
 
 ## Read these three, in this order
 
@@ -18,15 +19,25 @@ Tom will eventually make; force-pushing it needs no ceremony.
 
 ## What happened this session
 
-The rebase onto main, which brought in #1923 (`Subscribable.subscribe_reading`) and
-#2052 (the `CallbackRegistry` classmethod fix -- PR2 was carrying its own copy of
-that fix, and main's version won). Then a long design pass over `classes.py` with
-Tom. Nothing has been implemented yet: every commit this session is docs.
+First the rebase onto main, which brought in #1923
+(`Subscribable.subscribe_reading`) and #2052 (the `CallbackRegistry` classmethod
+fix -- PR2 was carrying its own copy, and main's version won). Then a long design
+pass over `classes.py` with Tom. Then implementation, additively, of everything
+that pass settled.
 
-Local suite after the rebase: **1862 passed**, 2 known environmental failures
-(`test_buffering::test_callback_logging_exceptions`,
-`test_tiled_writer::test_imports_raise_warnings`) plus the psutil errors.
-`mypy src` clean outside `_vendor`.
+**Twelve commits of implementation are in.** The notes file lists them with SHAs
+and says what each pinning test caught. In short: the three pin commits, then the
+permit simplification, dispatcher chaining, the `emit` collapse, `identity`, the
+`md` snapshot, the prologue move, deleting `RunEngine.request_suspend`, and the
+two documentation pages.
+
+One pinning test found a live bug rather than a designed change:
+`RE.clear_suspenders()` could not empty `RE.suspenders`, because the executor
+still held a stale copy of the session's set -- the copy the design had already
+decided to delete. Caswell's beam-down escape hatch was broken on the branch, and
+nothing else would have noticed.
+
+**Nothing has been pushed.**
 
 ## The plan
 
@@ -35,8 +46,8 @@ reviewable.
 
 | # | commit | additive to main? |
 |---|---|---|
-| 0a | pin suspension semantics: two conditions at once, trip while paused, re-trip inside `sleep`, no-checkpoint abort | yes |
-| 0b | pin the session/plan boundary: `Msg` install/remove in a plan, `clear_suspenders` while paused then resume, `RE.md` mid-plan, monitor callback thread | yes |
+| 0a | pin suspension semantics: two conditions at once, trip while paused, re-trip inside `sleep` | yes -- **done** |
+| 0b | pin the session/plan boundary: `Msg` install/remove in a plan, `clear_suspenders` while paused then resume, `RE.md` mid-plan, monitor callback thread | yes -- **done** |
 | 1 | `permits.py` -- `Permit`, `Suspension`, tests | yes |
 | 2 | give `Dispatcher` a parent | yes |
 | 3 | suspenders withhold a permit instead of holding the RunEngine | |
@@ -48,7 +59,18 @@ reviewable.
 | 9 | collapse `emit`/`emit_sync` into one synchronous `emit` | |
 | 10 | narrow the public surface: privatise, delete `request_suspend` and `run_engine_cls` | |
 
-Plus two docs commits, which ship in the PR:
+Rows 1-10 describe how the work will be *presented*, not how it was built. The
+tree currently holds it as twelve additive commits; the restructure into this
+shape is step 4 of the working order below and has not started.
+
+The only piece of row 10 still unwritten is the privatisation sweep: `env`,
+`loop`, `rewind`, `unbound_default_commands`, `command_registry`, `permit`,
+`dispatcher`, and the `exception`/`exit_status`/`reason` trio. Several are wired
+into `run_engine.py`'s `_FORWARDS_WITH_CALLERS` and
+`_FORWARDS_WITHOUT_KNOWN_CALLERS` maps, which have to move with them, so it wants
+one focused commit rather than a partial pass.
+
+Two docs commits, which ship in the PR -- **both written** (`98a82e780`):
 
 - `docs/architecture.rst` -- autodoc/autosummary over the real classes with
   narrative between, on what pokes what. Autodoc rather than a copied listing so it
@@ -59,8 +81,10 @@ Plus two docs commits, which ship in the PR:
   emit no un-ignored warning (`filterwarnings = ["error", ...]`) and wrap async in
   `asyncio.run`.
 
-`pin-scan-id-and-rewindable` is an existing branch with one pinning commit already
-written against main (+55 lines to `test_run_engine.py`). Fold it into 0b.
+`pin-scan-id-and-rewindable` held one pinning commit written against main. It has
+been rebased onto current main and cherry-picked in as `7d0004e4d`. Its subject
+uses a lowercase `test:` where the repo uses `TST:` -- normalise it at the
+restructure step.
 
 ## Working order, set by Tom
 
@@ -92,6 +116,19 @@ The `design/` commits do not go upstream. Drop them at the restructure step.
 
     PYTHONPATH=$PWD/src /venv/bin/python -m pytest src/bluesky/tests/ -q -p no:randomly \
         --ignore=src/bluesky/tests/test_streams.py
+
+Split it around the SIGINT flake, which aborts the run part way -- add
+``--ignore=src/bluesky/tests/test_run_engine.py`` and run that file separately
+with ``-k "not sigint"``.
+
+The docs now carry doctests, which the usual recipe does not collect because it
+passes a path. Run ``pytest docs/headless.rst`` as well; CI gets them for free,
+since it runs bare ``pytest`` from the root and ``addopts`` carries
+``--doctest-glob="*.rst"``.
+
+Building the docs needs ``PYTHONPATH=$PWD/src`` too. Without it sphinx imports
+the venv's installed bluesky, which has no ``permits`` module, and autodoc fails
+on every class in ``architecture.rst``.
 
 Put `/venv/bin` on `PATH` or the ruff pre-commit hook fails with "Executable `ruff`
 not found".
