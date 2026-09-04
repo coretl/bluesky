@@ -635,3 +635,67 @@ def test_retrip_inside_sleep_does_not_release_early(RE, hw):
     elapsed = ttime.time() - start
 
     assert elapsed > 1.4, "the release scheduled by the first recovery must not free the plan"
+
+
+def test_suspender_installed_by_a_plan_is_visible_and_outlives_it(RE, hw):
+    """Characterization test: ``Msg('install_suspender')`` installs durably.
+
+    The message is the same call as ``RE.install_suspender``, so a suspender a
+    plan installs for itself is visible in ``RE.suspenders`` from inside that
+    plan, and is still installed after the plan has ended. That is why
+    ``suspend_wrapper`` has to remove it by hand.
+    """
+    sig = hw.bool_sig
+    sig.put(0)
+    susp = SuspendBoolHigh(sig)
+    seen = []
+
+    def note():
+        yield Msg("install_suspender", None, susp)
+        seen.append(("after install", susp in RE.suspenders))
+        yield Msg("remove_suspender", None, susp)
+        seen.append(("after remove", susp in RE.suspenders))
+        yield Msg("install_suspender", None, susp)
+
+    RE(note())
+
+    assert seen == [("after install", True), ("after remove", False)]
+    assert susp in RE.suspenders, "the one left installed outlives the plan"
+    RE.clear_suspenders()
+
+
+def test_clear_suspenders_while_paused_then_resume(RE, hw):
+    """Characterization test: the escape hatch beamline staff actually use.
+
+    Beam goes down, the plan suspends, the user interrupts to get a prompt,
+    clears the suspenders and resumes::
+
+        RE(my_plan())
+        C-c
+        RE.clear_suspenders()
+        RE.resume()
+
+    Clearing must both uninstall the suspender and release the hold it has on
+    the plan, or the resumed plan waits forever with nothing left to free it.
+    """
+    sig = hw.bool_sig
+    sig.put(1)  # beam is already down
+    susp = SuspendBoolHigh(sig)
+    RE.install_suspender(susp)
+
+    m_coll = MsgCollector()
+    RE.msg_hook = m_coll
+
+    threading.Timer(0.5, RE.request_pause).start()
+    with pytest.raises(RunEngineInterrupted):
+        RE([Msg("checkpoint"), Msg("null")])
+    assert RE.state == "paused"
+    assert susp.tripped, "still held by the condition"
+
+    RE.clear_suspenders()
+    assert RE.suspenders == ()
+
+    RE.resume()
+    assert RE.state == "idle", "the plan ran to the end rather than waiting forever"
+    assert [msg.command for msg in m_coll.msgs][-1] == "null"
+    sig.put(0)

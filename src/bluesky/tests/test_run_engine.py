@@ -2797,3 +2797,73 @@ def test_abs_set_fails(RE, wait):
 
     with pytest.raises(FailedStatus):
         RE(abs_set(device, 10, wait=wait))
+
+
+def test_md_mutated_midplan_reaches_the_running_plan(RE, hw):
+    """Characterization test: ``RE.md`` is read live by the plan in flight.
+
+    The RunEngine holds one metadata mapping and reads it as each run opens,
+    so a key added part way through a plan lands in the runs that open after
+    it and not in the ones already opened. A plan whose environment is frozen
+    when it is launched would put the key in neither.
+    """
+    starts = []
+    RE.subscribe(lambda name, doc: starts.append(doc), "start")
+
+    def plan():
+        yield Msg("open_run")
+        yield Msg("close_run")
+        RE.md["pinned_midplan"] = "written while the plan was running"
+        yield Msg("open_run")
+        yield Msg("close_run")
+
+    try:
+        RE(plan())
+
+        assert len(starts) == 2
+        assert "pinned_midplan" not in starts[0], "already open when the key was written"
+        assert starts[1]["pinned_midplan"] == "written while the plan was running"
+    finally:
+        RE.md.pop("pinned_midplan", None)
+
+
+def test_monitor_documents_arrive_off_the_loop_thread(RE, hw):
+    """Characterization test: a monitored synchronous signal calls subscribers
+    on the device's thread, not the RunEngine's.
+
+    Status callbacks are marshalled onto the loop -- ``_add_status_to_group``
+    does nothing but ``call_soon_threadsafe`` -- but monitor emission goes
+    straight through to the dispatcher from wherever the signal fired. So a
+    subscriber can be re-entered concurrently by the device thread and the
+    loop, and there is no single order over the document stream.
+    """
+    event_threads = []
+    loop_thread = []
+
+    async def note_loop_thread():
+        loop_thread.append(threading.current_thread().name)
+
+    def cb(name, doc):
+        if name == "event":
+            event_threads.append(threading.current_thread().name)
+
+    RE.subscribe(cb)
+    sig = hw.bool_sig
+    sig.put(0)
+
+    def plan():
+        yield Msg("wait_for", None, [note_loop_thread])
+        yield Msg("open_run")
+        yield Msg("monitor", sig, name="mon")
+        yield Msg("sleep", None, 0.3)
+        yield Msg("unmonitor", sig)
+        yield Msg("close_run")
+
+    threading.Timer(0.1, sig.put, (1,)).start()
+    RE(plan())
+
+    assert loop_thread == ["bluesky-run-engine"]
+    assert event_threads, "the monitor produced at least one event"
+    assert set(event_threads) - {"bluesky-run-engine"}, (
+        "at least one monitor document reached subscribers off the loop thread"
+    )
