@@ -40,37 +40,7 @@ demo branch with latency and plan-throughput measurements -- including the slow
 subscriber case, which is the number that actually decides it -- if that would
 help.
 
-## 2. Should `RE.suspenders` report a plan's own suspenders?
-
-> report the session and the executors
-
-**Reopened.** We built the union you asked for, and are now going the other way.
-Flagging it rather than quietly diverging.
-
-The rewrite gives suspension a `Permit`: an object that is granted unless
-something has a reason to withhold it. A session holds one, and each plan gets a
-child of it, so a suspender installed on the session holds up every plan and one
-installed from inside a plan, via `Msg('install_suspender')`, holds up only that
-plan. A suspender's only collaborator becomes the permit it was installed on.
-
-On `main` there is one place to install, so `RE.suspenders` lists everything.
-With the split there are two.
-
-The reason for changing our minds is symmetry with the two neighbours that have
-the same shape. `RE.commands` reports the session's vocabulary, not the vocabulary
-the running plan was built with. `RE.subscribe` reaches the session's dispatcher,
-not the running plan's. Suspenders were the odd one out, reporting a union that
-neither of the others does. Making all three mean "the durable ones, those that
-outlive any plan" is one rule rather than three cases.
-
-What it costs: a suspender a plan installed for itself is not enumerable from
-outside that plan. It still holds that plan up, is still removed when the plan
-ends, and `Msg('remove_suspender')` still reaches it from inside.
-
-**What we need from you:** whether a plan's own suspenders being invisible at the
-prompt is acceptable, given `RE.suspenders` is public API today.
-
-## 3. Clearing suspenders: a message, and a shutdown mode
+## 2. Clearing suspenders: a message, and a shutdown mode
 
 Caswell, unprompted:
 
@@ -95,11 +65,10 @@ beam-down suspender is durable, so it is the session's, and
 the plan. `SuspenderBase.remove` grants the permit back, so `RE.resume()` is not
 immediately re-held.
 
-**But it is also the one case narrowing breaks.** If a plan-local suspender is
-tripped too, `RE.clear_suspenders()` cannot reach it and `resume()` hangs with no
-way out at the prompt. Proposal: split the symmetry deliberately -- `RE.suspenders`
-*reports* the session's, and `RE.clear_suspenders()` *clears* everything it can
-reach, the running plan's included. A report and an escape hatch need not agree.
+We briefly narrowed `RE.suspenders` and `RE.clear_suspenders` to the session's,
+and this note is what talked us out of it: with a plan-local suspender tripped too,
+the prompt would have had no way to clear it and resume. Both report and clear the
+union, as you originally asked. See closed question 2.
 
 **Shutdown mode: an override reads better than clearing.** Clearing is
 destructive -- everything must be reinstalled afterwards, and in the workflow above
@@ -114,6 +83,22 @@ second concept rather than a quiet flag.
 only cover a plan's own, and whether an override is the shutdown control you meant.
 
 # Closed questions
+
+## 2. Should `RE.suspenders` report a plan's own suspenders?
+
+> report the session and the executors
+
+Built as you asked, then briefly changed to the session's only for symmetry with
+`RE.commands` and `RE.subscribe`, then changed back. Your clear_suspenders note is
+what settled it: narrowing leaves a paused plan held by a plan-local suspender with
+no way to clear it from the prompt, and that escape hatch matters more than the
+symmetry. `RE.suspenders` and `RE.clear_suspenders` both cover the union.
+
+The executor reports only the suspenders its own plan installed, and the RunEngine
+unions that with the session's. It does not hold a copy of the session's, which is
+what an earlier build did -- the copy went stale whenever a durable suspender was
+installed while a plan was already running.
+
 
 ## Freezing at the launch of execute
 
