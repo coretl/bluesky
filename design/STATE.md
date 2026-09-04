@@ -42,6 +42,19 @@ Targeted tests pass (84: test_plan_executor, test_permits, test_suspenders),
 ruff and format clean. **The full suite has not been run since these edits** --
 that run was interrupted. Run it, then commit and push.
 
+## CI
+
+PR1's full matrix passed (run `33883297995`). PR2's was still in progress at
+handover, on `bbf693ee3`. Check it first:
+
+    gh run list --repo coretl/bluesky --branch runengine-split --limit 3
+
+CI runs `mypy src` and the tests under coverage, which is roughly twice as slow
+as here -- several tests in this suite are calibrated against wall-clock time,
+so expect nought to two timing failures on any given run. `test_sigint_during_
+suspender_active` failing is *not* one of those: that is the startup race
+`7e2875b96` fixed, and it should stay fixed.
+
 ## Test recipe
 
     PYTHONPATH=$PWD/src /venv/bin/python -m pytest src/bluesky/tests/ -q -p no:randomly \
