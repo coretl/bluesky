@@ -2,6 +2,44 @@
  Release History
 =================
 
+Unreleased
+==========
+
+Changed
+-------
+- Suspension now goes through a ``Permit``: permission to run, held open unless
+  something has a reason to withhold it.  ``RunEngine.permit`` is the one an
+  installed suspender withholds.  ``RunEngine.install_suspender`` is unchanged.
+- ``SuspenderBase.install`` takes the permit to withhold rather than a
+  ``RunEngine``.  Passing a ``RunEngine`` still works, with a
+  ``DeprecationWarning``, and does a durable install on it as before.
+- Two conditions going bad at once are now one suspension carrying both
+  justifications, rather than one suspension each.  The plan rewinds once.
+  Each suspender still runs its own pre-plan when its condition fires, and
+  post-plans run in the reverse order, so **pre- and post-plans should be
+  idempotent**.
+- A suspender that trips while the plan is paused now suspends it when it
+  resumes.  Previously the trip was dropped, and no later trip could suspend
+  that plan either.
+- A suspender that recovers and trips again within its ``sleep`` period stays
+  tripped.  Previously the release scheduled by the recovery could come due and
+  clear the newer condition.
+- A suspension requested with no checkpoint to rewind to aborts without also
+  queueing a suspension onto the plan stack being torn down.
+
+Removed
+-------
+- ``SuspenderBase.get_futures`` and ``SuspenderBase.RE``.  Whether a suspender
+  is tripped is ``SuspenderBase.tripped``; what it holds up is
+  ``RunEngine.permit``.
+
+Deprecated
+----------
+- ``RunEngine.request_suspend``.  Suspension is raised by withholding
+  ``RunEngine.permit``, which is what an installed suspender does.  A
+  suspension raised through ``request_suspend`` does not merge with one raised
+  by a suspender.
+
 v1.15.1 (2026-05-05)
 ====================
 

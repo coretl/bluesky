@@ -19,10 +19,15 @@ class SuspenderBase(metaclass=ABCMeta):
         before marking the event as done.  Defaults to 0
 
     pre_plan : iterable or iterator or generator function, optional
-            a generator, list, or similar containing `Msg` objects
+            a generator, list, or similar containing `Msg` objects, run when
+            this suspender's condition goes bad. Make it idempotent: another
+            condition may already have suspended the plan, and each suspender
+            runs its own pre-plan when it fires.
 
     post_plan : iterable or iterator or generator function, optional
-            a generator, list, or similar containing `Msg` objects
+            a generator, list, or similar containing `Msg` objects, run before
+            the plan resumes. Post-plans run in the reverse of the order their
+            pre-plans did, so the last condition to go bad is the first undone.
 
     tripped_message : str, optional
         Message to include in the trip notification
