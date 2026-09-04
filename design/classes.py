@@ -163,9 +163,6 @@ class PlanEnvironment:
     run_bundler_cls: type[RunBundler]
     """Composes the documents for each open run."""
 
-    run_engine_cls: type | None
-    """What ``Msg('RE_class')`` reports; None means the executor answers for itself."""
-
     record_interruptions: bool
     """Whether interruptions get their own event stream."""
 
@@ -197,7 +194,6 @@ class PlanSession:
     md_validator: Callable[[dict[str, Any]], None]
     md_normalizer: Callable[[dict[str, Any]], dict[str, Any]]
     run_bundler_cls: type[RunBundler]
-    run_engine_cls: type | None
     record_interruptions: bool
     strict_pre_declare: bool
     rewindable: bool
