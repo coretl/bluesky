@@ -781,19 +781,12 @@ class PlanSession:
             :meth:`RunEngine.__call__` accepts.
 
         """
-        # Wait for any already-tripped suspenders before the plan starts.
-        # A suspension proper cannot do this job: there is no checkpoint yet
-        # to rewind to, so `request_suspend` would abort the plan instead of
-        # holding it. Hence a prologue, in-band, ahead of the plan's own first
-        # message. Belongs here rather than in a RunEngine, which is why
-        # headless callers used to miss it entirely.
         # This plan's own permit, under the session's. A suspender the plan
         # installs holds up this plan; one installed on the session holds up
         # every plan it runs, and the chain is what makes those one mechanism.
+        # An already-withheld permit holds the plan at its first message; the
+        # executor arranges that for itself.
         permit = Permit("plan", self._loop, parent=self.permit)
-        prologue = None
-        if not self.permit.granted:
-            prologue = single_gen(Msg("wait_for", None, [permit.wait_granted]))
 
         return PlanExecutor(
             plan,
@@ -820,7 +813,6 @@ class PlanSession:
             rewindable=self.rewindable,
             metadata=metadata,
             subs=subs,
-            prologue=prologue,
             dispatcher=Dispatcher(parent=self.dispatcher),
             hooks=self.hooks,
             identity=self.identity,
@@ -895,9 +887,6 @@ class PlanExecutor:
         Metadata for every run this plan opens.
     subs : callable, list, or dict, optional
         Subscriptions lasting only as long as this plan.
-    prologue : iterable of Msg, optional
-        Messages to work off before the plan itself. A session uses this to
-        wait for already-tripped suspenders.
     dispatcher : Dispatcher, optional
         Where this plan's documents go, and where subscriptions made for this
         plan live. Normally built with the session's as its parent, so that
@@ -943,7 +932,6 @@ class PlanExecutor:
         *,
         metadata: dict | None = None,
         subs=None,
-        prologue=None,
         dispatcher: "Dispatcher | None" = None,
         hooks: PlanHooks | None = None,
         identity: typing.Any = None,
@@ -1060,8 +1048,13 @@ class PlanExecutor:
             gen = wrapper_func(gen)
         self._plan_stack.append(gen)
         self._response_stack.append(None)
-        if prologue is not None:
-            self._plan_stack.append(prologue)
+        if not self.permit.granted:
+            # Something is already withholding this plan's permit -- a
+            # suspender tripped before the plan was built. Wait for it in band,
+            # ahead of the plan's first message. A suspension proper cannot do
+            # this job: there is no checkpoint yet to rewind to, so requesting
+            # one would abort the plan rather than hold it.
+            self._plan_stack.append(single_gen(Msg("wait_for", None, [self.permit.wait_granted])))
             self._response_stack.append(None)
 
     # The hooks are the session's; firing one, and checking whether it is set

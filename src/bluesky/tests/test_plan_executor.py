@@ -203,16 +203,27 @@ def test_a_setting_reaches_the_next_plan_and_not_the_running_one():
     asyncio.run(main())
 
 
-def test_metadata_is_handed_over_and_never_copied():
-    """A PersistentDict must reach the plan as itself, not as a copy."""
+def test_metadata_is_snapshotted_and_the_session_keeps_its_own_store():
+    """A plan reads the metadata as it stood when the plan was launched.
+
+    The session's mapping is never replaced -- a ``PersistentDict`` stays the
+    session's -- and never handed over either, so writing to it does not reach
+    a plan already running.
+    """
 
     async def main():
         session = PlanSession()
-        replacement = {"replaced": True}
-        session.md = replacement
+        store = {"from_the_store": True}
+        session.md = store
         executor = session.make_executor([Msg("null")])
-        # Swapping the mapping is enough: nothing else holds the old one.
-        assert executor.env.md is replacement
+
+        assert executor.env.md == {"from_the_store": True}
+        assert executor.env.md is not store, "a copy of the contents, not the store"
+
+        session.md["written_after_launch"] = True
+        assert "written_after_launch" not in executor.env.md
+        assert session.md is store, "and the session still holds what it was given"
+
         await executor.run()
 
     asyncio.run(main())
