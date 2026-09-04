@@ -293,6 +293,16 @@ See the API documentation (follow the links in the table below) for other
 suspender types and options, including a waiting period and cleanup
 procedures to run pre-suspend and pre-resume.
 
+.. note::
+
+   **Write pre- and post-plans to be idempotent.** More than one condition can
+   be bad at once, and each suspender runs its own pre-plan when its condition
+   fires -- in the order they fired, with the post-plans unwinding in the
+   reverse of it. A second suspender tripping while the plan is already
+   suspended will run its pre-plan then, so a pre-plan that closes a shutter
+   should tolerate the shutter already being closed. Otherwise two overlapping
+   conditions leave you with open-close-open.
+
 Built-in Suspenders
 -------------------
 
