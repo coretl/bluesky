@@ -2799,13 +2799,17 @@ def test_abs_set_fails(RE, wait):
         RE(abs_set(device, 10, wait=wait))
 
 
-def test_md_mutated_midplan_reaches_the_running_plan(RE, hw):
-    """Characterization test: ``RE.md`` is read live by the plan in flight.
+def test_md_written_midplan_takes_effect_on_the_next_plan(RE, hw):
+    """``RE.md`` is snapshotted as a plan is launched.
 
-    The RunEngine holds one metadata mapping and reads it as each run opens,
-    so a key added part way through a plan lands in the runs that open after
-    it and not in the ones already opened. A plan whose environment is frozen
-    when it is launched would put the key in neither.
+    Was: the RunEngine held one metadata mapping and read it as each run
+    opened, so a key added part way through a plan landed in the runs opened
+    after it. Now each plan is given a copy of the metadata as it stands when
+    the plan is launched, so a plan's environment does not change under it, and
+    the write takes effect for the next plan instead.
+
+    ``scan_id`` deliberately still comes from the session, because the counter
+    is durable and two plans must never be handed the same id.
     """
     starts = []
     RE.subscribe(lambda name, doc: starts.append(doc), "start")
@@ -2821,8 +2825,12 @@ def test_md_mutated_midplan_reaches_the_running_plan(RE, hw):
         RE(plan())
 
         assert len(starts) == 2
-        assert "pinned_midplan" not in starts[0], "already open when the key was written"
-        assert starts[1]["pinned_midplan"] == "written while the plan was running"
+        assert "pinned_midplan" not in starts[0]
+        assert "pinned_midplan" not in starts[1], "the running plan kept the metadata it started with"
+
+        RE([Msg("open_run"), Msg("close_run")])
+        assert starts[2]["pinned_midplan"] == "written while the plan was running"
+        assert starts[2]["scan_id"] == starts[1]["scan_id"] + 1, "the counter is still the session's"
     finally:
         RE.md.pop("pinned_midplan", None)
 

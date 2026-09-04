@@ -356,13 +356,14 @@ class PlanEnvironment:
     -- are arguments to `PlanExecutor` instead, so that this stays a
     description of the environment rather than a bag of constructor arguments.
 
-    ``md`` is the exception that proves the rule. It is shared by reference, so
-    its *contents* still change -- but the executor only ever reads it, and
-    never writes to it at all. The per-run ``scan_id`` is computed by the
-    session through ``next_scan_id``, which hands the value back rather than
-    leaving the caller to read it out of ``md``: two executors may be running
-    plans on one session at once, and each must use the id it was given rather
-    than whatever the other has since stored.
+    ``md`` is no exception: it is a snapshot taken as the executor is built, so
+    writing to the session's metadata takes effect for the next plan and not
+    the one already running. The per-run ``scan_id`` is the one thing that does
+    reach past it, because the counter is durable -- the session computes it
+    through ``next_scan_id``, which hands the value back rather than leaving
+    the caller to read it out of ``md``: two executors may be running plans on
+    one session at once, and each must use the id it was given rather than
+    whatever the other has since stored.
 
     Attributes
     ----------
@@ -371,12 +372,14 @@ class PlanEnvironment:
     log
         Where the executor logs to.
     md
-        Persistent metadata, read-only to the executor. Not necessarily a
-        ``dict``: `bluesky.utils.PersistentDict` is a supported choice, so this
-        must never be copied.
+        The metadata this plan runs under, snapshotted as its executor was
+        built. A plain ``dict``, copied from whatever the session holds -- a
+        `bluesky.utils.PersistentDict` is a supported choice there, and only
+        its contents are copied, never the store itself.
     next_scan_id
         Called by the executor as each run opens, and returns the ``scan_id``
-        for that run. The session computes it, stores it in ``md`` as the
+        for that run. Reaches past the snapshot on purpose: the counter is
+        durable, so the session computes it, stores it in its own ``md`` as the
         starting point for the next one, and returns it; concurrent callers are
         serialised so that no two runs are given the same id.
     md_validator
@@ -521,9 +524,10 @@ class PlanSession:
         tripped, and waited on by every plan this session runs.
 
     md
-        Persistent metadata, surviving every plan. Not necessarily a ``dict``:
-        `bluesky.utils.PersistentDict` is a supported choice, which is why it
-        is never copied -- an executor is handed this very mapping to read.
+        Persistent metadata, surviving every plan, and the counter behind
+        ``scan_id``. Not necessarily a ``dict``: `bluesky.utils.PersistentDict`
+        is a supported choice, and is never replaced -- each plan is given a
+        copy of its contents to read.
 
     The rest are settings, read as `make_executor` builds each plan's
     `PlanEnvironment`, so that changing one affects the next plan and never the
@@ -800,7 +804,11 @@ class PlanSession:
             PlanEnvironment(
                 loop=self._loop,
                 log=self.log,
-                md=self.md,
+                # A snapshot: a plan's environment does not change under it,
+                # so writing to `session.md` takes effect for the next plan.
+                # The contents only -- whatever store the session was given
+                # stays the session's, and `next_scan_id` writes through to it.
+                md=dict(self.md),
                 next_scan_id=self._next_scan_id,
                 md_validator=self.md_validator,
                 md_normalizer=self.md_normalizer,

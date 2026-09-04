@@ -80,6 +80,13 @@ Changed
   plan already running, not only those installed afterwards.  Each plan's
   subscribers live in their own dispatcher, and a dispatcher answers for its
   parent rather than copying the setting when it is built.
+- ``RunEngine.md`` is snapshotted as a plan is launched, so writing to it part
+  way through a plan takes effect for the next plan rather than the runs the
+  current one has yet to open.  A plan's environment no longer changes under
+  it.  ``scan_id`` still comes from the RunEngine's own metadata, because the
+  counter is durable and two plans must never be handed the same id.  Whatever
+  mapping ``RE.md`` is -- a ``PersistentDict``, say -- stays where it is; only
+  its contents are copied.
 - ``RunEngine.emit`` is synchronous.  There was a synchronous ``emit_sync`` and
   a coroutine ``emit`` doing the same work; awaiting the latter never
   suspended.  ``RunBundler`` therefore takes one ``emit`` argument rather than
