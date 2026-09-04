@@ -290,3 +290,38 @@ def test_a_trip_just_after_the_plan_starts_still_suspends(RE, hw):
 
     assert delta > 0.4, "the trip was not swallowed"
     assert commands.count("_start_suspender") == 1, "and it suspended rather than merely waiting"
+
+
+def test_installing_a_suspender_on_the_run_engine_still_works(RE, hw):
+    """`install(RE)` was the old spelling. It warns, and installs durably."""
+    sig = hw.bool_sig
+    sig.put(0)
+    susp = SuspendBoolHigh(sig)
+
+    with pytest.warns(DeprecationWarning, match="takes the permit"):
+        susp.install(RE)
+
+    assert susp in RE.suspenders, "installed durably, as it used to be"
+    sig.put(1)
+    assert not RE.permit.granted, "and it withholds the engine's permit"
+    sig.put(0)
+    assert RE.permit.granted
+
+
+def test_request_suspend_still_works_and_warns(RE, hw):
+    """Deprecated, because suspension is raised by withholding the permit."""
+    sig = hw.bool_sig
+    sig.put(0)
+    ev = asyncio.Event()
+
+    def suspend_by_hand():
+        with pytest.warns(DeprecationWarning, match="withholding"):
+            RE.request_suspend(ev.wait)
+
+    _at(0.1, suspend_by_hand)
+    _at(0.5, RE.loop.call_soon_threadsafe, ev.set)
+    start = ttime.time()
+    RE(SCAN)
+    delta = ttime.time() - start
+
+    assert delta > 0.4, "the hand-rolled suspension still held the plan"
