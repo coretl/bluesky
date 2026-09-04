@@ -1,135 +1,101 @@
 # State at 2026-09-04, end of session
 
 Worktree `/workspaces/bluesky/.claude/worktrees/runengine-split`, branch
-`runengine-split`, tracking `coretl/runengine-split` = **coretl/bluesky PR #3**.
-Branch was force-pushed to start from `origin/main` (`6a82217aa`); the previous
-head is `f81005717` if anything is needed back.
+`runengine-split`. **Rebased onto `origin/main` `a6a9ecfb6`**, tree clean, nothing
+pushed -- coretl `runengine-split` is stale by 43 commits because the rebase gave
+every commit a new SHA. coretl PR #3 is a private staging area for the upstream PR
+Tom will eventually make; force-pushing it needs no ceremony.
 
-Read `classes.py` (the target interface), `suspension-permits.md` (the spec) and
-`questions-for-tom-caswell.md` (six questions, five answered inline by Caswell).
+## Read these three, in this order
 
-## Commits, oldest first
+1. `/workspaces/bluesky/.claude/notes/runengine-split-interface.md` -- every
+   decision with its reasoning, the working order, and what is still open. This is
+   the important one; it is untracked, so it does not travel with the branch.
+2. `design/classes.py` -- the agreed interface, one line per item. No prose: it all
+   lives in the notes.
+3. `design/questions-for-tom-caswell.md` -- restructured into open and closed
+   questions.
 
-| commit | what |
-|---|---|
-| `698c5be39` | **PR1**: suspension through a `Permit`, on `main` |
-| `487166aa9` | the design docs (not for upstream) |
-| `951affa34` | two more questions for Caswell |
-| `482e5098b` | acting on Caswell's answers |
-| `49477897d` | docs: pre-plans must be idempotent, api_changes |
-| `7e2875b96` | fix: don't swallow a trip that lands as the plan starts |
-| `072f6bac6` | tests for the two deprecated routes |
-| `6358cee44` | **PR2**: split RunEngine into PlanSession + PlanExecutor |
+## What happened this session
 
-**PR1 for upstream is `698c5be39` plus `482e5098b`, `49477897d`, `7e2875b96`,
-`072f6bac6`.** PR2 is `6358cee44`. The docs commits do not go upstream.
+The rebase onto main, which brought in #1923 (`Subscribable.subscribe_reading`) and
+#2052 (the `CallbackRegistry` classmethod fix -- PR2 was carrying its own copy of
+that fix, and main's version won). Then a long design pass over `classes.py` with
+Tom. Nothing has been implemented yet: every commit this session is docs.
 
-## UNCOMMITTED — finish this first
+Local suite after the rebase: **1862 passed**, 2 known environmental failures
+(`test_buffering::test_callback_logging_exceptions`,
+`test_tiled_writer::test_imports_raise_warnings`) plus the psutil errors.
+`mypy src` clean outside `_vendor`.
 
-`src/bluesky/plan_executor.py` and `src/bluesky/run_engine.py` are modified and
-**not committed**. The change reconciles the built classes with `classes.py`:
+## The plan
 
-- `Hooks` renamed to `PlanHooks`
-- `adopt_suspender` deleted (no callers; a running plan's permit is a child of
-  the session's, so nothing needs telling)
-- the executor's `install_suspender` / `remove_suspender` became
-  `_install_suspender_now` / `_remove_suspender_now`, reachable only through
-  `Msg`, per the rule that plan-local things are only reachable from inside the
-  plan
-- `RunEngine.remove_suspender` no longer also calls the executor's
+PR1/PR2 is abandoned: one branch, one series of ~12 commits, each individually
+reviewable.
 
-Targeted tests pass (84: test_plan_executor, test_permits, test_suspenders),
-ruff and format clean. **The full suite has not been run since these edits** --
-that run was interrupted. Run it, then commit and push.
+| # | commit | additive to main? |
+|---|---|---|
+| 0a | pin suspension semantics: two conditions at once, trip while paused, re-trip inside `sleep`, no-checkpoint abort | yes |
+| 0b | pin the session/plan boundary: `Msg` install/remove in a plan, `clear_suspenders` while paused then resume, `RE.md` mid-plan, monitor callback thread | yes |
+| 1 | `permits.py` -- `Permit`, `Suspension`, tests | yes |
+| 2 | give `Dispatcher` a parent | yes |
+| 3 | suspenders withhold a permit instead of holding the RunEngine | |
+| 4 | move plan execution into `plan_executor.py` -- **pure move**, nothing renamed | |
+| 5 | split into `PlanSession` + `PlanExecutor`, with `PlanEnvironment`, `PlanHooks`, `identity` | |
+| 6 | chain permits and dispatchers per plan: plan-local suspenders and subscribers | |
+| 7 | one suspension per episode; pre-plans as they fire, post-plans in reverse | |
+| 8 | don't swallow a condition that goes bad as the plan starts | |
+| 9 | collapse `emit`/`emit_sync` into one synchronous `emit` | |
+| 10 | narrow the public surface: privatise, delete `request_suspend` and `run_engine_cls` | |
 
-## CI
+Plus two docs commits, which ship in the PR:
 
-PR1's full matrix passed (run `33883297995`). PR2's was still in progress at
-handover, on `bbf693ee3`. Check it first:
+- `docs/architecture.rst` -- autodoc/autosummary over the real classes with
+  narrative between, on what pokes what. Autodoc rather than a copied listing so it
+  cannot drift, which is what the one-line-per-item rule bought.
+- `docs/headless.rst` -- driving a session and executor with no RunEngine, every
+  sample tested. Free: `addopts` already carries `--doctest-glob="*.rst"` and CI
+  runs bare `pytest` from the root, so rst doctests are collected. Samples must
+  emit no un-ignored warning (`filterwarnings = ["error", ...]`) and wrap async in
+  `asyncio.run`.
 
-    gh run list --repo coretl/bluesky --branch runengine-split --limit 3
+`pin-scan-id-and-rewindable` is an existing branch with one pinning commit already
+written against main (+55 lines to `test_run_engine.py`). Fold it into 0b.
 
-CI runs `mypy src` and the tests under coverage, which is roughly twice as slow
-as here -- several tests in this suite are calibrated against wall-clock time,
-so expect nought to two timing failures on any given run. `test_sigint_during_
-suspender_active` failing is *not* one of those: that is the startup race
-`7e2875b96` fixed, and it should stay fixed.
+## Working order, set by Tom
+
+1. Build everything **additively** on this branch. Do not restructure while the
+   design is still moving.
+2. Prove it locally: full suite, `mypy src`, ruff, and `pytest docs/` -- the usual
+   recipe passes a path, so it does not collect the doctests.
+3. Push to coretl, check CI.
+4. Split into the series.
+5. Force-push it.
+
+The `design/` commits do not go upstream. Drop them at the restructure step.
+
+## Still open
+
+1. Caswell's Q1, the monitor trampoline. Unanswered, and orthogonal -- nothing in
+   the series waits on it. Collapsing `emit`/`emit_sync` is *not* the trampoline: it
+   does not change which thread a monitor callback runs on.
+2. The unanswered half of Caswell's clear_suspenders note: whether
+   `Msg('clear_suspenders')` should exist when it could only cover a plan's own, and
+   whether an overridable permit is the shutdown control he meant.
+3. #1806 rewrites the same `SuspenderBase.install` we do. Build on `main` and
+   rebase once it merges -- do **not** base the branch on `suspender-signature`,
+   which is still in review and may be force-pushed. The conflict is one method in
+   one file, and resolves the same way whenever: their loop-marshalling stays,
+   sourced from the permit's loop instead of the RunEngine's.
 
 ## Test recipe
 
     PYTHONPATH=$PWD/src /venv/bin/python -m pytest src/bluesky/tests/ -q -p no:randomly \
         --ignore=src/bluesky/tests/test_streams.py
 
-Expect **3 failures**, all environmental and unrelated: `test_buffering.py::
-test_callback_logging_exceptions`, `test_tiled_writer.py::
-test_imports_raise_warnings`, `test_zmq.py::test_proxy_script`, plus 22 psutil
-errors. Last complete run before the uncommitted edits: **1855 passed**.
+Put `/venv/bin` on `PATH` or the ruff pre-commit hook fails with "Executable `ruff`
+not found".
 
-Runs abort intermittently part-way (~1380 passed, ~120s) on the pre-existing
-~21%-flaky SIGINT test. That is not a regression -- re-run, or split the suite
-with `--ignore=src/bluesky/tests/test_run_engine.py` and run that file alone.
-
-`mypy src` is part of CI lint and ruff alone will not catch it. It reports 5
-errors in `src/bluesky/_vendor`, which CI excludes; anything outside `_vendor`
-is ours.
-
-## Deviations from `classes.py` — the thing Tom asked to be told
-
-**Forced by Caswell's answer to Q4** (pre-plans run when their condition fires,
-post-plans in reverse), which needs per-reason access the merged `suspension`
-cannot give:
-
-- `Permit.reasons` is back, alongside `suspension`
-- `Permit.wait_changed()` added, so the supervisor notices conditions joining an
-  episode already in progress
-
-**Deliberate, and worth a look:**
-
-- `SuspenderBase.install` also accepts a `RunEngine`, with a
-  `DeprecationWarning`, doing a durable install -- Caswell asked for exactly
-  this (isinstance, warn, delegate).
-- `RunEngine.request_suspend` is deprecated rather than deleted; it delegates to
-  `_suspend_until`. Caswell said "make private".
-- `RunEngine.permit` is public. `suspender.RE` is gone.
-- `Permit.__init__` needs a real loop -- `grant(after=...)` schedules a timer.
-
-**Still not reconciled** (would need another pass):
-
-- `PlanSession` has more than `classes.py` lists: `clear_suspenders`, and
-  `msg_hook` / `state_hook` / `waiting_hook` / `on_pause` forwards over
-  `session.hooks`. `RunEngine` forwards through them, so removing them means
-  pointing `RunEngine` at `session.hooks` directly.
-- `PlanExecutor` still exposes `block_run`, `permit_run`,
-  `deferred_pause_requested`, `emit`, `env`, `loop`, `request_suspend`,
-  `result`, `rewind`, `suspenders`, `unbound_default_commands`. Most are there
-  because `RunEngine` drives them. `classes.py` lists only `run`, `state`,
-  `resumable`, `rewindable_flag`, the five lifecycle verbs and
-  `run_start_uids` -- so either `classes.py` is missing what a RunEngine
-  legitimately needs, or these want to move behind it. **This is the biggest
-  open gap and worth Tom's opinion before churning it.**
-
-## Decisions already taken (in the spec, with reasoning)
-
-Answered by Tom Cobb: a trip while paused suspends on resume; `Msg('install_
-suspender')` is plan-local; no-checkpoint mid-plan aborts and pushes nothing;
-no weak references in `Permit` -- a permit only ever looks upwards.
-
-Answered by Caswell, in `questions-for-tom-caswell.md`: `RE.suspenders` reports
-session and executors (done); `ignore_callback_exceptions` should become init
-state on the RunEngine (**not done**); pre/post plan ordering (done);
-`install(RE)` warn-and-delegate (done); `request_suspend` private (done).
-
-**Q1, the monitor trampoline, is the one Caswell has not answered.** Note the
-old branch collapsed `emit`/`emit_sync` into one synchronous `emit`; I reverted
-that, because it rode on an unrelated `Subscribable.subscribe` ->
-`subscribe_reading` protocol rename which is not part of this work.
-
-## What is left
-
-1. Run the full suite, commit and push the uncommitted reconciliation.
-2. `ignore_callback_exceptions` as init state on the RunEngine (Caswell's Q3).
-3. Decide the `PlanExecutor` public surface against `classes.py` (above).
-4. Caswell's notes at the top of the questions doc are unaddressed and marked
-   `??` by him: whether command behaviour and `md` should be frozen at the
-   launch of execute. Both are `PlanEnvironment` questions.
-5. `docs/api_changes.rst` covers PR1 only; PR2 needs its own entry.
+`test_sigint_during_suspender_active` and its neighbours are a **known flake Tom
+Caswell is investigating**. They hang rather than fail, on CI too -- ubuntu jobs
+sitting at an hour on PR2's runs are this, not us. Ignore them; do not chase.
