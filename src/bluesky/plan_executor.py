@@ -821,7 +821,7 @@ class PlanSession:
             metadata=metadata,
             subs=subs,
             prologue=prologue,
-            dispatcher=self.dispatcher,
+            dispatcher=Dispatcher(parent=self.dispatcher),
             hooks=self.hooks,
             on_state_change=self._announce_state,
             commands=dict(self._registered_commands),
@@ -899,9 +899,10 @@ class PlanExecutor:
         Messages to work off before the plan itself. A session uses this to
         wait for already-tripped suspenders.
     dispatcher : Dispatcher, optional
-        Subscribers that outlive this plan. Documents go to them before this
-        plan's own, which is the order a single shared registry gave by
-        construction.
+        Where this plan's documents go, and where subscriptions made for this
+        plan live. Normally built with the session's as its parent, so that
+        subscribers outliving the plan see a document first -- the order a
+        single shared registry gave by construction.
     hooks : PlanHooks, optional
         The observation points. Shared with the session, and read live.
     on_state_change : callable, optional
@@ -952,7 +953,6 @@ class PlanExecutor:
         self._env = env
         self._hooks = hooks if hooks is not None else PlanHooks()
         self._on_state_change = on_state_change
-        self._parent_dispatcher = dispatcher
 
         # When cleared, run() will pause until it is set again.
         self._run_permit = asyncio.Event()
@@ -988,16 +988,13 @@ class PlanExecutor:
         # this happens on the event loop, which is why it needs no lock.
         _ = self._state
 
-        # Subscriptions that last only as long as this plan, in a dispatcher
-        # of their own. Making the lifetime structural means teardown is
-        # nothing more than dropping this executor, and it gives plan tokens a
-        # namespace of their own, so a plan cannot unsubscribe a session
-        # callback by guessing an integer.
-        self.dispatcher = Dispatcher()
-        # One setting, not two: RE.ignore_callback_exceptions is the session's,
-        # and a plan's subscribers must not behave differently from the rest.
-        if dispatcher is not None:
-            self.dispatcher.ignore_exceptions = dispatcher.ignore_exceptions
+        # Subscriptions that last only as long as this plan. Making the
+        # lifetime structural means teardown is nothing more than dropping this
+        # executor, and it gives plan tokens a namespace of their own, so a
+        # plan cannot unsubscribe a session callback by guessing an integer.
+        # Ordering documents against the session's subscribers is the
+        # dispatcher's own business, through its parent.
+        self.dispatcher = dispatcher if dispatcher is not None else Dispatcher()
         for name, funcs in normalize_subs_input(subs).items():
             for func in funcs:
                 self.dispatcher.subscribe(func, name)
@@ -1095,19 +1092,18 @@ class PlanExecutor:
         self.emit(name, doc)
 
     def emit(self, name, doc) -> None:
-        """Give a document to the session's subscribers, then to this plan's.
+        """Give a document to every subscriber that should see it.
 
-        The session goes first so that subscriptions outliving the plan see a
-        document before the ones that arrived with it, which is the order a
-        single shared registry gave by construction.
+        The dispatcher this plan was built with holds the session's as its
+        parent, so ordering -- subscriptions outliving the plan before the ones
+        that arrived with it, which is what a single shared registry gave by
+        construction -- is settled there rather than here.
 
         May be called from a thread that is not the event loop's: a sync ophyd
         signal fires its monitor callback on the device's own thread, and that
         path reaches here. Subscribers are therefore invoked on whichever
         thread emitted, which is not always the loop.
         """
-        if self._parent_dispatcher is not None:
-            self._parent_dispatcher.process(name, doc)
         self.dispatcher.process(name, doc)
 
     @property
@@ -2830,10 +2826,19 @@ class PlanExecutor:
 
 
 class Dispatcher:
-    """Dispatch documents to user-defined consumers on the main thread."""
+    """Dispatch documents to user-defined consumers on the main thread.
 
-    def __init__(self):
-        self.cb_registry = CallbackRegistry(allowed_sigs=DocumentNames)
+    Dispatchers chain, the way permits do. A plan's subscribers go in one of
+    these with the session's as its ``parent``, so that a document reaches the
+    subscribers outliving the plan before the ones that arrived with it -- the
+    order a single shared registry gave by construction -- and so that dropping
+    the executor drops its subscriptions. Whoever emits a document hands it to
+    one dispatcher and the chain does the rest.
+    """
+
+    def __init__(self, parent: "Dispatcher | None" = None, *, ignore_exceptions: bool = False):
+        self._parent = parent
+        self.cb_registry = CallbackRegistry(allowed_sigs=DocumentNames, ignore_exceptions=ignore_exceptions)
         self._counter = count()
         self._token_mapping = dict()  # noqa: C408
 
@@ -2846,6 +2851,14 @@ class Dispatcher:
         name : {'start', 'descriptor', 'event', 'stop'}
         doc : dict
         """
+        if self._parent is not None:
+            self._parent.process(name, doc)
+            # Read live rather than copied at construction, so that setting
+            # `RE.ignore_callback_exceptions` reaches the plan already running.
+            # The registry is what actually decides, so it is what has to be
+            # told; one attribute write per document is nothing beside calling
+            # the subscribers.
+            self.cb_registry.ignore_exceptions = self._parent.ignore_exceptions
         exceptions = self.cb_registry.process(name, name.name, doc)
         for exc, traceback in exceptions:  # noqa: B007
             warn(  # noqa: B028
@@ -2940,11 +2953,21 @@ class Dispatcher:
 
     @property
     def ignore_exceptions(self):
+        """Whether a raising subscriber is warned about rather than raised.
+
+        A child answers for its parent: there is one setting, and a plan's
+        subscribers must not behave differently from the ones that outlive it.
+        """
+        if self._parent is not None:
+            return self._parent.ignore_exceptions
         return self.cb_registry.ignore_exceptions
 
     @ignore_exceptions.setter
     def ignore_exceptions(self, val):
-        self.cb_registry.ignore_exceptions = val
+        if self._parent is not None:
+            self._parent.ignore_exceptions = val
+        else:
+            self.cb_registry.ignore_exceptions = val
 
 
 def _set_span_msg_attributes(span, msg):

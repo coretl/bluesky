@@ -395,3 +395,36 @@ def test_request_pause_coro_survives_for_queueserver(RE):
         RE(plan())
     assert RE.state == "paused"
     RE.stop()
+
+
+def test_session_subscribers_see_a_document_before_the_plan_s(RE):
+    """Ordering is the dispatcher chain's business, not the emitter's.
+
+    A plan's dispatcher holds the session's as its parent, so a document
+    reaches subscriptions that outlive the plan before the ones that arrived
+    with it -- the order a single shared registry gave by construction.
+    """
+    seen = []
+    RE.subscribe(lambda name, doc: seen.append(("session", name)), "start")
+
+    RE(
+        [Msg("open_run"), Msg("close_run")],
+        {"start": lambda name, doc: seen.append(("plan", name))},
+    )
+
+    assert [who for who, _ in seen] == ["session", "plan"]
+
+
+def test_ignore_callback_exceptions_is_read_live_by_a_plan(RE):
+    """One setting, not one per dispatcher.
+
+    A plan's dispatcher answers for its parent rather than copying the value
+    when it is built, so setting the flag reaches the plan already running as
+    well as every plan after it.
+    """
+    RE.ignore_callback_exceptions = True
+    executor = RE._session.make_executor([Msg("null")])
+    assert executor.dispatcher.ignore_exceptions is True
+
+    RE.ignore_callback_exceptions = False
+    assert executor.dispatcher.ignore_exceptions is False

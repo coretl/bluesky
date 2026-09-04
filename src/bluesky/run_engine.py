@@ -675,12 +675,10 @@ class RunEngine:
 
     @ignore_callback_exceptions.setter
     def ignore_callback_exceptions(self, val):
-        # Both dispatchers: the session's, which outlives every plan, and the
-        # running plan's own, which carries the subscriptions passed to
-        # __call__. A subscriber must not handle exceptions differently for
-        # being attached to one rather than the other.
+        # One setting. A plan's dispatcher answers for its parent rather than
+        # copying the value when it is built, so this reaches the plan already
+        # running as well as every plan after it.
         self._session.ignore_exceptions = val
-        self._executor.dispatcher.ignore_exceptions = val
 
     def register_command(self, name, func):
         """
