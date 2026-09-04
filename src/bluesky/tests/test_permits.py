@@ -12,7 +12,7 @@ import time as ttime
 import pytest
 
 from bluesky import Msg
-from bluesky.permits import Permit
+from bluesky.permits import Permit, join_justifications
 from bluesky.suspenders import SuspendBoolHigh
 from bluesky.utils import FailedPause, RunEngineInterrupted
 
@@ -118,7 +118,7 @@ def test_two_conditions_are_one_suspension(RE, hw):
     seen = []
     _at(0.1, beam.put, 1)
     _at(0.15, shutter.put, 1)
-    _at(0.3, lambda: seen.append(RE.permit.suspension.justification))
+    _at(0.3, lambda: seen.append(join_justifications(RE.permit.reasons)))
     _at(0.5, beam.put, 0)
     _at(0.5, shutter.put, 0)
     RE(SCAN)
@@ -195,10 +195,10 @@ def test_a_permit_is_withheld_for_every_thread_at_once():
     permit = Permit("test", loop=asyncio.new_event_loop())
     permit.withhold("beam", "beam is down")
     assert not permit.granted
-    assert permit.suspension.justification == "beam is down"
+    assert join_justifications(permit.reasons) == "beam is down"
     permit.grant("beam")
     assert permit.granted
-    assert permit.suspension is None
+    assert not permit.reasons
 
 
 def test_a_child_permit_is_withheld_whenever_its_parent_is():
@@ -209,7 +209,7 @@ def test_a_child_permit_is_withheld_whenever_its_parent_is():
 
     parent.withhold("beam", "beam is down")
     assert not child.granted, "held up by its parent"
-    assert child.suspension.justification == "beam is down"
+    assert join_justifications(child.reasons) == "beam is down"
 
     child.withhold("shutter", "shutter is closed")
     parent.grant("beam")

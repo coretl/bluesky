@@ -12,6 +12,7 @@ from bluesky._vendor.super_state_machine.errors import TransitionError
 
 from .bundlers import RunBundler
 from .log import ComposableLogAdapter, logger
+from .permits import join_justifications
 
 # Everything this module used to define now lives in plan_executor, and is
 # exported from there. These are imported, and deliberately left out of the
@@ -817,13 +818,13 @@ class RunEngine:
         # An already-tripped suspender is holding the session's permit, and
         # `make_executor` puts the wait for it in front of the plan. All this
         # adds is the heads-up, which only makes sense at a prompt.
-        suspension = self._session.permit.suspension
-        if suspension is not None:
+        reasons = self._session.permit.reasons
+        if reasons:
             print(
                 "At least one suspender has tripped. The plan will begin "
                 "when all suspenders are ready. Justification:"
             )
-            for i, justification in enumerate(suspension.justification.splitlines()):
+            for i, justification in enumerate(join_justifications(reasons).splitlines()):
                 print(f"    {i + 1}. {justification}")
 
             print()
@@ -1033,8 +1034,14 @@ class RunEngine:
         :meth:`RunEngine.install_suspender`
         :meth:`RunEngine.remove_suspender`
         """
-        for suspender in self.suspenders:
-            self.remove_suspender(suspender)
+        # Both halves, because :attr:`suspenders` reports both. The session
+        # cannot uninstall a suspender a plan installed for itself, so looping
+        # over the union here and calling :meth:`remove_suspender` would leave
+        # the plan's own behind -- and this is the escape hatch reached for at
+        # the prompt when a plan is held up, so leaving anything behind means
+        # resuming into a wait nothing will end.
+        self._session.clear_suspenders()
+        self._executor.clear_suspenders()
 
     def request_suspend(self, fut, *, pre_plan=None, post_plan=None, justification=None):
         """Deprecated. Suspension is raised by withholding :attr:`permit`.

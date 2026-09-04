@@ -30,7 +30,7 @@ from bluesky._vendor.super_state_machine.machines import StateMachine
 
 from .bundlers import RunBundler, maybe_await
 from .log import ComposableLogAdapter, logger, msg_logger, state_logger
-from .permits import Permit, Suspension
+from .permits import Permit, Suspension, join_justifications
 from .protocols import (
     Flyable,
     Locatable,
@@ -826,7 +826,6 @@ class PlanSession:
             on_state_change=self._announce_state,
             commands=dict(self._registered_commands),
             without_commands=self._unregistered_commands,
-            suspenders=self._suspenders,
             permit=permit,
         )
 
@@ -916,10 +915,6 @@ class PlanExecutor:
         to install into.
     without_commands : collection of str, optional
         Built-in commands to leave out.
-    suspenders : collection, optional
-        The durable suspenders covering this plan. Reported by
-        :attr:`suspenders`; they withhold ``session_permit``, not this
-        executor, so nothing here is pointed at them.
     session_permit : Permit, optional
         The durable permit. Held up by suspenders installed on the session, so
         one condition covers every plan that session is running.
@@ -950,7 +945,6 @@ class PlanExecutor:
         on_state_change: Callable[[typing.Any, typing.Any], None] | None = None,
         commands: typing.Mapping[str, Callable] | None = None,
         without_commands: typing.Collection[str] = (),
-        suspenders: typing.Collection[typing.Any] = (),
         permit: Permit | None = None,
         preprocessors: typing.Sequence[Callable] = (),
         rewindable: bool = True,
@@ -1017,13 +1011,11 @@ class PlanExecutor:
         self.run_start_uids: list[typing.Any] = []  # RunStart uids generated
         self._run_tracing_spans: list[Span] = []  # open tracing spans
 
-        # The durable suspenders this plan was given, reported so that
-        # `RunEngine.suspenders` can show them. The session owns their
-        # subscriptions and they write to the session permit, so this executor
-        # holds them for reporting only and never points them at itself.
-        self._durable_suspenders: set[typing.Any] = set(suspenders)
-        # The ones a plan installs for itself, which this executor owns
-        # outright, and which write to the permit just below.
+        # The suspenders this plan installs for itself, which this executor
+        # owns outright and which write to the permit just below. The durable
+        # ones are the session's: they hold this plan up through the permit
+        # chain, so there is nothing to keep a copy of here -- and a copy would
+        # go stale the moment one was installed while this plan was running.
         self._plan_suspenders: set[typing.Any] = set()
 
         # This plan's own permit, the counterpart of its own dispatcher: a
@@ -1129,13 +1121,13 @@ class PlanExecutor:
         return self._env.loop
 
     @property
-    def suspenders(self) -> frozenset[typing.Any]:
-        """Every suspender that can suspend this plan.
+    def suspenders(self) -> tuple[typing.Any, ...]:
+        """The suspenders this plan installed for itself, which end with it.
 
-        The durable ones this executor was built with, plus any the plan
-        installed for itself.
+        Not the session's. Those hold this plan up through the permit chain,
+        and whoever wants both asks both -- which is what `RunEngine` does.
         """
-        return frozenset(self._durable_suspenders | self._plan_suspenders)
+        return tuple(self._plan_suspenders)
 
     def _install_suspender_now(self, suspender) -> None:
         """Install a suspender for the duration of this plan only.
@@ -1148,25 +1140,25 @@ class PlanExecutor:
         suspender.install(self.permit)
 
     def _remove_suspender_now(self, suspender) -> None:
-        """Uninstall a suspender, whether this plan's or a durable one.
+        """Uninstall a suspender this plan installed for itself.
 
-        A durable suspender is the session's to unsubscribe, so removing one
-        here only stops it suspending this plan.
+        A durable suspender is the session's, and naming one here does
+        nothing: it is not ours to unsubscribe, and its reason stands on the
+        session's permit rather than this plan's.
         """
         if suspender in self._plan_suspenders:
             suspender.remove()
         self._plan_suspenders.discard(suspender)
-        # A durable one is the session's to unsubscribe; all this can do is
-        # stop reporting it, and drop any reason it is holding against this
-        # plan alone. Its reason on the session permit is not ours to grant.
-        self._durable_suspenders.discard(suspender)
         self.permit.grant(suspender)
+
+    def clear_suspenders(self) -> None:
+        """Uninstall every suspender this plan installed for itself."""
+        for suspender in list(self._plan_suspenders):
+            self._remove_suspender_now(suspender)
 
     def _release_suspenders(self) -> None:
         """Let go of every suspender this plan installed. Once, as it ends."""
-        for suspender in list(self._plan_suspenders):
-            self._remove_suspender_now(suspender)
-        self._durable_suspenders.clear()
+        self.clear_suspenders()
 
     async def _run_out_of_band(self, plan):
         """Work off a short message sequence outside the plan stack.
@@ -1203,11 +1195,12 @@ class PlanExecutor:
         if held_at_start:
             await self.permit.wait_granted()
         while True:
-            await self.permit.wait_withheld()
-            suspension = self.permit.suspension
-            if suspension is None:
-                continue
+            while self.permit.granted:
+                await self.permit.wait_changed()
             seen = dict(self.permit.reasons)
+            if not seen:
+                # Granted again before this task looked: nothing to suspend for.
+                continue
             first = next(iter(seen.values()))
             joined: list[Suspension] = []
 
@@ -1228,7 +1221,7 @@ class PlanExecutor:
                     self.permit.wait_granted,
                     pre_plan=first.pre_plan,
                     post_plan=unwind,
-                    justification=suspension.justification,
+                    justification=join_justifications(seen),
                 )
             )
             await self._join_episode(seen, joined)

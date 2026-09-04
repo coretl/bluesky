@@ -12,6 +12,7 @@ import threading
 import pytest
 
 from bluesky import Msg
+from bluesky.permits import join_justifications
 from bluesky.plan_executor import (
     PlanEnvironment,
     PlanExecutor,
@@ -294,7 +295,7 @@ def test_a_durable_suspender_outlives_the_plan_it_held():
     assert susp in session.suspenders
     # And the reason stands, so the next plan waits for it before it starts.
     assert not session.permit.granted
-    assert session.permit.suspension.justification == "beam is down"
+    assert join_justifications(session.permit.reasons) == "beam is down"
     assert session.make_executor([Msg("null")])._plan_stack, "held by a prologue"
 
 

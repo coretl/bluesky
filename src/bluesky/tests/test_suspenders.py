@@ -543,17 +543,14 @@ def test_suspender_plans(RE, hw):
     assert delta < 0.9
 
 
-def test_two_conditions_suspend_once_each(RE):
-    """Characterization test: two conditions going bad at once produce two
-    suspensions, not one.
+def test_two_conditions_make_one_suspension(RE):
+    """Two conditions going bad at once suspend the plan once, not once each.
 
-    Each ``SuspenderBase`` guards its trip path with ``if self._ev is None``,
-    so the guard is per suspender: a second suspender tripping while the first
-    suspension is still in flight passes its own guard and calls
-    ``request_suspend`` again. The plan therefore rewinds once per condition
-    and the pre-plans run nested, in an order nobody chose. If those pre-plans
-    are not idempotent -- closing a shutter that is already closed -- the
-    second rewind runs them again.
+    Was: each suspender guarded its own trip path, so the second condition
+    passed its own guard and requested a second suspension. The plan rewound
+    twice and the pre-plans ran nested. Now the reasons accumulate on one
+    permit, so the plan rewinds once and each condition's pre-plan runs as it
+    fires -- which is why pre- and post-plans must be idempotent.
     """
     sig_a = Signal(value=0, name="sig_a")
     sig_b = Signal(value=0, name="sig_b")
@@ -573,20 +570,19 @@ def test_two_conditions_suspend_once_each(RE):
     RE([Msg("checkpoint"), Msg("sleep", None, 0.5), Msg("null")])
 
     commands = [msg.command for msg in m_coll.msgs]
-    assert commands.count("_start_suspender") == 2, "one suspension per condition"
-    assert commands.count("wait_for") == 2, "and the plan waits twice"
-    # Both pre-plans run, the second inside the first suspension.
-    assert commands.count("_resume_from_suspender") == 2
+    assert commands.count("_start_suspender") == 1, "one suspension for both conditions"
+    assert commands.count("wait_for") == 1, "and the plan waits once"
+    RE.clear_suspenders()
 
 
-def test_trip_while_paused_is_dropped(RE, hw):
-    """Characterization test: a condition that goes bad while the plan is
-    paused never suspends it.
+def test_trip_while_paused_suspends_on_resume(RE, hw):
+    """A condition that goes bad while the plan is paused suspends it when it
+    resumes.
 
-    ``SuspenderBase.__call__`` asks the RunEngine to suspend on the device's
-    thread. Paused, there is nothing to suspend, and nothing records that the
-    condition went bad -- so resuming runs straight through a tripped
-    suspender, and no later trip suspends that plan either.
+    Was: the trip was dropped, because suspending was asked of the RunEngine
+    from the device's thread and paused there was nothing to suspend -- and no
+    later trip suspended that plan either. Now the condition withholds the
+    permit, which is state rather than a request, so resuming waits for it.
     """
     sig = hw.bool_sig
     sig.put(0)
@@ -605,10 +601,14 @@ def test_trip_while_paused_is_dropped(RE, hw):
     ttime.sleep(0.3)
     assert susp.tripped, "the condition really is bad"
 
+    threading.Timer(0.5, sig.put, (0,)).start()
+    start = ttime.time()
     RE.resume()
-    commands = [msg.command for msg in m_coll.msgs]
-    assert "_start_suspender" not in commands, "the trip was dropped"
-    sig.put(0)
+    elapsed = ttime.time() - start
+
+    assert elapsed > 0.4, "resuming waited for the condition to clear"
+    assert "_start_suspender" in [msg.command for msg in m_coll.msgs]
+    RE.clear_suspenders()
 
 
 def test_retrip_inside_sleep_does_not_release_early(RE, hw):
@@ -637,13 +637,16 @@ def test_retrip_inside_sleep_does_not_release_early(RE, hw):
     assert elapsed > 1.4, "the release scheduled by the first recovery must not free the plan"
 
 
-def test_suspender_installed_by_a_plan_is_visible_and_outlives_it(RE, hw):
-    """Characterization test: ``Msg('install_suspender')`` installs durably.
+def test_suspender_installed_by_a_plan_ends_with_it(RE, hw):
+    """A suspender a plan installs for itself is visible while that plan runs
+    and gone once it ends.
 
-    The message is the same call as ``RE.install_suspender``, so a suspender a
-    plan installs for itself is visible in ``RE.suspenders`` from inside that
-    plan, and is still installed after the plan has ended. That is why
-    ``suspend_wrapper`` has to remove it by hand.
+    Was: ``Msg('install_suspender')`` was the same call as
+    ``RE.install_suspender``, so the suspender outlived the plan and
+    ``suspend_wrapper`` had to remove it by hand. Now it withholds the plan's
+    own permit and is released with the plan. ``RE.suspenders`` still reports
+    it while the plan runs, because it reports the union of the durable ones
+    and the running plan's.
     """
     sig = hw.bool_sig
     sig.put(0)
@@ -660,8 +663,7 @@ def test_suspender_installed_by_a_plan_is_visible_and_outlives_it(RE, hw):
     RE(note())
 
     assert seen == [("after install", True), ("after remove", False)]
-    assert susp in RE.suspenders, "the one left installed outlives the plan"
-    RE.clear_suspenders()
+    assert susp not in RE.suspenders, "the plan's own suspenders end with the plan"
 
 
 def test_clear_suspenders_while_paused_then_resume(RE, hw):
