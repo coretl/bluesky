@@ -84,13 +84,20 @@ positional arguments, matching the design. There was exactly one direct
 `None` defaults were unreachable branches, and every caller in src, tests and
 docs already goes through `session.make_executor`.
 
-`PlanSession.__init__` went the other way, from ten arguments to three. Only
-`md`, `loop` and `log` are consumed while the session is built; the other seven
-were plain assignments read later, so they are now plain attributes assigned
-after construction -- which is what `record_interruptions`, `strict_pre_declare`
-and `rewindable` already were. The RunEngine was their only caller and now
-assigns them, `on_pause` included, which belongs on `hooks` like every other
-hook. `PlanSession()` still constructs with no arguments at all.
+`PlanSession.__init__` went the other way, from ten arguments to five. The rule,
+set by Tom: a setting the RunEngine exposes a **property with a setter** for is a
+plain attribute, because changing it after construction is public interface; a
+setting written once at `RunEngine.__init__` with no setter anywhere is a
+constructor argument. That keeps `md`, `loop`, `log`, `run_bundler_cls` and
+`identity` as arguments, and makes attributes of `scan_id_source`,
+`preprocessors`, `md_validator` and `md_normalizer` -- joining
+`record_interruptions`, `strict_pre_declare` and `rewindable`, which already
+were. `md` is in both halves, and has to be.
+
+`on_pause` is the one exception, decided against the rule: it is written once and
+has no property, but `hooks` is how all four hooks are reached, and one of the
+four arriving by another route would say otherwise. It is assigned after
+construction. `PlanSession()` still constructs with no arguments at all.
 
 `Permit.withhold` no longer defaults `justification` to the empty string.
 

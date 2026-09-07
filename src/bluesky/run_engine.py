@@ -322,10 +322,21 @@ class RunEngine:
         # Everything that outlives a single plan lives on the session, which
         # this RunEngine drives but does not otherwise own. The properties
         # below forward to it, so RE.md, RE.state and friends are unchanged.
-        # Only what the session consumes as it is built. Everything else is a
-        # setting it reads when it builds an executor, so it is assigned just
-        # below -- the same way a user changes one later.
-        self._session = PlanSession(md, loop=loop, log=log)
+        # Arguments for what nothing changes once the session exists, and
+        # assignments below for what this engine exposes a setter for. Both
+        # halves are how a user reaches the same settings: RE.preprocessors is
+        # a property, and RunBundler is not.
+        self._session = PlanSession(
+            md,
+            loop=loop,
+            log=log,
+            # Honour a RunBundler overridden on a RunEngine subclass, and name
+            # this RunEngine as what a plan's state changes happen to and what
+            # Msg('RE_class') reports, rather than the executor that happens to
+            # be running the plan.
+            run_bundler_cls=type(self).RunBundler,
+            identity=self,
+        )
 
         if preprocessors is not None:
             self._session.preprocessors = preprocessors
@@ -334,14 +345,11 @@ class RunEngine:
         if md_normalizer is not None:
             self._session.md_normalizer = md_normalizer
         self._session.scan_id_source = scan_id_source
-        # Honour a RunBundler overridden on a RunEngine subclass, and name this
-        # RunEngine as what a plan's state changes happen to and what
-        # Msg('RE_class') reports, rather than the executor that happens to be
-        # running the plan.
-        self._session.run_bundler_cls = type(self).RunBundler
-        self._session.identity = self
-        # Releases the main thread, which is parked while a plan runs. A
-        # headless caller has no thread to release and leaves this unset.
+        # Releases the main thread, which is parked while a plan runs. Set here
+        # rather than passed in, because `hooks` is the way every hook is
+        # reached and one of the four arriving by another route would say
+        # otherwise. A headless caller has no thread to release and leaves it
+        # unset.
         self._session.hooks.on_pause = self._blocking_event.set
 
         if context_managers is None:
@@ -461,10 +469,10 @@ class RunEngine:
     def record_interruptions(self, value):
         self._session.record_interruptions = value
 
-    # The pre-split spelling of strict_pre_declare, which is a constructor
-    # argument here and a public property on the session. Kept because setting
-    # it is how existing code opts in (test_new_examples.py, and a docs
-    # mirror); private on this side only because it always was.
+    # The pre-split spelling of strict_pre_declare, which is a public attribute
+    # on the session and has never been a constructor argument here. Kept
+    # because setting it is how existing code opts in (test_new_examples.py,
+    # and a docs mirror); private on this side only because it always was.
     @property
     def _require_stream_declaration(self):
         return self._session.strict_pre_declare

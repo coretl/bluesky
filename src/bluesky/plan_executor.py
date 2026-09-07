@@ -473,13 +473,28 @@ class PlanSession:
     log : logging.LoggerAdapter, optional
         Where this session and its executors log to.
 
-    Only these three, because only these three are consumed as the session is
-    built: ``md`` is stamped with the library versions, ``loop`` is what the
-    durable permit is created on, and ``log`` is written to while the versions
-    are collected. Every other setting is read later, when `make_executor`
-    freezes a `PlanEnvironment` for a plan, so it is a plain attribute you
-    assign after construction -- one spelling for all of them, and one that
-    keeps working for the next plan rather than only at construction.
+    run_bundler_cls : type, optional
+        The bundler used to compose documents for each open run. A
+        `RunEngine` passes its own, so that overriding it on a `RunEngine`
+        subclass keeps working.
+
+    identity : object, optional
+        What a state change is logged as having happened to, and what
+        ``Msg('RE_class')`` reports the class of. A `RunEngine` passes itself,
+        because that is what a user recognises in their logs; without one each
+        executor answers for itself.
+
+    An argument here means a setting nothing changes once the session exists.
+    ``md``, ``loop`` and ``log`` are consumed while it is being built -- ``md``
+    is stamped with the library versions, ``loop`` is what the durable permit is
+    created on, and ``log`` is written to while those versions are collected --
+    and ``run_bundler_cls`` and ``identity`` are decided once by whoever
+    constructs the session and never revised.
+
+    Everything else is an attribute you assign, because changing it later is
+    part of the interface: a `RunEngine` exposes a property for each, and
+    `make_executor` reads them when it freezes a `PlanEnvironment`, so a change
+    takes effect for the next plan and never the one already running.
 
     Attributes
     ----------
@@ -498,17 +513,6 @@ class PlanSession:
 
     scan_id_source
         A (possibly async) function used to calculate ``scan_id``.
-
-    run_bundler_cls
-        The bundler used to compose documents for each open run. A
-        `RunEngine` assigns its own, so that overriding it on a `RunEngine`
-        subclass keeps working.
-
-    identity
-        What a state change is logged as having happened to, and what
-        ``Msg('RE_class')`` reports the class of. A `RunEngine` names itself,
-        because that is what a user recognises in their logs; without one each
-        executor answers for itself.
 
     dispatcher
         The `Dispatcher` documents are emitted through.
@@ -549,6 +553,8 @@ class PlanSession:
         *,
         loop: asyncio.AbstractEventLoop | None = None,
         log: LoggerAdapter | None = None,
+        run_bundler_cls: type[RunBundler] = RunBundler,
+        identity: typing.Any = None,
     ):
         if loop is None:
             loop = _default_event_loop()
@@ -603,8 +609,8 @@ class PlanSession:
         self.preprocessors: list = []
         self.md_validator: typing.Callable = _default_md_validator
         self.md_normalizer: typing.Callable = _default_md_normalizer
-        self.run_bundler_cls: type[RunBundler] = RunBundler
-        self.identity: typing.Any = None
+        self.run_bundler_cls = run_bundler_cls
+        self.identity = identity
         self.record_interruptions = False
         self.strict_pre_declare = False
         self.rewindable = True

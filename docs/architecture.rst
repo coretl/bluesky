@@ -81,14 +81,17 @@ What outlives a plan
     :members:
     :undoc-members:
 
-The settings are plain attributes, and only plain attributes: the constructor
-takes ``md``, ``loop`` and ``log``, the three consumed while the session is
-built, and nothing else. ``make_executor`` reads the rest into a frozen
+A constructor argument means a setting nothing changes once the session exists:
+``md``, ``loop`` and ``log``, which are consumed while it is built, and
+``run_bundler_cls`` and ``identity``, which whoever constructs it decides once.
+Everything else is a plain attribute, because changing it later is part of the
+interface -- a `RunEngine` has a property for each of them. ``make_executor``
+reads those into a frozen
 :class:`~bluesky.plan_executor.PlanEnvironment` for each plan, so changing one
-takes effect for the next plan and never the one already running -- and the
-session never holds a second copy of a setting to keep in step. Were a setting
-also a constructor argument it would have two spellings, and only one of them
-would still work once the session existed.
+takes effect for the next plan and never the one already running, and the
+session never holds a second copy of a setting to keep in step. Nothing appears
+in both halves except ``md``, which has to, because the versions are stamped
+into it as the session is built and ``RE.md`` can still be reassigned.
 
 .. autoclass:: bluesky.plan_executor.PlanHooks
     :members:
