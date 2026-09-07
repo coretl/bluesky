@@ -659,14 +659,6 @@ class RunEngine:
         self._executor = self._session.make_executor(plan, metadata=metadata, subs=subs)
         self._task_fut = None
 
-    def _clear_run_cache(self):
-        "Deprecated. Clean up for a new run."
-        self._new_executor()
-
-    def _clear_call_cache(self):
-        "Deprecated. Clean up for a new __call__."
-        self._new_executor()
-
     def reset(self):
         """
         Clean up caches and unsubscribe subscriptions.
