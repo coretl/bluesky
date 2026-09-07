@@ -101,7 +101,7 @@ def test_run_a_plan_without_a_run_engine():
 
     assert collected == ["start", "stop"]
     assert len(executor.run_start_uids) == 1
-    assert executor.exit_status == "success"
+    assert executor._exit_status == "success"
     assert executor.state == "idle"
     assert not executor.interrupted
     assert plan_return is None
@@ -173,7 +173,7 @@ def test_two_plans_run_at_once_on_one_session():
 
     session, first, second = asyncio.run(main())
 
-    assert first.exit_status == second.exit_status == "success"
+    assert first._exit_status == second._exit_status == "success"
     assert first.run_start_uids != second.run_start_uids
     # Each run was given a scan id of its own, rather than both reading back
     # whichever the other stored last.
@@ -340,7 +340,7 @@ def test_executor_starts_empty():
 
     first, second = asyncio.run(main())
     assert first.run_start_uids and not second.run_start_uids
-    assert second.exit_status == "success"
+    assert second._exit_status == "success"
     assert second._exception is None
     # the caches themselves are private; this is the point of the class, so
     # reach in rather than let it go untested
@@ -358,7 +358,7 @@ def test_run_engine_keeps_its_executor_after_the_plan(RE):
     """A finished plan can still be inspected through the RunEngine."""
     RE([Msg("open_run"), Msg("close_run")])
     assert len(RE._run_start_uids) == 1
-    assert RE._executor.exit_status == "success"
+    assert RE._exit_status == "success"
     # ...and the next plan gets a fresh executor
     previous = RE._executor
     RE([Msg("open_run"), Msg("close_run")])

@@ -765,16 +765,19 @@ class PlanSession:
                 record_interruptions=self.record_interruptions,
                 strict_pre_declare=self.strict_pre_declare,
             ),
+            permit,
+            self.hooks,
+            # A dispatcher of this plan's own, under the session's, so that a
+            # plan's subscribers end with it and its documents still reach the
+            # session's. The chain is what makes those one mechanism.
+            Dispatcher(parent=self.dispatcher),
             preprocessors=self.preprocessors,
             rewindable=self.rewindable,
             metadata=metadata,
             subs=subs,
-            dispatcher=Dispatcher(parent=self.dispatcher),
-            hooks=self.hooks,
             identity=self.identity,
             commands=dict(self._registered_commands),
             without_commands=self._unregistered_commands,
-            permit=permit,
         )
 
     def install_suspender(self, suspender):
@@ -839,17 +842,22 @@ class PlanExecutor:
     env : PlanEnvironment
         Where the plan is being run: the loop, the logger, the metadata and the
         settings that compose each run.
-    metadata : dict, optional
-        Metadata for every run this plan opens.
-    subs : callable, list, or dict, optional
-        Subscriptions lasting only as long as this plan.
-    dispatcher : Dispatcher, optional
+    permit : Permit
+        The permit this plan waits on. Normally built with the session's
+        durable permit as its parent, so that a suspender installed on the
+        session holds up every plan it is running.
+    hooks : PlanHooks
+        The observation points. Shared by reference with the session rather
+        than copied, so setting one mid-plan reaches the plan already running.
+    dispatcher : Dispatcher
         Where this plan's documents go, and where subscriptions made for this
         plan live. Normally built with the session's as its parent, so that
         subscribers outliving the plan see a document first -- the order a
         single shared registry gave by construction.
-    hooks : PlanHooks, optional
-        The observation points. Shared with the session, and read live.
+    metadata : dict, optional
+        Metadata for every run this plan opens.
+    subs : callable, list, or dict, optional
+        Subscriptions lasting only as long as this plan.
     identity : object, optional
         What a state change is logged as having happened to, and what
         ``Msg('RE_class')`` reports the class of. A plan is executed by one of
@@ -864,10 +872,6 @@ class PlanExecutor:
         to install into.
     without_commands : collection of str, optional
         Built-in commands to leave out.
-    permit : Permit, optional
-        The durable permit, made this plan's parent. Held up by suspenders
-        installed on the session, so one condition covers every plan that
-        session is running.
     preprocessors : sequence of callable, optional
         Generator functions applied to the plan now, composed in order, so
         that ``[f, g]`` is applied as ``f(g(plan))``. Consumed here rather
@@ -886,20 +890,20 @@ class PlanExecutor:
         self,
         plan,
         env: PlanEnvironment,
+        permit: Permit,
+        hooks: PlanHooks,
+        dispatcher: "Dispatcher",
         *,
         metadata: dict | None = None,
         subs=None,
-        dispatcher: "Dispatcher | None" = None,
-        hooks: PlanHooks | None = None,
         identity: typing.Any = None,
         commands: typing.Mapping[str, Callable] | None = None,
         without_commands: typing.Collection[str] = (),
-        permit: Permit | None = None,
         preprocessors: typing.Sequence[Callable] = (),
         rewindable: bool = True,
     ):
         self._env = env
-        self._hooks = hooks if hooks is not None else PlanHooks()
+        self._hooks = hooks
         self._identity = identity if identity is not None else self
 
         # When cleared, run() will pause until it is set again.
@@ -942,7 +946,7 @@ class PlanExecutor:
         # plan cannot unsubscribe a session callback by guessing an integer.
         # Ordering documents against the session's subscribers is the
         # dispatcher's own business, through its parent.
-        self._dispatcher = dispatcher if dispatcher is not None else Dispatcher()
+        self._dispatcher = dispatcher
         for name, funcs in normalize_subs_input(subs).items():
             for func in funcs:
                 self._dispatcher.subscribe(func, name)
@@ -966,7 +970,7 @@ class PlanExecutor:
         # This plan's own permit, the counterpart of its own dispatcher: a
         # suspender a plan installs holds up that plan alone. The session's is
         # shared with every plan it is running.
-        self._permit = permit if permit is not None else Permit("plan", env.loop)
+        self._permit = permit
 
         self._staged: set[typing.Any] = set()  # staged, not yet unstaged
         self._objs_seen: set[typing.Any] = set()  # every object seen in a Msg
@@ -981,7 +985,7 @@ class PlanExecutor:
         # An exception instance or class, to be raised into the plan.
         self._exception: typing.Any = None
         self.interrupted: bool = False  # paused, aborted or failed
-        self.exit_status: str = "success"  # optimistic default
+        self._exit_status: str = "success"  # optimistic default
         self._reason: str = ""  # reason for an abort
         self._deferred_pause_requested: bool = False  # pause at next 'checkpoint'
 
@@ -1238,7 +1242,7 @@ class PlanExecutor:
         return RunEngineResult(
             tuple(self.run_start_uids),
             plan_return,
-            self.exit_status,
+            self._exit_status,
             self.interrupted,
             self._reason,
             self._exception,
@@ -1658,25 +1662,25 @@ class PlanExecutor:
                         self._response_stack.append(new_response)
 
         except StopIteration as e:
-            self.exit_status = "success"
+            self._exit_status = "success"
             plan_return = e.value
             # TODO Is the sleep here necessary?
             await asyncio.sleep(0)
         except RequestStop:
-            self.exit_status = "success"
+            self._exit_status = "success"
             # TODO Is the sleep here necessary?
             await asyncio.sleep(0)
         except (FailedPause, RequestAbort, asyncio.CancelledError, PlanHalt):
-            self.exit_status = "abort"
+            self._exit_status = "abort"
             # TODO Is the sleep here necessary?
             await asyncio.sleep(0)
             self._env.log.exception("Run aborted")
         except GeneratorExit as err:
-            self.exit_status = "fail"  # Exception raises during 'running'
+            self._exit_status = "fail"  # Exception raises during 'running'
             exit_reason = str(err)
             raise ValueError from err
         except Exception as err:
-            self.exit_status = "fail"  # Exception raises during 'running'
+            self._exit_status = "fail"  # Exception raises during 'running'
             exit_reason = str(err)
             self._env.log.exception("Run aborted")
             raise err
@@ -1709,7 +1713,7 @@ class PlanExecutor:
                 if current_run.run_is_open:
                     try:
                         await current_run.close_run(
-                            Msg("close_run", exit_status=self.exit_status, reason=exit_reason, run_id=key)
+                            Msg("close_run", exit_status=self._exit_status, reason=exit_reason, run_id=key)
                         )
                     except Exception:
                         self._env.log.error("Failed to close run %r.", current_run)
@@ -1835,7 +1839,7 @@ class PlanExecutor:
         return ret
 
     def _close_run_trace(self, msg: Msg):
-        exit_status = msg.kwargs.get("exit_status", self.exit_status)
+        exit_status = msg.kwargs.get("exit_status", self._exit_status)
         reason = msg.kwargs.get("reason", self._reason)
         try:
             _span: Span = self._run_tracing_spans.pop()
@@ -2724,7 +2728,7 @@ class PlanExecutor:
         self.interrupted = True
         self._reason = reason
 
-        self.exit_status = "abort"
+        self._exit_status = "abort"
         self._destroy_open_run_tracing_spans()
 
         was_paused = self.state == "paused"
@@ -2762,7 +2766,7 @@ class PlanExecutor:
         self.state = "halting"
         if was_paused:
             self._exception = PlanHalt
-            self.exit_status = "abort"
+            self._exit_status = "abort"
             self.permit_run()
         else:
             self._task.cancel()

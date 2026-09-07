@@ -71,10 +71,19 @@ private; `run_engine.py`'s `_FORWARDS_WITH_CALLERS` and
 same commit. `PlanSession.subscribe`/`unsubscribe` and its four hook-forwarding
 properties went too.
 
-An earlier draft of this file called it the `exception`/`exit_status`/`reason`
-*trio*. That was wrong, and the notes and `classes.py` both had it right: it is
-the `exception`/`reason` **pair**. `exit_status` and `interrupted` stay public --
-they are listed as public in `classes.py`, and the RunEngine reads both.
+It is the `exception`/`exit_status`/`reason` **trio** after all, settled by what
+the RunEngine actually needs rather than by what the design documents said. The
+RunEngine reads none of the three on the executor -- only `interrupted` and
+`run_start_uids`, which stay public. The trio's public face is `RunEngineResult`,
+which `result()` returns and which carries exactly those three fields, so
+privatising them on the executor takes nothing away.
+
+`PlanExecutor.__init__` now takes `permit`, `hooks` and `dispatcher` as required
+positional arguments, matching the design. There was exactly one direct
+`PlanExecutor(...)` call in the whole tree -- `make_executor` itself -- so the
+`None` defaults were unreachable branches, and every caller in src, tests and
+docs already goes through `session.make_executor`. `PlanSession()` still
+constructs with no arguments at all; that is where the defaults belong.
 
 Two docs commits, which ship in the PR -- **both written** (`98a82e780`):
 
@@ -138,6 +147,17 @@ on every class in ``architecture.rst``.
 
 Put `/venv/bin` on `PATH` or the ruff pre-commit hook fails with "Executable `ruff`
 not found".
+
+`test_watch_finished_before_set_return_when_set_finishes` **now fails most of the
+time on this machine**, and the tolerance is the cause. Measured 2026-09-07: three
+failures in five runs of the whole file, uncontended, always around 0.273-0.276 s
+against a 0.2 s +/- 0.05 assertion -- and identically on `07985e557`, the commit
+before the sweep, so it is not attributable to any of this work. It passes every
+time when run alone. The machine is simply slower today than during the
+implementation session, which is exactly the condition the note below predicted
+for CI. Expect it red there, and fix the tolerance rather than the split.
+
+The original note, kept because it is what was actually measured at the time:
 
 `test_watch_finished_before_set_return_when_set_finishes` is worth watching on
 CI. It asserts a 0.2 s wall time to within 0.05 s and failed three times during

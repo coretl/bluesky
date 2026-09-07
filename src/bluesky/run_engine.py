@@ -1234,7 +1234,7 @@ _FORWARDS_WITHOUT_KNOWN_CALLERS = {
     "_status_objs": "_status_objs",
     "_exception": "_exception",
     "_interrupted": "interrupted",
-    "_exit_status": "exit_status",
+    "_exit_status": "_exit_status",
     "_reason": "_reason",
 }
 
