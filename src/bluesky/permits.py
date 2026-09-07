@@ -89,7 +89,7 @@ class Permit:
     def withhold(
         self,
         key: Hashable,
-        justification: str = "",
+        justification: str,
         *,
         pre_plan: PlanLike | None = None,
         post_plan: PlanLike | None = None,
