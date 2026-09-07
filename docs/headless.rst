@@ -112,28 +112,42 @@ so two plans running at once are never handed the same one.
 Suspending
 ----------
 
-Suspension is a :class:`~bluesky.permits.Permit`: permission to run, held open
-unless something has a reason to withhold it. The session has one, and every plan
-it runs gets a child of it, so withholding the session's holds up every plan:
+Suspension is a suspender's job, headless or not. Install one on the session and
+it holds up every plan the session runs, for as long as its condition is bad::
+
+    session.install_suspender(suspender)
+
+Install one from inside a plan, with ``Msg('install_suspender')``, and it holds up
+that plan alone and ends with it.
+
+There is no separate way to raise a suspension by hand, and that is deliberate.
+Holds have to compose: two conditions going bad at once are one suspension, and
+the plan runs again when the last of them clears. A second route that set the
+condition directly could not merge with the first, so whichever caller released
+it would release the plan while the other still wanted it held. Writing the
+condition as a suspender is what buys the composition.
+
+So if a service needs to hold plans on something bluesky cannot see -- a health
+endpoint, a queue message, a file that has to exist -- write a suspender for it.
+:class:`~bluesky.suspenders.SuspenderBase` watches anything that can call it back
+when a value changes; the shipped subclasses watch ophyd signals, but nothing in
+the base class requires one.
+
+A plan launched while a suspender is already tripped waits before its first
+message, rather than starting and then suspending -- there is no checkpoint to
+rewind to yet.
+
+To ask whether anything is holding the session up, and what, read
+``session.suspensions``. It is empty when nothing is:
 
 .. doctest::
 
     >>> async def main():
     ...     session = PlanSession()
-    ...     session.permit.withhold("beam", "beam is down")
-    ...     return session.permit.granted, [r.justification for r in session.permit.reasons.values()]
+    ...     return dict(session.suspensions)
     ...
     >>> asyncio.run(main())
-    (False, ['beam is down'])
-
-A suspender is installed on a permit rather than on a RunEngine, and never learns
-what it is suspending::
-
-    suspender.install(session.permit)
-
-An executor built while the permit is withheld waits for it before the plan's
-first message, rather than starting and then suspending -- there is no checkpoint
-to rewind to yet.
+    {}
 
 Driving one
 -----------

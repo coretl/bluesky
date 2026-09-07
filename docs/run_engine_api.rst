@@ -59,8 +59,8 @@ changes. See :ref:`suspenders`.
 
 This method is used internally to pause the RunEngine. Typically the user
 accomplishes this with Ctrl+C. For special applications, it can be called
-directly. Suspension is raised by withholding :attr:`RunEngine.permit`,
-which is what an installed suspender does.
+directly. Suspension is a separate thing, raised by installing a suspender:
+see :meth:`RunEngine.install_suspender`.
 
 
 .. autosummary::

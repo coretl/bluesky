@@ -101,6 +101,12 @@ construction. `PlanSession()` still constructs with no arguments at all.
 
 `Permit.withhold` no longer defaults `justification` to the empty string.
 
+`PlanSession.loop` is gone. It was kept in the sweep as "fundamental to driving a
+session headlessly", which turned out to be an assertion rather than an
+observation: nothing reads it in `src`, the tests or the docs, the session builds
+the permit and each environment from `self._loop`, and `docs/headless.rst` never
+wants it. A headless caller supplies the loop rather than discovering it.
+
 Two docs commits, which ship in the PR -- **both written** (`98a82e780`):
 
 - `docs/architecture.rst` -- autodoc/autosummary over the real classes with

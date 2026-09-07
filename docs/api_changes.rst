@@ -51,9 +51,13 @@ Changed
   Devices that implemented the old ``Subscribable`` protocol should rename
   ``subscribe`` to ``subscribe_reading``; users of ophyd-async need at
   least v0.13.5.
-- Suspension now goes through a ``Permit``: permission to run, held open unless
-  something has a reason to withhold it.  ``RunEngine.permit`` is the one an
-  installed suspender withholds.  ``RunEngine.install_suspender`` is unchanged.
+- Suspension now goes through a permit: permission to run, held open unless
+  something has a reason to withhold it.  Reasons are keyed by whoever raised
+  them, so two conditions going bad at once are one suspension that ends when
+  the last of them clears.  The permit itself is internal; installing a
+  suspender is how a suspension is raised, and ``RunEngine.install_suspender``
+  is unchanged.  Calling a `RunEngine` while a suspender is already tripped
+  prints what is holding it up, as it did before.
 - ``SuspenderBase.install`` takes the permit to withhold rather than a
   ``RunEngine``.  Passing a ``RunEngine`` still works, with a
   ``DeprecationWarning``, and does a durable install on it as before.
@@ -95,14 +99,17 @@ Changed
 Removed
 -------
 - ``SuspenderBase.get_futures`` and ``SuspenderBase.RE``.  Whether a suspender
-  is tripped is ``SuspenderBase.tripped``; what it holds up is
-  ``RunEngine.permit``.
-- ``RunEngine.request_suspend``.  Suspension is raised by withholding
-  ``RunEngine.permit``, which is what an installed suspender does.  It was a
-  second route to the same place that bypassed the permit, so a suspension
-  raised through it did not merge with one raised by a suspender, and two
-  overlapping conditions arriving by the two routes rewound the plan twice --
-  the thing the permit exists to prevent.
+  is tripped is ``SuspenderBase.tripped``; a suspender no longer knows what it
+  is holding up, which is what lets the same one be installed on a session or
+  on a single plan.
+- ``RunEngine.request_suspend``, with no replacement.  Suspension is raised by
+  installing a suspender, and by nothing else.  ``request_suspend`` was a second
+  route to the same place that bypassed the permit, so a suspension raised
+  through it did not merge with one raised by a suspender, and two overlapping
+  conditions arriving by the two routes rewound the plan twice -- the thing the
+  permit exists to prevent.  Any condition worth suspending on can be written as
+  a suspender, which composes; to stop a plan yourself and decide yourself when
+  it goes on, use ``RunEngine.pause``.
 
 Deprecated
 ----------

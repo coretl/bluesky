@@ -77,13 +77,14 @@ class Permit:
         return self._parent.granted if self._parent is not None else True
 
     @property
-    def reasons(self) -> dict[Hashable, Suspension]:
-        """Every reason standing in the chain, keyed by whoever raised it.
+    def withheld_by(self) -> dict[Hashable, Suspension]:
+        """Everything withholding this permit, keyed by whoever withheld it.
 
-        In the order they were raised, outermost permit first, because a
-        suspension runs pre-plans in that order and post-plans in reverse.
+        Includes the chain above, outermost permit first, because that is the
+        order a suspension runs pre-plans in and the reverse of the order it
+        runs post-plans in. Empty exactly when the permit is granted.
         """
-        above = self._parent.reasons if self._parent is not None else {}
+        above = self._parent.withheld_by if self._parent is not None else {}
         return {**above, **self._reasons}
 
     def withhold(

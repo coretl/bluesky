@@ -52,7 +52,7 @@ def _check_suspender(klass, sc_args, sig, putter, start_val, fail_val, resume_va
             my_suspender = klass(sig, *sc_args, sleep=wait_time)
     else:
         my_suspender = klass(sig, *sc_args, sleep=wait_time)
-    my_suspender.install(RE.permit)
+    my_suspender.install(RE._permit)
 
     # make sure we start at good value!
     putter(start_val)

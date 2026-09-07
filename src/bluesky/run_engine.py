@@ -830,13 +830,13 @@ class RunEngine:
         # An already-tripped suspender is holding the session's permit, and
         # `make_executor` puts the wait for it in front of the plan. All this
         # adds is the heads-up, which only makes sense at a prompt.
-        reasons = self._session.permit.reasons
-        if reasons:
+        suspensions = self._session.suspensions
+        if suspensions:
             print(
                 "At least one suspender has tripped. The plan will begin "
                 "when all suspenders are ready. Justification:"
             )
-            for i, justification in enumerate(join_justifications(reasons).splitlines()):
+            for i, justification in enumerate(join_justifications(suspensions).splitlines()):
                 print(f"    {i + 1}. {justification}")
 
             print()
@@ -996,13 +996,9 @@ class RunEngine:
             return plan_return
 
     @property
-    def permit(self):
-        """Permission to run, withheld while an installed suspender is tripped.
-
-        The session's, so a suspender installed on it holds up every plan this
-        engine runs. A plan's own permit is a child of it.
-        """
-        return self._session.permit
+    def _permit(self):
+        """The session's permit. Private: suspension is raised by suspenders."""
+        return self._session._permit
 
     def install_suspender(self, suspender):
         """

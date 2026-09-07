@@ -528,9 +528,10 @@ class PlanSession:
         session builds is given. Suspenders installed from inside a plan
         belong to that plan's executor and are not here.
 
-    permit
-        The durable `Permit`. Withheld while a suspender installed here is
-        tripped, and waited on by every plan this session runs.
+    suspensions
+        What is holding up every plan this session runs, and who raised each.
+        Empty when nothing is. Not to be confused with ``suspenders``, which
+        are the installed watchers; these are the holds standing right now.
 
     md
         Persistent metadata, surviving every plan, and the counter behind
@@ -619,7 +620,7 @@ class PlanSession:
         # The durable half of the suspension state. Suspenders installed here
         # write to this permit, and every executor this session builds waits
         # on it as well as on its own -- the same shape as the two dispatchers.
-        self.permit = Permit("session", loop)
+        self._permit = Permit("session", loop)
 
         # Commands the user has added or removed. Composed into each executor's
         # vocabulary as it is built, so that registrations survive the plan
@@ -630,11 +631,6 @@ class PlanSession:
         # public dispatcher for callbacks
         self.dispatcher = Dispatcher()
         self.ignore_exceptions = False
-
-    @property
-    def loop(self) -> asyncio.AbstractEventLoop:
-        """The event loop plans are executed on."""
-        return self._loop
 
     @property
     def ignore_exceptions(self):
@@ -669,6 +665,17 @@ class PlanSession:
     def suspenders(self):
         """Read-only collection of installed suspenders."""
         return tuple(self._suspenders)
+
+    @property
+    def suspensions(self) -> dict[typing.Hashable, Suspension]:
+        """What is holding up every plan this session runs, by who raised it.
+
+        Empty when nothing is: the plans this session runs are suspended
+        exactly when this is not. Ordered as the suspensions were raised, which
+        is the order their pre-plans ran and the reverse of the order their
+        post-plans will.
+        """
+        return self._permit.withheld_by
 
     def register_command(self, name, func):
         """Register a new Message command.
@@ -746,7 +753,7 @@ class PlanSession:
         # every plan it runs, and the chain is what makes those one mechanism.
         # An already-withheld permit holds the plan at its first message; the
         # executor arranges that for itself.
-        permit = Permit("plan", self._loop, parent=self.permit)
+        permit = Permit("plan", self._loop, parent=self._permit)
 
         return PlanExecutor(
             plan,
@@ -797,7 +804,7 @@ class PlanSession:
         that permit already. A suspender never learns what it is suspending.
         """
         self._suspenders.add(suspender)
-        suspender.install(self.permit)
+        suspender.install(self._permit)
 
     def remove_suspender(self, suspender):
         """Uninstall a durable suspender."""
@@ -1145,7 +1152,7 @@ class PlanExecutor:
         while True:
             while self._permit.granted:
                 await self._permit.wait_changed()
-            seen = dict(self._permit.reasons)
+            seen = dict(self._permit.withheld_by)
             if not seen:
                 # Granted again before this task looked: nothing to suspend for.
                 continue
@@ -1185,13 +1192,13 @@ class PlanExecutor:
         """
         while not self._permit.granted:
             await self._permit.wait_changed()
-            for key, reason in self._permit.reasons.items():
+            for key, suspension in self._permit.withheld_by.items():
                 if key in seen:
                     continue
-                seen[key] = reason
-                joined.append(reason)
-                if reason.pre_plan is not None:
-                    await self._run_out_of_band(reason.pre_plan)
+                seen[key] = suspension
+                joined.append(suspension)
+                if suspension.pre_plan is not None:
+                    await self._run_out_of_band(suspension.pre_plan)
 
     @property
     def resumable(self) -> bool:

@@ -1121,7 +1121,7 @@ def test_sigint_during_suspender_active(RE, hw):
 
     bool_signal = hw.bool_sig
     suspender = SuspendBoolHigh(bool_signal)
-    suspender.install(RE.permit)
+    suspender.install(RE._permit)
     bool_signal.put(False)
 
     def send_sigints():

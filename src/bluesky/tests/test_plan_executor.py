@@ -294,19 +294,19 @@ def test_a_durable_suspender_outlives_the_plan_it_held():
         await executor.run()
         # Trips after that plan ended. The session is still watching, so the
         # reason stands and the *next* plan is the one held for it.
-        session.permit.withhold(susp, "beam is down")
+        session._permit.withhold(susp, "beam is down")
         return session, executor
 
     session, executor = asyncio.run(main())
 
-    assert susp.installed_on is session.permit
+    assert susp.installed_on is session._permit
     # Never unsubscribed by the plan: it goes on watching its signal between
     # plans, which is what lets it report that it is *already* tripped.
     assert not susp.removed
     assert susp in session.suspenders
     # And the reason stands, so the next plan waits for it before it starts.
-    assert not session.permit.granted
-    assert join_justifications(session.permit.reasons) == "beam is down"
+    assert session.suspensions
+    assert join_justifications(session.suspensions) == "beam is down"
     assert session.make_executor([Msg("null")])._plan_stack, "held by a prologue"
 
 
@@ -319,7 +319,7 @@ def test_one_durable_suspender_covers_every_running_plan():
         second = session.make_executor([Msg("null")])
         # Nothing points a suspender at a plan any more: both are waiting on
         # the one permit, so one reason covers both by construction.
-        assert not first._permit.granted or session.permit.granted
+        assert not first._permit.granted or session._permit.granted
         assert first._permit is not second._permit
         # ...and each has its own for the suspenders its own plan installs.
         assert first._permit is not second._permit

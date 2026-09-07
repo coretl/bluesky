@@ -76,9 +76,12 @@ class SuspenderBase(metaclass=ABCMeta):
         ----------
 
         permit : `bluesky.permits.Permit`
-            Withheld while this suspender is tripped. Which permit decides how
-            far the suspension reaches: one that outlives any plan holds up
-            every plan run under it.
+            Withheld while this suspender is tripped, and what decides how far
+            the suspension reaches: a session's holds up every plan it runs, a
+            plan's holds up that plan alone. Nothing hands one out, so this is
+            reached through `RunEngine.install_suspender`,
+            `bluesky.plan_executor.PlanSession.install_suspender`, or
+            ``Msg('install_suspender')`` rather than called directly.
 
         event_type : str, optional
             The event type (subscription type) to watch. Only meaningful for a
@@ -96,8 +99,8 @@ class SuspenderBase(metaclass=ABCMeta):
             # it used to do, which is a durable install on that engine.
             warn(
                 f"Passing a RunEngine to {type(self).__name__}.install is deprecated; "
-                "it now takes the permit to withhold. Use RE.install_suspender(suspender), "
-                "or suspender.install(RE.permit) to reach the same permit directly.",
+                "it now takes the permit to withhold, which is not something a "
+                "RunEngine hands out. Use RE.install_suspender(suspender).",
                 DeprecationWarning,
                 stacklevel=2,
             )

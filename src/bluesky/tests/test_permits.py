@@ -118,7 +118,7 @@ def test_two_conditions_are_one_suspension(RE, hw):
     seen = []
     _at(0.1, beam.put, 1)
     _at(0.15, shutter.put, 1)
-    _at(0.3, lambda: seen.append(join_justifications(RE.permit.reasons)))
+    _at(0.3, lambda: seen.append(join_justifications(RE._session.suspensions)))
     _at(0.5, beam.put, 0)
     _at(0.5, shutter.put, 0)
     RE(SCAN)
@@ -163,7 +163,7 @@ def test_trips_while_paused_suspends_on_resume(RE, hw):
     assert RE.state == "paused"
 
     sig.put(1)
-    assert not RE.permit.granted, "the reason stands while paused"
+    assert RE._session.suspensions, "the reason stands while paused"
 
     _at(0.5, sig.put, 0)
     start = ttime.time()
@@ -195,10 +195,10 @@ def test_a_permit_is_withheld_for_every_thread_at_once():
     permit = Permit("test", loop=asyncio.new_event_loop())
     permit.withhold("beam", "beam is down")
     assert not permit.granted
-    assert join_justifications(permit.reasons) == "beam is down"
+    assert join_justifications(permit.withheld_by) == "beam is down"
     permit.grant("beam")
     assert permit.granted
-    assert not permit.reasons
+    assert not permit.withheld_by
 
 
 def test_a_child_permit_is_withheld_whenever_its_parent_is():
@@ -209,7 +209,7 @@ def test_a_child_permit_is_withheld_whenever_its_parent_is():
 
     parent.withhold("beam", "beam is down")
     assert not child.granted, "held up by its parent"
-    assert join_justifications(child.reasons) == "beam is down"
+    assert join_justifications(child.withheld_by) == "beam is down"
 
     child.withhold("shutter", "shutter is closed")
     parent.grant("beam")
@@ -303,6 +303,6 @@ def test_installing_a_suspender_on_the_run_engine_still_works(RE, hw):
 
     assert susp in RE.suspenders, "installed durably, as it used to be"
     sig.put(1)
-    assert not RE.permit.granted, "and it withholds the engine's permit"
+    assert RE._session.suspensions, "and it holds up the engine"
     sig.put(0)
-    assert RE.permit.granted
+    assert not RE._session.suspensions
