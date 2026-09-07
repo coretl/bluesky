@@ -92,7 +92,7 @@ def test_run_a_plan_without_a_run_engine():
 
     async def main():
         session = PlanSession(md={"beamline": "test"})
-        session.subscribe(lambda name, doc: collected.append(name))
+        session.dispatcher.subscribe(lambda name, doc: collected.append(name))
         executor = session.make_executor([Msg("open_run"), Msg("close_run")])
         plan_return = await executor.run()
         return executor, plan_return
@@ -138,7 +138,7 @@ def test_session_outlives_its_executors():
 
     async def main():
         session = PlanSession(md={"beamline": "test"})
-        session.subscribe(lambda name, doc: names.append(name))
+        session.dispatcher.subscribe(lambda name, doc: names.append(name))
         uids = []
         for _ in range(3):
             executor = session.make_executor([Msg("open_run"), Msg("close_run")])
@@ -164,7 +164,7 @@ def test_two_plans_run_at_once_on_one_session():
 
     async def main():
         session = PlanSession(md={"beamline": "test"})
-        session.subscribe(lambda name, doc: starts.append(doc) if name == "start" else None)
+        session.dispatcher.subscribe(lambda name, doc: starts.append(doc) if name == "start" else None)
         plan = [Msg("open_run"), Msg("sleep", None, 0.05), Msg("close_run")]
         first = session.make_executor(list(plan))
         second = session.make_executor(list(plan))
@@ -188,15 +188,15 @@ def test_a_setting_reaches_the_next_plan_and_not_the_running_one():
         session = PlanSession()
         # The session keeps no environment of its own, so there is no second
         # copy of a setting to fall out of step with this one.
-        assert not hasattr(session, "_env")
+        assert not hasattr(session, "env") and not hasattr(session, "_env")
 
         already_built = session.make_executor([Msg("null")])
         session.strict_pre_declare = True
         built_after = session.make_executor([Msg("null")])
 
-        assert already_built.env.strict_pre_declare is False, "frozen for its plan"
-        assert built_after.env.strict_pre_declare is True, "and live for the next"
-        assert already_built.env is not built_after.env
+        assert already_built._env.strict_pre_declare is False, "frozen for its plan"
+        assert built_after._env.strict_pre_declare is True, "and live for the next"
+        assert already_built._env is not built_after._env
 
         await asyncio.gather(already_built.run(), built_after.run())
 
@@ -217,11 +217,11 @@ def test_metadata_is_snapshotted_and_the_session_keeps_its_own_store():
         session.md = store
         executor = session.make_executor([Msg("null")])
 
-        assert executor.env.md == {"from_the_store": True}
-        assert executor.env.md is not store, "a copy of the contents, not the store"
+        assert executor._env.md == {"from_the_store": True}
+        assert executor._env.md is not store, "a copy of the contents, not the store"
 
         session.md["written_after_launch"] = True
-        assert "written_after_launch" not in executor.env.md
+        assert "written_after_launch" not in executor._env.md
         assert session.md is store, "and the session still holds what it was given"
 
         await executor.run()
@@ -265,7 +265,7 @@ def test_a_plan_installs_a_suspender_for_itself_only():
 
     # Installed on the executor, so it withholds that plan's permit and no
     # other. A session-installed one would hold up every plan.
-    assert susp.installed_on is executor.permit
+    assert susp.installed_on is executor._permit
     assert susp.removed
     assert susp not in session.suspenders
     assert susp not in executor.suspenders
@@ -319,10 +319,10 @@ def test_one_durable_suspender_covers_every_running_plan():
         second = session.make_executor([Msg("null")])
         # Nothing points a suspender at a plan any more: both are waiting on
         # the one permit, so one reason covers both by construction.
-        assert not first.permit.granted or session.permit.granted
-        assert first.permit is not second.permit
+        assert not first._permit.granted or session.permit.granted
+        assert first._permit is not second._permit
         # ...and each has its own for the suspenders its own plan installs.
-        assert first.permit is not second.permit
+        assert first._permit is not second._permit
         await asyncio.gather(first.run(), second.run())
 
     asyncio.run(main())
@@ -341,7 +341,7 @@ def test_executor_starts_empty():
     first, second = asyncio.run(main())
     assert first.run_start_uids and not second.run_start_uids
     assert second.exit_status == "success"
-    assert second.exception is None
+    assert second._exception is None
     # the caches themselves are private; this is the point of the class, so
     # reach in rather than let it go untested
     assert not second._msg_cache
@@ -435,10 +435,10 @@ def test_ignore_callback_exceptions_is_read_live_by_a_plan(RE):
     """
     RE.ignore_callback_exceptions = True
     executor = RE._session.make_executor([Msg("null")])
-    assert executor.dispatcher.ignore_exceptions is True
+    assert executor._dispatcher.ignore_exceptions is True
 
     RE.ignore_callback_exceptions = False
-    assert executor.dispatcher.ignore_exceptions is False
+    assert executor._dispatcher.ignore_exceptions is False
 
 
 def test_re_class_answers_for_whoever_is_driving(RE):

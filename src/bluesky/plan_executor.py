@@ -512,6 +512,8 @@ class PlanSession:
 
     hooks
         The `PlanHooks` record shared with every executor this session builds.
+        One mutable record rather than a copy per plan, so setting a hook on it
+        mid-plan takes effect on the plan already running.
 
     suspenders
         Read-only collection of the durable
@@ -664,52 +666,6 @@ class PlanSession:
         """Read-only collection of installed suspenders."""
         return tuple(self._suspenders)
 
-    # The hooks are one mutable record, shared with every executor, so that
-    # setting one mid-plan takes effect on the plan already running.
-
-    @property
-    def msg_hook(self):
-        return self.hooks.msg_hook
-
-    @msg_hook.setter
-    def msg_hook(self, value):
-        self.hooks.msg_hook = value
-
-    @property
-    def state_hook(self):
-        return self.hooks.state_hook
-
-    @state_hook.setter
-    def state_hook(self, value):
-        self.hooks.state_hook = value
-
-    @property
-    def waiting_hook(self):
-        return self.hooks.waiting_hook
-
-    @waiting_hook.setter
-    def waiting_hook(self, value):
-        self.hooks.waiting_hook = value
-
-    @property
-    def on_pause(self):
-        return self.hooks.on_pause
-
-    @on_pause.setter
-    def on_pause(self, value):
-        self.hooks.on_pause = value
-
-    def subscribe(self, func, name="all"):
-        """Register a callback function to consume documents.
-
-        See :meth:`RunEngine.subscribe`.
-        """
-        return self.dispatcher.subscribe(func, name)
-
-    def unsubscribe(self, token):
-        """Unregister a callback function by its integer ID."""
-        return self.dispatcher.unsubscribe(token)
-
     def register_command(self, name, func):
         """Register a new Message command.
 
@@ -748,7 +704,7 @@ class PlanSession:
         are defined as, since this session holds no executor to bind them to,
         and they are named and documented the same either way.
         """
-        registry = PlanExecutor.unbound_default_commands()
+        registry = PlanExecutor._unbound_default_commands()
         registry.update(self._registered_commands)
         for name in self._unregistered_commands:
             registry.pop(name, None)
@@ -908,9 +864,10 @@ class PlanExecutor:
         to install into.
     without_commands : collection of str, optional
         Built-in commands to leave out.
-    session_permit : Permit, optional
-        The durable permit. Held up by suspenders installed on the session, so
-        one condition covers every plan that session is running.
+    permit : Permit, optional
+        The durable permit, made this plan's parent. Held up by suspenders
+        installed on the session, so one condition covers every plan that
+        session is running.
     preprocessors : sequence of callable, optional
         Generator functions applied to the plan now, composed in order, so
         that ``[f, g]`` is applied as ``f(g(plan))``. Consumed here rather
@@ -985,10 +942,10 @@ class PlanExecutor:
         # plan cannot unsubscribe a session callback by guessing an integer.
         # Ordering documents against the session's subscribers is the
         # dispatcher's own business, through its parent.
-        self.dispatcher = dispatcher if dispatcher is not None else Dispatcher()
+        self._dispatcher = dispatcher if dispatcher is not None else Dispatcher()
         for name, funcs in normalize_subs_input(subs).items():
             for func in funcs:
-                self.dispatcher.subscribe(func, name)
+                self._dispatcher.subscribe(func, name)
 
         # Reached for through RunEngine._run_bundlers by bluesky's own tests,
         # to inspect the runs a plan has open. Private because the bundler for
@@ -1009,7 +966,7 @@ class PlanExecutor:
         # This plan's own permit, the counterpart of its own dispatcher: a
         # suspender a plan installs holds up that plan alone. The session's is
         # shared with every plan it is running.
-        self.permit = permit if permit is not None else Permit("plan", env.loop)
+        self._permit = permit if permit is not None else Permit("plan", env.loop)
 
         self._staged: set[typing.Any] = set()  # staged, not yet unstaged
         self._objs_seen: set[typing.Any] = set()  # every object seen in a Msg
@@ -1022,10 +979,10 @@ class PlanExecutor:
         self._seen_wait_and_move_on_keys: set[typing.Any] = set()
 
         # An exception instance or class, to be raised into the plan.
-        self.exception: typing.Any = None
+        self._exception: typing.Any = None
         self.interrupted: bool = False  # paused, aborted or failed
         self.exit_status: str = "success"  # optimistic default
-        self.reason: str = ""  # reason for an abort
+        self._reason: str = ""  # reason for an abort
         self._deferred_pause_requested: bool = False  # pause at next 'checkpoint'
 
         # The vocabulary this plan understands, composed once. A plan's
@@ -1036,7 +993,7 @@ class PlanExecutor:
         registry.update(commands or {})
         for name in without_commands:
             registry.pop(name, None)
-        self.command_registry: dict[str, typing.Callable] = registry
+        self._command_registry: dict[str, typing.Callable] = registry
 
         # Load the plan last, so that a preprocessor seeing a half-built
         # executor is not a thing that can happen.
@@ -1048,13 +1005,13 @@ class PlanExecutor:
             gen = wrapper_func(gen)
         self._plan_stack.append(gen)
         self._response_stack.append(None)
-        if not self.permit.granted:
+        if not self._permit.granted:
             # Something is already withholding this plan's permit -- a
             # suspender tripped before the plan was built. Wait for it in band,
             # ahead of the plan's first message. A suspension proper cannot do
             # this job: there is no checkpoint yet to rewind to, so requesting
             # one would abort the plan rather than hold it.
-            self._plan_stack.append(single_gen(Msg("wait_for", None, [self.permit.wait_granted])))
+            self._plan_stack.append(single_gen(Msg("wait_for", None, [self._permit.wait_granted])))
             self._response_stack.append(None)
 
     # The hooks are the session's; firing one, and checking whether it is set
@@ -1096,15 +1053,10 @@ class PlanExecutor:
         path reaches here. Subscribers are therefore invoked on whichever
         thread emitted, which is not always the loop.
         """
-        self.dispatcher.process(name, doc)
+        self._dispatcher.process(name, doc)
 
     @property
-    def env(self) -> PlanEnvironment:
-        """Where this plan is being executed."""
-        return self._env
-
-    @property
-    def loop(self) -> asyncio.AbstractEventLoop:
+    def _loop(self) -> asyncio.AbstractEventLoop:
         """The event loop this plan is executed on."""
         return self._env.loop
 
@@ -1125,7 +1077,7 @@ class PlanExecutor:
         unlike a suspender installed on the session, which outlives every plan.
         """
         self._plan_suspenders.add(suspender)
-        suspender.install(self.permit)
+        suspender.install(self._permit)
 
     def _remove_suspender_now(self, suspender) -> None:
         """Uninstall a suspender this plan installed for itself.
@@ -1137,7 +1089,7 @@ class PlanExecutor:
         if suspender in self._plan_suspenders:
             suspender.remove()
         self._plan_suspenders.discard(suspender)
-        self.permit.grant(suspender)
+        self._permit.grant(suspender)
 
     def clear_suspenders(self) -> None:
         """Uninstall every suspender this plan installed for itself."""
@@ -1181,11 +1133,11 @@ class PlanExecutor:
         going bad in that window is a real trip.
         """
         if held_at_start:
-            await self.permit.wait_granted()
+            await self._permit.wait_granted()
         while True:
-            while self.permit.granted:
-                await self.permit.wait_changed()
-            seen = dict(self.permit.reasons)
+            while self._permit.granted:
+                await self._permit.wait_changed()
+            seen = dict(self._permit.reasons)
             if not seen:
                 # Granted again before this task looked: nothing to suspend for.
                 continue
@@ -1204,9 +1156,9 @@ class PlanExecutor:
                     yield from ensure_generator(_called(first.post_plan))
 
             announce_suspend()
-            self.loop.create_task(  # noqa: RUF006
+            self._loop.create_task(  # noqa: RUF006
                 self._request_suspend(
-                    self.permit.wait_granted,
+                    self._permit.wait_granted,
                     pre_plan=first.pre_plan,
                     post_plan=unwind,
                     justification=join_justifications(seen),
@@ -1223,9 +1175,9 @@ class PlanExecutor:
         to the suspension's unwind, in band and in reverse, so that they
         cannot race the plan resuming.
         """
-        while not self.permit.granted:
-            await self.permit.wait_changed()
-            for key, reason in self.permit.reasons.items():
+        while not self._permit.granted:
+            await self._permit.wait_changed()
+            for key, reason in self._permit.reasons.items():
                 if key in seen:
                     continue
                 seen[key] = reason
@@ -1288,8 +1240,8 @@ class PlanExecutor:
             plan_return,
             self.exit_status,
             self.interrupted,
-            self.reason,
-            self.exception,
+            self._reason,
+            self._exception,
         )
 
     @property
@@ -1351,7 +1303,7 @@ class PlanExecutor:
     }
 
     @classmethod
-    def unbound_default_commands(cls) -> dict[str, typing.Callable]:
+    def _unbound_default_commands(cls) -> dict[str, typing.Callable]:
         """The built-in vocabulary as plain functions, without an executor."""
         return {name: getattr(cls, attr) for name, attr in cls._DEFAULT_COMMANDS.items()}
 
@@ -1364,7 +1316,7 @@ class PlanExecutor:
         self.interrupted = False
         for current_run in self._run_bundlers.values():
             current_run.record_interruption("resume")
-        self._plan_stack.append(self.rewind())
+        self._plan_stack.append(self._rewind())
         self._response_stack.append(None)
         # Notify Devices of the resume in case they want to clean up.
         for obj in self._objs_seen:
@@ -1377,7 +1329,7 @@ class PlanExecutor:
             print("No checkpoint; cannot suspend.")
             print("Aborting: running cleanup and marking exit_status as 'abort'...")
             self.interrupted = True
-            self.exception = FailedPause()
+            self._exception = FailedPause()
             was_paused = self.state == "paused"
             self.state = "aborting"
             if not was_paused:
@@ -1461,10 +1413,10 @@ class PlanExecutor:
         # rather than by the task once it starts: a condition going bad in
         # between would otherwise be taken for the one this plan is already
         # being held for, and never suspend it.
-        supervisor = self.loop.create_task(self._supervise_permit(held_at_start=not self.permit.granted))
+        supervisor = self._loop.create_task(self._supervise_permit(held_at_start=not self._permit.granted))
         stashed_exception = None
         debug = msg_logger.debug
-        self.reason = ""
+        self._reason = ""
         # sentinel to decide if need to add to the response stack or not
         sentinel = object()
         plan_return = NO_PLAN_RETURN
@@ -1550,9 +1502,9 @@ class PlanExecutor:
                     resp = self._response_stack.pop()
                     # if any status tasks have failed, grab the exceptions.
                     # give priority to things pushed in from outside
-                    if self.exception is not None:
-                        stashed_exception = self.exception
-                        self.exception = None
+                    if self._exception is not None:
+                        stashed_exception = self._exception
+                        self._exception = None
                     # The case where we have a stashed exception
                     if stashed_exception is not None or isinstance(resp, Exception):
                         # throw the exception at the current plan
@@ -1636,7 +1588,7 @@ class PlanExecutor:
 
                     # try to look up the coroutine to execute the command
                     if (
-                        coro := self.command_registry.get(msg.command, key_absence_sentinel := object())
+                        coro := self._command_registry.get(msg.command, key_absence_sentinel := object())
                     ) is key_absence_sentinel:
                         # flag invalid command
                         # and return to the top of the loop
@@ -1730,7 +1682,7 @@ class PlanExecutor:
             raise err
         finally:
             if not exit_reason:
-                exit_reason = self.reason
+                exit_reason = self._reason
             # Some done_callbacks may still be alive in other threads.
             # Block them from creating new 'failed status' tasks on the loop.
             self._pardon_failures.set()
@@ -1884,7 +1836,7 @@ class PlanExecutor:
 
     def _close_run_trace(self, msg: Msg):
         exit_status = msg.kwargs.get("exit_status", self.exit_status)
-        reason = msg.kwargs.get("reason", self.reason)
+        reason = msg.kwargs.get("reason", self._reason)
         try:
             _span: Span = self._run_tracing_spans.pop()
             _span.set_attribute("exit_status", exit_status if exit_status is not None else "None")
@@ -2359,7 +2311,7 @@ class PlanExecutor:
                 exc = ret.exception(timeout=0)
                 raise FailedStatus(ret) from exc
             except Exception as e:
-                self.exception = e
+                self._exception = e
                 fut.set_exception(e)
                 # We have set the exception, but we don't mind if
                 # no-one collects it from the future, so fetch it ourselves to
@@ -2608,7 +2560,7 @@ class PlanExecutor:
         """
         self._env.log.debug("Adding subscription %r", msg)
         _, obj, args, kwargs, _ = msg
-        token = self.dispatcher.subscribe(*args, **kwargs)
+        token = self._dispatcher.subscribe(*args, **kwargs)
         await self._reset_checkpoint_state_coro()
         return token
 
@@ -2628,7 +2580,7 @@ class PlanExecutor:
         _, obj, arg, kwargs, _ = msg
         if (token := kwargs.get("token", key_absence_sentinel := object())) is key_absence_sentinel:
             (token,) = arg
-        self.dispatcher.unsubscribe(token)
+        self._dispatcher.unsubscribe(token)
         await self._reset_checkpoint_state_coro()
 
     async def _input(self, msg):
@@ -2643,7 +2595,7 @@ class PlanExecutor:
         async_input = functools.partial(async_input, end="", flush=True)
         return await async_input(prompt)
 
-    def rewind(self):
+    def _rewind(self):
         """Clean up in preparation for resuming from a pause or suspension.
 
         Returns
@@ -2687,7 +2639,7 @@ class PlanExecutor:
                 except NoReplayAllowed:
                     self._reset_checkpoint_state_meth()
         # rewind to the last checkpoint
-        rewind_plan = self.rewind()
+        rewind_plan = self._rewind()
         was_rewindable = self.rewindable_flag
 
         if callable(pre_plan):
@@ -2770,7 +2722,7 @@ class PlanExecutor:
             raise TransitionError("RunEngine is already idle.")
         print("Aborting: running cleanup and marking exit_status as 'abort'...")
         self.interrupted = True
-        self.reason = reason
+        self._reason = reason
 
         self.exit_status = "abort"
         self._destroy_open_run_tracing_spans()
@@ -2778,7 +2730,7 @@ class PlanExecutor:
         was_paused = self.state == "paused"
         self.state = "aborting"
         if was_paused:
-            self.exception = RequestAbort()
+            self._exception = RequestAbort()
             # A paused plan is parked at the gate, so raising the exception
             # into it is not enough on its own: it has to be let go before it
             # can run its cleanup.
@@ -2795,7 +2747,7 @@ class PlanExecutor:
         was_paused = self.state == "paused"
         self.state = "stopping"
         if was_paused:
-            self.exception = RequestStop
+            self._exception = RequestStop
             self.permit_run()
         else:
             self._task.cancel()
@@ -2809,7 +2761,7 @@ class PlanExecutor:
         was_paused = self.state == "paused"
         self.state = "halting"
         if was_paused:
-            self.exception = PlanHalt
+            self._exception = PlanHalt
             self.exit_status = "abort"
             self.permit_run()
         else:

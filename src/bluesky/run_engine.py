@@ -426,27 +426,27 @@ class RunEngine:
 
     @property
     def msg_hook(self):
-        return self._session.msg_hook
+        return self._session.hooks.msg_hook
 
     @msg_hook.setter
     def msg_hook(self, value):
-        self._session.msg_hook = value
+        self._session.hooks.msg_hook = value
 
     @property
     def state_hook(self):
-        return self._session.state_hook
+        return self._session.hooks.state_hook
 
     @state_hook.setter
     def state_hook(self, value):
-        self._session.state_hook = value
+        self._session.hooks.state_hook = value
 
     @property
     def waiting_hook(self):
-        return self._session.waiting_hook
+        return self._session.hooks.waiting_hook
 
     @waiting_hook.setter
     def waiting_hook(self, value):
-        self._session.waiting_hook = value
+        self._session.hooks.waiting_hook = value
 
     @property
     def record_interruptions(self):
@@ -1200,7 +1200,7 @@ _FORWARDS_WITH_CALLERS = {
     "_run_bundlers": "_run_bundlers",
     "_run_start_uids": "run_start_uids",
     "_seen_wait_and_move_on_keys": "_seen_wait_and_move_on_keys",
-    "_command_registry": "command_registry",
+    "_command_registry": "_command_registry",
 }
 
 # Forwards with no caller we could find, carried as insurance rather than
@@ -1232,10 +1232,10 @@ _FORWARDS_WITHOUT_KNOWN_CALLERS = {
     "_movable_objs_touched": "_movable_objs_touched",
     "_groups": "_groups",
     "_status_objs": "_status_objs",
-    "_exception": "exception",
+    "_exception": "_exception",
     "_interrupted": "interrupted",
     "_exit_status": "exit_status",
-    "_reason": "reason",
+    "_reason": "_reason",
 }
 
 _EXECUTOR_FORWARDS = _FORWARDS_WITH_CALLERS | _FORWARDS_WITHOUT_KNOWN_CALLERS

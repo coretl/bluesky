@@ -60,15 +60,21 @@ reviewable.
 | 10 | narrow the public surface: privatise, delete `request_suspend` and `run_engine_cls` | |
 
 Rows 1-10 describe how the work will be *presented*, not how it was built. The
-tree currently holds it as twelve additive commits; the restructure into this
+tree currently holds it as thirteen additive commits; the restructure into this
 shape is step 4 of the working order below and has not started.
 
-The only piece of row 10 still unwritten is the privatisation sweep: `env`,
-`loop`, `rewind`, `unbound_default_commands`, `command_registry`, `permit`,
-`dispatcher`, and the `exception`/`exit_status`/`reason` trio. Several are wired
-into `run_engine.py`'s `_FORWARDS_WITH_CALLERS` and
-`_FORWARDS_WITHOUT_KNOWN_CALLERS` maps, which have to move with them, so it wants
-one focused commit rather than a partial pass.
+Row 10 is now complete: the privatisation sweep is done, in one commit. On
+`PlanExecutor`, `env`, `loop`, `rewind`, `unbound_default_commands`,
+`command_registry`, `permit`, `dispatcher`, `exception` and `reason` are now
+private; `run_engine.py`'s `_FORWARDS_WITH_CALLERS` and
+`_FORWARDS_WITHOUT_KNOWN_CALLERS` maps were repointed at the new names in the
+same commit. `PlanSession.subscribe`/`unsubscribe` and its four hook-forwarding
+properties went too.
+
+An earlier draft of this file called it the `exception`/`exit_status`/`reason`
+*trio*. That was wrong, and the notes and `classes.py` both had it right: it is
+the `exception`/`reason` **pair**. `exit_status` and `interrupted` stay public --
+they are listed as public in `classes.py`, and the RunEngine reads both.
 
 Two docs commits, which ship in the PR -- **both written** (`98a82e780`):
 
