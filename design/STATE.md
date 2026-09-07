@@ -82,8 +82,17 @@ privatising them on the executor takes nothing away.
 positional arguments, matching the design. There was exactly one direct
 `PlanExecutor(...)` call in the whole tree -- `make_executor` itself -- so the
 `None` defaults were unreachable branches, and every caller in src, tests and
-docs already goes through `session.make_executor`. `PlanSession()` still
-constructs with no arguments at all; that is where the defaults belong.
+docs already goes through `session.make_executor`.
+
+`PlanSession.__init__` went the other way, from ten arguments to three. Only
+`md`, `loop` and `log` are consumed while the session is built; the other seven
+were plain assignments read later, so they are now plain attributes assigned
+after construction -- which is what `record_interruptions`, `strict_pre_declare`
+and `rewindable` already were. The RunEngine was their only caller and now
+assigns them, `on_pause` included, which belongs on `hooks` like every other
+hook. `PlanSession()` still constructs with no arguments at all.
+
+`Permit.withhold` no longer defaults `justification` to the empty string.
 
 Two docs commits, which ship in the PR -- **both written** (`98a82e780`):
 

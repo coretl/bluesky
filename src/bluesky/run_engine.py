@@ -322,22 +322,27 @@ class RunEngine:
         # Everything that outlives a single plan lives on the session, which
         # this RunEngine drives but does not otherwise own. The properties
         # below forward to it, so RE.md, RE.state and friends are unchanged.
-        self._session = PlanSession(
-            md,
-            loop=loop,
-            preprocessors=preprocessors,
-            md_validator=md_validator,
-            md_normalizer=md_normalizer,
-            scan_id_source=scan_id_source,
-            log=log,
-            on_pause=self._blocking_event.set,
-            # Honour a RunBundler overridden on a RunEngine subclass, and name
-            # this RunEngine as what a plan's state changes happen to and what
-            # Msg('RE_class') reports, rather than the executor that happens to
-            # be running the plan.
-            run_bundler_cls=type(self).RunBundler,
-            identity=self,
-        )
+        # Only what the session consumes as it is built. Everything else is a
+        # setting it reads when it builds an executor, so it is assigned just
+        # below -- the same way a user changes one later.
+        self._session = PlanSession(md, loop=loop, log=log)
+
+        if preprocessors is not None:
+            self._session.preprocessors = preprocessors
+        if md_validator is not None:
+            self._session.md_validator = md_validator
+        if md_normalizer is not None:
+            self._session.md_normalizer = md_normalizer
+        self._session.scan_id_source = scan_id_source
+        # Honour a RunBundler overridden on a RunEngine subclass, and name this
+        # RunEngine as what a plan's state changes happen to and what
+        # Msg('RE_class') reports, rather than the executor that happens to be
+        # running the plan.
+        self._session.run_bundler_cls = type(self).RunBundler
+        self._session.identity = self
+        # Releases the main thread, which is parked while a plan runs. A
+        # headless caller has no thread to release and leaves this unset.
+        self._session.hooks.on_pause = self._blocking_event.set
 
         if context_managers is None:
             context_managers = [SigintHandler]

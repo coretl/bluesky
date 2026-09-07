@@ -470,43 +470,46 @@ class PlanSession:
         The loop plans will be executed on. Defaults to the running loop, or
         to the loop a `RunEngine` has already established.
 
-    preprocessors : list, optional
+    log : logging.LoggerAdapter, optional
+        Where this session and its executors log to.
+
+    Only these three, because only these three are consumed as the session is
+    built: ``md`` is stamped with the library versions, ``loop`` is what the
+    durable permit is created on, and ``log`` is written to while the versions
+    are collected. Every other setting is read later, when `make_executor`
+    freezes a `PlanEnvironment` for a plan, so it is a plain attribute you
+    assign after construction -- one spelling for all of them, and one that
+    keeps working for the next plan rather than only at construction.
+
+    Attributes
+    ----------
+    preprocessors
         Generator functions that take in a plan (generator instance) and
         modify its messages on the way out. Functions are composed in order:
         the preprocessors ``[f, g]`` are applied like ``f(g(plan))``.
 
-    md_validator : callable, optional
+    md_validator
         A function that raises and prevents starting a run if it deems the
         metadata to be invalid or incomplete.
 
-    md_normalizer : callable, optional
+    md_normalizer
         A function that, like ``md_validator``, raises to prevent starting a
         run, but which returns the normalized metadata if it succeeds.
 
-    scan_id_source : callable, optional
+    scan_id_source
         A (possibly async) function used to calculate ``scan_id``.
 
-    log : logging.LoggerAdapter, optional
-        Where this session and its executors log to.
-
-    on_pause : callable, optional
-        Called with no arguments when an executor reaches a paused resting
-        state. A `RunEngine` uses this to release the main thread; a headless
-        caller has no thread to release and can leave it unset.
-
-    run_bundler_cls : type, optional
+    run_bundler_cls
         The bundler used to compose documents for each open run. A
-        `RunEngine` passes its own, so that overriding it on a `RunEngine`
+        `RunEngine` assigns its own, so that overriding it on a `RunEngine`
         subclass keeps working.
 
-    identity : object, optional
+    identity
         What a state change is logged as having happened to, and what
-        ``Msg('RE_class')`` reports the class of. A `RunEngine` passes itself,
+        ``Msg('RE_class')`` reports the class of. A `RunEngine` names itself,
         because that is what a user recognises in their logs; without one each
         executor answers for itself.
 
-    Attributes
-    ----------
     dispatcher
         The `Dispatcher` documents are emitted through.
 
@@ -545,14 +548,7 @@ class PlanSession:
         md: RunEngineMetadata | None = None,
         *,
         loop: asyncio.AbstractEventLoop | None = None,
-        preprocessors: list | None = None,
-        md_validator: typing.Callable | None = None,
-        md_normalizer: typing.Callable | None = None,
-        scan_id_source: typing.Callable[[RunEngineMetadata], SyncOrAsync[int]] = default_scan_id_source,
         log: LoggerAdapter | None = None,
-        on_pause: typing.Callable[[], None] | None = None,
-        run_bundler_cls: type[RunBundler] = RunBundler,
-        identity: typing.Any = None,
     ):
         if loop is None:
             loop = _default_event_loop()
@@ -585,7 +581,7 @@ class PlanSession:
         md["versions"]["bluesky"] = __version__
         md["versions"]["event_model"] = event_model.__version__
 
-        self.scan_id_source = scan_id_source
+        self.scan_id_source: typing.Callable[[RunEngineMetadata], SyncOrAsync[int]] = default_scan_id_source
         # Serialises scan id allocation. Computing the next id reads md and
         # writes it back with an await in between, so two executors opening a
         # run at the same moment would otherwise be handed the same number.
@@ -593,8 +589,10 @@ class PlanSession:
 
         # The observation points, shared by reference with every executor this
         # session builds, so that setting one mid-plan takes effect on that
-        # plan.
-        self.hooks = PlanHooks(on_pause=on_pause)
+        # plan. Set them on this record rather than through a constructor
+        # argument each: `session.hooks.on_pause = f` reaches a running plan,
+        # which is the whole point of holding them in one mutable place.
+        self.hooks = PlanHooks()
 
         # Settings a plan is run under. Plain attributes, read when
         # `make_executor` builds the frozen `PlanEnvironment` it hands over,
@@ -602,11 +600,11 @@ class PlanSession:
         # the one already running. Held once, so nothing can drift out of
         # step with a copy of itself.
         self.md = md
-        self.preprocessors = preprocessors if preprocessors is not None else []
-        self.md_validator = md_validator if md_validator is not None else _default_md_validator
-        self.md_normalizer = md_normalizer if md_normalizer is not None else _default_md_normalizer
-        self.run_bundler_cls = run_bundler_cls
-        self.identity = identity
+        self.preprocessors: list = []
+        self.md_validator: typing.Callable = _default_md_validator
+        self.md_normalizer: typing.Callable = _default_md_normalizer
+        self.run_bundler_cls: type[RunBundler] = RunBundler
+        self.identity: typing.Any = None
         self.record_interruptions = False
         self.strict_pre_declare = False
         self.rewindable = True

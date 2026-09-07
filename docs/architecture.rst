@@ -81,10 +81,14 @@ What outlives a plan
     :members:
     :undoc-members:
 
-The settings are plain attributes. ``make_executor`` reads them into a frozen
+The settings are plain attributes, and only plain attributes: the constructor
+takes ``md``, ``loop`` and ``log``, the three consumed while the session is
+built, and nothing else. ``make_executor`` reads the rest into a frozen
 :class:`~bluesky.plan_executor.PlanEnvironment` for each plan, so changing one
 takes effect for the next plan and never the one already running -- and the
-session never holds a second copy of a setting to keep in step.
+session never holds a second copy of a setting to keep in step. Were a setting
+also a constructor argument it would have two spellings, and only one of them
+would still work once the session existed.
 
 .. autoclass:: bluesky.plan_executor.PlanHooks
     :members:
