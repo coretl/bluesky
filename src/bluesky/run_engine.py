@@ -32,7 +32,6 @@ from .plan_executor import (  # noqa: F401
     WaitForTimeoutError,
     _panicked_state,
     announce_state_change,
-    announce_suspend,
     default_scan_id_source,
 )
 from .protocols import SyncOrAsync, T
@@ -262,6 +261,16 @@ class RunEngine:
 
     #: Overridable by subclasses; copied onto the session on construction.
     RunBundler = RunBundler
+
+    def _raise_if_panicked(self):
+        """Refuse to do anything that needs the loop, once it is wedged.
+
+        Panicking is a one-way latch: the loop thread could not be shut down,
+        so anything handed to it from here would never run. Raising says so,
+        where scheduling onto a dead loop would silently do nothing.
+        """
+        if self._is_panicked:
+            raise RuntimeError("The RunEngine is panicked and cannot be recovered. You must restart bluesky.")
 
     @property
     def state(self):
@@ -665,6 +674,7 @@ class RunEngine:
 
         Lossless subscriptions are not unsubscribed.
         """
+        self._raise_if_panicked()
         if self._executor.state != "idle":
             self.halt()
         self._new_executor()
@@ -747,8 +757,7 @@ class RunEngine:
             If True, pause at the next checkpoint.
             False by default.
         """
-        if self.state == "panicked":
-            raise RuntimeError("The RunEngine is panicked and cannot be recovered. You must restart bluesky.")
+        self._raise_if_panicked()
         future = asyncio.run_coroutine_threadsafe(self._executor.pause(defer), loop=self.loop)
         # TODO add a timeout here?
         return future.result()
@@ -797,8 +806,7 @@ class RunEngine:
         result : :class:`RunEngineResult`
             if :attr:`RunEngine._call_returns_result` is ``True``
         """
-        if self.state == "panicked":
-            raise RuntimeError("The RunEngine is panicked and cannot be recovered. You must restart bluesky.")
+        self._raise_if_panicked()
         if "raise_if_interrupted" in metadata_kw:
             warn(  # noqa: B028
                 "The 'raise_if_interrupted' flag has been removed. The "
@@ -877,8 +885,7 @@ class RunEngine:
         result : :class:`RunEngineResult`
             if :attr:`RunEngine._call_returns_result` is ``True``
         """
-        if self.state == "panicked":
-            raise RuntimeError("The RunEngine is panicked and cannot be recovered. You must restart bluesky.")
+        self._raise_if_panicked()
 
         # The state machine does not capture the whole picture.
         if not self._executor.state.is_paused:
@@ -987,14 +994,20 @@ class RunEngine:
                     plan_return = None
             return plan_return
 
-    @property
-    def _permit(self):
-        """The session's permit. Private: suspension is raised by suspenders."""
-        return self._session._permit
-
     def install_suspender(self, suspender):
         """
-        Install a 'suspender', which can suspend and resume execution.
+        Install a persistent 'suspender', which can suspend and resume execution.
+
+        A suspender installed here is *persistent*: it holds up every plan this
+        engine runs, whether one is running now or not, until it is removed.
+        Install one from inside a plan instead, with
+        ``Msg('install_suspender', None, suspender)``, and it is *ephemeral* --
+        it holds up that plan alone and is gone when the plan ends.
+
+        The two kinds compose. Conditions going bad together make one
+        suspension, and the plan runs again when the last of them clears, so a
+        plan can be held by its own suspender and by this engine's at once
+        without rewinding twice.
 
         Parameters
         ----------
@@ -1005,6 +1018,9 @@ class RunEngine:
         :meth:`RunEngine.remove_suspender`
         :meth:`RunEngine.clear_suspenders`
         """
+        # Marshals the subscribe onto the loop, so a wedged one would take
+        # the suspender and never watch anything.
+        self._raise_if_panicked()
         # Reaches a plan already in progress without anything having to be
         # told: that plan's permit is a child of the session's, so it is
         # withheld whenever this one is.
@@ -1023,17 +1039,23 @@ class RunEngine:
         :meth:`RunEngine.install_suspender`
         :meth:`RunEngine.clear_suspenders`
         """
+        self._raise_if_panicked()
         self._session.remove_suspender(suspender)
 
     def clear_suspenders(self):
         """
-        Uninstall all suspenders.
+        Uninstall all suspenders, persistent and ephemeral alike.
+
+        Both kinds, because both can be holding the plan up and leaving either
+        behind means resuming into a wait nothing will end. This is the escape
+        hatch to reach for at the prompt when a plan is stuck.
 
         See Also
         --------
         :meth:`RunEngine.install_suspender`
         :meth:`RunEngine.remove_suspender`
         """
+        self._raise_if_panicked()
         # Both halves, because :attr:`suspenders` reports both. The session
         # cannot uninstall a suspender a plan installed for itself, so looping
         # over the union here and calling :meth:`remove_suspender` would leave
@@ -1042,41 +1064,6 @@ class RunEngine:
         # resuming into a wait nothing will end.
         self._session.clear_suspenders()
         self._executor.clear_suspenders()
-
-    def _suspend_until(self, fut, *, pre_plan=None, post_plan=None, justification=None):
-        """Suspend the plan until ``fut`` is finished.
-
-        The two plans will be run before and after waiting for the future.
-        This enable doing things like opening and closing shutters and
-        resetting cameras around a suspend.
-
-        Parameters
-        ----------
-        fut : asyncio.Future
-
-        pre_plan : iterable or callable, optional
-           Plan to execute just before suspending. If callable, must
-           take no arguments.
-
-        post_plan : iterable or callable, optional
-            Plan to execute just before resuming. If callable, must
-            take no arguments.
-
-        justification : str, optional
-            explanation of why the suspension has been requested
-
-        """
-        # Announce on the calling thread, so the message arrives when the
-        # caller asked rather than whenever the loop gets to it. Then straight
-        # to the plan: going by way of the session would only find the
-        # executor this already has, and would announce it a second time.
-        announce_suspend()
-        asyncio.run_coroutine_threadsafe(
-            self._executor._request_suspend(
-                fut, pre_plan=pre_plan, post_plan=post_plan, justification=justification
-            ),
-            self.loop,
-        )
 
     def abort(self, reason=""):
         """
@@ -1136,9 +1123,11 @@ class RunEngine:
         return self.__interrupter_helper(self._executor.halt())
 
     def __interrupter_helper(self, coro):
-        if self.state == "panicked":
+        if self._is_panicked:
+            # Ours to close: nothing else will await it, and an un-awaited
+            # coroutine warns at collection rather than where it was made.
             coro.close()
-            raise RuntimeError("The RunEngine is panicked and cannot be recovered. You must restart bluesky.")
+        self._raise_if_panicked()
 
         coro_event = threading.Event()
         task = None

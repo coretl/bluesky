@@ -21,7 +21,7 @@ from bluesky.examples import (
 )
 from bluesky.tests import uses_os_kill_sigint
 
-from .utils import _careful_event_set, _fabricate_asycio_event
+from .utils import _careful_event_set, _fabricate_asycio_event, suspend_until
 
 
 def test_msgs(hw):
@@ -263,7 +263,7 @@ def test_suspend(RE, hw):
         RE.loop.call_soon_threadsafe(_careful_event_set(ev))
 
     def local_suspend():
-        RE._suspend_until(ev.wait)
+        suspend_until(RE, ev.wait)
         # wait a second and then resume
         threading.Timer(1, resume_cb).start()
 

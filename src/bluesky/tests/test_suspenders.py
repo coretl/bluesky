@@ -23,7 +23,7 @@ from bluesky.suspenders import (
 from bluesky.tests import ophyd_async, requires_ophyd_async
 from bluesky.tests.utils import MsgCollector
 
-from .utils import _fabricate_asycio_event
+from .utils import _fabricate_asycio_event, suspend_until
 
 if ophyd_async:
     from ophyd_async.core import soft_signal_rw
@@ -52,7 +52,7 @@ def _check_suspender(klass, sc_args, sig, putter, start_val, fail_val, resume_va
             my_suspender = klass(sig, *sc_args, sleep=wait_time)
     else:
         my_suspender = klass(sig, *sc_args, sleep=wait_time)
-    my_suspender.install(RE._permit)
+    RE.install_suspender(my_suspender)
 
     # make sure we start at good value!
     putter(start_val)
@@ -477,7 +477,7 @@ def test_unresumable_suspend_fail(RE):
     RE.msg_hook = m_coll
 
     ev = _fabricate_asycio_event(RE.loop)
-    threading.Timer(0.1, partial(RE._suspend_until, fut=ev.wait)).start()
+    threading.Timer(0.1, partial(suspend_until, RE, ev.wait)).start()
     threading.Timer(1, ev.set).start()
     start = time.time()
     with pytest.raises(RunEngineInterrupted):

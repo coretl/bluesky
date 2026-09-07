@@ -2629,7 +2629,12 @@ class PlanExecutor:
         return new_plan
 
     async def _install_suspender(self, msg):
-        """Install a suspender for this plan. Msg('install_suspender', None, suspender)"""
+        """Install an ephemeral suspender. Msg('install_suspender', None, suspender)
+
+        Ephemeral because it holds up this plan alone and is removed when the
+        plan ends. `RunEngine.install_suspender` installs a persistent one,
+        which holds up every plan the engine runs until it is removed.
+        """
         self._install_suspender_now(msg.args[0])
 
     async def _remove_suspender(self, msg):
