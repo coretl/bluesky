@@ -20,6 +20,14 @@ env:
 jobs:
   run:
     runs-on: ${{ inputs.runs-on }}
+    # A healthy run of this suite takes 11-17 minutes. The `test_sigint_*` tests
+    # raise real SIGINTs, and in a non-interactive runner one can escape pytest
+    # and wedge the job rather than failing it -- which then sits until the
+    # six-hour default and burns a runner for the afternoon. This does not fix
+    # the flake, which predates this branch and is present on main; it just
+    # makes it cost minutes instead of hours, and report as a timeout so it is
+    # recognisable when it happens.
+    timeout-minutes: 45
 
     steps:
       - name: Checkout
