@@ -28,6 +28,24 @@ jobs:
           # Need this to get version number from last tag
           fetch-depth: 0
 
+      - name: Fetch tags from upstream if this checkout has none
+        shell: bash
+        run: |
+          # GitHub does not copy tags into a fork, so setuptools-scm computes
+          # bluesky==0.1.devN there. ophyd-async requires bluesky>=1.13.1rc2, so
+          # rather than reporting a conflict pip backtracks to a 2023 ophyd-async
+          # whose core has no soft_signal_rw, and collection dies importing it.
+          # Fetching rather than pushing tags on purpose: ci.yml runs on every
+          # push with no ref filter and gates release/pypi on a tag ref, so a
+          # pushed tag would cut a GitHub release and try to publish to PyPI.
+          # No-op wherever the checkout already has tags, which is every run in
+          # the upstream repo.
+          if [ -z "$(git tag)" ]; then
+            git remote add upstream https://github.com/bluesky/bluesky.git 2>/dev/null || true
+            git fetch --quiet --tags --no-recurse-submodules upstream
+            echo "No tags in this checkout; fetched $(git tag | wc -l) from upstream."
+          fi
+
       - if: inputs.python-version == 'dev'
         name: Install dev versions of python packages
         uses: ./.github/actions/install_requirements

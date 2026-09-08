@@ -667,7 +667,7 @@ class PlanSession:
         return tuple(self._suspenders)
 
     @property
-    def suspensions(self) -> dict[typing.Hashable, Suspension]:
+    def suspensions(self) -> typing.Mapping[typing.Hashable, Suspension]:
         """What is holding up every plan this session runs, by who raised it.
 
         Empty when nothing is: the plans this session runs are suspended

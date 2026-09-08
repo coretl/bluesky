@@ -130,7 +130,7 @@ class Permit:
         # `granted` -- which also asks the parent -- is the only state. Shared
         # with the parent rather than composed with it at each wait, so that a
         # wait is one await on one event however deep the chain runs.
-        self._pulse = parent._pulse if parent is not None else _Pulse()
+        self._pulse: _Pulse = parent._pulse if parent is not None else _Pulse()
 
     @property
     def loop(self) -> asyncio.AbstractEventLoop:

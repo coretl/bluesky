@@ -403,10 +403,11 @@ processed. It can also be called by user-defined agents. See the next example.
 .. automethod:: bluesky.run_engine.RunEngine.request_pause
     :noindex:
 
-This method is used by the ``PVSuspend*`` classes above. It can also be called
-by user-defined agents.
+Suspension has no matching method.  It is raised by installing a suspender and
+by nothing else, so a user-defined agent that wants to hold up the engine
+installs one rather than asking for a suspension directly.
 
-.. automethod:: bluesky.run_engine.RunEngine.request_suspend
+.. automethod:: bluesky.run_engine.RunEngine.install_suspender
     :noindex:
 
 
