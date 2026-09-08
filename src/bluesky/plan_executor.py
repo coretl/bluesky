@@ -1233,21 +1233,15 @@ class PlanExecutor:
         """Whether a deferred pause is waiting for the next checkpoint."""
         return self._deferred_pause_requested
 
-    def permit_run(self) -> None:
-        """Allow run() to proceed. Must be called on the event loop.
+    def _release_pause(self) -> None:
+        """Let a paused plan move again. On the loop.
 
-        Public because driving an executor is a caller's job: a `RunEngine`
-        blocks the run before scheduling the task and permits it once the main
-        thread is parked, and a headless driver needs the same pair.
+        Not a gate a caller opens: a plan is parked here only because it paused
+        itself, so the ways out are the ways back in -- `resume`, `abort`,
+        `stop` and `halt`, each of which arranges what the plan should find
+        when it wakes and then calls this last.
         """
         self._run_permit.set()
-
-    def block_run(self) -> None:
-        """Hold run() at its next resting point. Must be called on the loop.
-
-        The other half of :meth:`permit_run`.
-        """
-        self._run_permit.clear()
 
     def result(self, plan_return) -> RunEngineResult:
         """Describe how the plan finished."""
@@ -1419,7 +1413,6 @@ class PlanExecutor:
                 f"{self!r} has already run its plan. Build another executor: one executor runs one plan."
             )
         self._spent = True
-        await self._run_permit.wait()
         # grab the current task.  We need to do this here because the
         # object returned by `run_coroutine_threadsafe` is a future
         # that acts as a proxy that does not have the correct behavior
@@ -2736,7 +2729,7 @@ class PlanExecutor:
         that Ctrl-C handling is reinstalled before the plan moves again.
         """
         await self._prepare_resume()
-        self.permit_run()
+        self._release_pause()
 
     async def abort(self, reason=""):
         if self.state.is_idle:
@@ -2755,7 +2748,7 @@ class PlanExecutor:
             # A paused plan is parked at the gate, so raising the exception
             # into it is not enough on its own: it has to be let go before it
             # can run its cleanup.
-            self.permit_run()
+            self._release_pause()
         else:
             self._task.cancel()
 
@@ -2769,7 +2762,7 @@ class PlanExecutor:
         self.state = "stopping"
         if was_paused:
             self._exception = RequestStop
-            self.permit_run()
+            self._release_pause()
         else:
             self._task.cancel()
 
@@ -2784,7 +2777,7 @@ class PlanExecutor:
         if was_paused:
             self._exception = PlanHalt
             self._exit_status = "abort"
-            self.permit_run()
+            self._release_pause()
         else:
             self._task.cancel()
 

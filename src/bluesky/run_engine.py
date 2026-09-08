@@ -850,8 +850,6 @@ class RunEngine:
         self.log.info("Executing plan %r", plan)
 
         def _build_task():
-            # make sure _run will block at the top
-            self._executor.block_run()
             self._blocking_event.clear()
             self._task_fut = asyncio.run_coroutine_threadsafe(
                 self._executor.run(),
@@ -927,8 +925,6 @@ class RunEngine:
                     return self._task_fut.result()
                 except concurrent.futures.CancelledError:
                     return NO_PLAN_RETURN
-            # The _run task is waiting on this Event. Let is continue.
-            self.loop.call_soon_threadsafe(self._executor.permit_run)
             try:
                 # Block until plan is complete or exception is raised.
                 try:
