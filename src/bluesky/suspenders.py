@@ -7,7 +7,7 @@ from warnings import warn
 
 from bluesky.protocols import Subscribable
 
-from .permits import Permit
+from .permits import Permit, running_on
 
 # How long install() and remove() wait for the RunEngine's event loop to
 # subscribe to a Subscribable signal, or unsubscribe from it, before giving up.
@@ -50,6 +50,10 @@ class SuspenderBase(metaclass=ABCMeta):
         # held up by this condition is waiting on that permit already.
         self._permit = None
         self._tripped = False
+        # Bumped on every install and remove. A write this suspender schedules
+        # onto the loop carries the generation it was raised under, and is
+        # dropped on arrival if that is no longer current.
+        self._generation = 0
         self._tripped_message = tripped_message
         self._sleep = sleep
         self._lock = threading.Lock()
@@ -108,6 +112,7 @@ class SuspenderBase(metaclass=ABCMeta):
             return
         with self._lock:
             self._permit = permit
+            self._generation += 1
         if self._implements_protocol:
             self.__on_loop(permit, partial(self._sig.subscribe_reading, self))
         elif callable(getattr(self._sig, "subscribe", None)):
@@ -116,6 +121,14 @@ class SuspenderBase(metaclass=ABCMeta):
             raise RuntimeError(
                 "%s does not implement Subscribable protocol or adhere to ophyd subscription pattern." % self._sig
             )
+        # Both subscription styles call back with the current reading before
+        # they return, so an already-bad signal has raised its withhold by now
+        # -- but onto the loop, not here. Wait for the loop to catch up, so a
+        # suspender installed on a tripped signal is holding the permit by the
+        # time this returns. Waiting for beam that is already down is what
+        # suspenders are for, and a caller that installed one and then started a
+        # plan must not be raced by its own trip.
+        self.__on_loop(permit, lambda: None)
 
     def __on_loop(self, permit, func):
         """Call ``func`` on the permit's event loop, and wait for it.
@@ -128,9 +141,15 @@ class SuspenderBase(metaclass=ABCMeta):
         ``subscribe(..., run=True)``, since ``subscribe_reading`` calls back
         with the current reading: the suspender knows whether it is already
         tripped by the time ``install`` returns.
+
+        **Never call this while holding ``self._lock``.** It blocks, and
+        `PlanExecutor._remove_suspender_now` calls `remove` on the loop thread:
+        a signal thread waiting here while holding the lock, with the loop
+        thread blocked entering `remove`'s ``with self._lock``, is a deadlock.
+        Use `_SuspenderBase__tell_loop` for anything raised under the lock.
         """
-        loop = permit._loop
-        if threading.get_ident() == getattr(loop, "_thread_id", "unknown"):
+        loop = permit.loop
+        if running_on(loop):
             func()
             return
 
@@ -144,6 +163,30 @@ class SuspenderBase(metaclass=ABCMeta):
 
         loop.call_soon_threadsafe(call)
         future.result(timeout=SUBSCRIPTION_TIMEOUT)
+
+    def __tell_loop(self, permit, func):
+        """Schedule ``func`` on the permit's loop, and do not wait for it.
+
+        The counterpart to `__on_loop`, and the only one of the two that may be
+        raised while holding ``self._lock``.
+
+        The write carries the generation it was raised under. `install` and
+        `remove` both bump that, so a withhold already in flight when the
+        suspender was uninstalled is dropped rather than re-holding the permit
+        that `remove` just released -- which would strand a plan on a suspender
+        that has stopped watching its signal and so will never grant again.
+        """
+        generation = self._generation
+
+        def call():
+            if generation == self._generation:
+                func()
+
+        loop = permit.loop
+        if running_on(loop):
+            call()
+        else:
+            loop.call_soon_threadsafe(call)
 
     def remove(self):
         """Disable the suspender
@@ -161,8 +204,11 @@ class SuspenderBase(metaclass=ABCMeta):
             if self._permit is not None:
                 # An uninstalled suspender must not go on suspending, and
                 # nothing else will drop its reason once it has stopped
-                # watching its signal.
-                self._permit.grant(self)
+                # watching its signal. Bumping the generation first supersedes
+                # any withhold this suspender already has in flight, so the
+                # release cannot be undone by a trip raised a moment ago.
+                self._generation += 1
+                self.__tell_loop(self._permit, partial(self._permit.grant, self))
             self._permit = None
             self._tripped = False
 
@@ -221,13 +267,19 @@ class SuspenderBase(metaclass=ABCMeta):
                 was_tripped = self._tripped
                 self._tripped = True
                 if not was_tripped:
-                    # Withheld on this thread, so that a plan started between
-                    # this trip and the loop noticing does not start unheld.
-                    self._permit.withhold(
-                        self,
-                        self._get_justification(),
-                        pre_plan=self._pre_plan,
-                        post_plan=self._post_plan,
+                    # The justification is built here, on the thread and at the
+                    # moment the condition went bad, so it reports the value
+                    # that actually tripped it rather than whatever the signal
+                    # has become by the time the loop runs the withhold.
+                    self.__tell_loop(
+                        self._permit,
+                        partial(
+                            self._permit.withhold,
+                            self,
+                            self._get_justification(),
+                            pre_plan=self._pre_plan,
+                            post_plan=self._post_plan,
+                        ),
                     )
             elif self._should_resume(value):
                 if self._tripped:
@@ -236,7 +288,7 @@ class SuspenderBase(metaclass=ABCMeta):
                     # already-nominal signal must not schedule a release: it
                     # would come due `sleep` seconds later and drop a reason
                     # raised by a trip in between.
-                    self._permit.grant(self, after=self._sleep)
+                    self.__tell_loop(self._permit, partial(self._permit.grant, self, after=self._sleep))
                 self._tripped = False
 
     @property

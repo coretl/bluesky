@@ -32,6 +32,21 @@ def join_justifications(reasons: Mapping[Hashable, Suspension]) -> str:
     return "\n".join(reason.justification for reason in reasons.values() if reason.justification)
 
 
+def running_on(loop: asyncio.AbstractEventLoop) -> bool:
+    """Whether this thread is the one running ``loop``.
+
+    One spelling of a question asked in several places. `asyncio.get_running_loop`
+    is public and exact, where the ``getattr(loop, "_thread_id", ...)`` this
+    replaces reached for a private CPython attribute and had to pick a default
+    for loops that lack it -- a default that decided, in opposite directions in
+    different files, what happens when the check cannot be made at all.
+    """
+    try:
+        return asyncio.get_running_loop() is loop
+    except RuntimeError:
+        return False
+
+
 class _Pulse:
     """A broadcast edge, shared by every permit in a chain.
 
@@ -108,6 +123,18 @@ class Permit:
         # with the parent rather than composed with it at each wait, so that a
         # wait is one await on one event however deep the chain runs.
         self._pulse = parent._pulse if parent is not None else _Pulse()
+
+    @property
+    def loop(self) -> asyncio.AbstractEventLoop:
+        """The loop this permit's state lives on.
+
+        Exposed because crossing onto it is the caller's job, not this class's.
+        A suspender trips on whatever thread its signal calls back on and has
+        to get back here; it owns that hop, so that there is one visible
+        crossing rather than one hidden inside every method that might be
+        called from anywhere.
+        """
+        return self._loop
 
     def __repr__(self) -> str:
         state = "granted" if self.granted else f"withheld by {len(self.withheld_by)}"

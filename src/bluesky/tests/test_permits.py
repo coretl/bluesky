@@ -6,6 +6,7 @@ against memory. The rest are the bugs permits exist to fix, and fail on ``main``
 """
 
 import asyncio
+import concurrent.futures
 import threading
 import time as ttime
 
@@ -22,6 +23,19 @@ SCAN = [Msg("checkpoint"), Msg("sleep", None, 0.2)]
 
 def _at(delay, func, *args):
     threading.Timer(delay, func, args).start()
+
+
+def _settle(RE):
+    """Wait for the loop to apply what a signal callback just scheduled.
+
+    A suspender trips on whatever thread its signal called back on and schedules
+    the withhold onto the loop rather than applying it there, so a test that
+    puts a value and looks straight away is racing it. Everything reaches the
+    loop in order, so one round trip behind the withhold is enough.
+    """
+    done = concurrent.futures.Future()
+    RE.loop.call_soon_threadsafe(lambda: done.set_result(None))
+    done.result(timeout=10)
 
 
 # --------------------------------------------------------------------------
@@ -163,6 +177,7 @@ def test_trips_while_paused_suspends_on_resume(RE, hw):
     assert RE.state == "paused"
 
     sig.put(1)
+    _settle(RE)
     assert RE._session.suspensions, "the reason stands while paused"
 
     _at(0.5, sig.put, 0)
@@ -303,6 +318,8 @@ def test_installing_a_suspender_on_the_run_engine_still_works(RE, hw):
 
     assert susp in RE.suspenders, "installed durably, as it used to be"
     sig.put(1)
+    _settle(RE)
     assert RE._session.suspensions, "and it holds up the engine"
     sig.put(0)
+    _settle(RE)
     assert not RE._session.suspensions
