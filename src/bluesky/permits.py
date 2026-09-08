@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import threading
 from collections.abc import Callable, Coroutine, Hashable, Iterable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -93,12 +92,21 @@ class Permit:
     is, which is how a suspender installed somewhere long-lived holds up every
     plan run under it while one installed by a plan holds up only that plan.
 
-    The reasons are the state, and `withhold` and `grant` may be called from any
-    thread: a suspender trips on whatever thread its signal calls back on, and
-    whether a permit is granted has to be true for that thread the moment it
-    says so, or a plan built between the trip and the loop noticing it would
-    start unheld. Telling the loop is this class's own business -- nothing
-    outside can forget to do it.
+    Written only on the loop, and read from anywhere. `withhold` and `grant`
+    raise if they are called from another thread: whoever has to cross owns the
+    crossing, which for a suspender tripping on its signal's thread is
+    ``SuspenderBase.__tell_loop``. What justified hopping in here instead -- that
+    whether a permit is granted must be true for the calling thread the moment it
+    says so -- costs nothing to give up, because the only reader that *decides*
+    anything is the supervisor, and it runs on the loop: a write queued from
+    another thread lands ahead of every loop callback that follows it, so the
+    ordering that mattered is kept for the only reader that can observe it.
+
+    Reading is not restricted. `granted` and `withheld_by` answer on any thread,
+    because the reasons are an immutable mapping swapped rather than mutated, so
+    a reader sees one snapshot or the next and never a mapping mid-change. Those
+    readers report -- ``RunEngine.suspenders``, ``PlanSession.suspensions``, a
+    message printed for a human -- and eventual consistency is what they need.
     """
 
     def __init__(self, name: str, loop: asyncio.AbstractEventLoop, parent: Permit | None = None) -> None:
@@ -177,29 +185,30 @@ class Permit:
         pre_plan: PlanLike | None = None,
         post_plan: PlanLike | None = None,
     ) -> None:
-        """Withhold on ``key``'s behalf until granted. Callable from any thread."""
+        """Withhold on ``key``'s behalf until granted. Loop thread only."""
+        self._must_be_on_the_loop("withhold")
         release = self._releases.pop(key, None)
         if release is not None:
             release.cancel()
         self._reasons = MappingProxyType({**self._reasons, key: Suspension(justification, pre_plan, post_plan)})
-        self._tell_the_loop()
+        self._pulse.fire()
 
     def grant(self, key: Hashable, *, after: float = 0) -> None:
-        """Drop ``key``'s reason, ``after`` seconds from now. Callable from any thread."""
-        if after and self._loop.is_running():
-            self._on_loop(
-                lambda: self._releases.__setitem__(key, self._loop.call_later(after, self._release, key))
-            )
+        """Drop ``key``'s reason, ``after`` seconds from now. Loop thread only."""
+        self._must_be_on_the_loop("grant")
+        if after:
+            # Being on the loop is what makes this safe, and is also what makes
+            # it possible: a timer belongs to the loop that scheduled it, and a
+            # loop we are running on is by definition running to fire it.
+            self._releases[key] = self._loop.call_later(after, self._release, key)
         else:
-            # Nothing would fire the timer if the loop is not running, and the
-            # reason would outlive the condition that raised it.
             self._release(key)
 
     def _release(self, key: Hashable) -> None:
         self._releases.pop(key, None)
         if key in self._reasons:
             self._reasons = MappingProxyType({k: v for k, v in self._reasons.items() if k != key})
-        self._tell_the_loop()
+        self._pulse.fire()
 
     async def wait_changed(self) -> None:
         """Wait until a reason is raised or dropped, anywhere in the chain.
@@ -217,16 +226,11 @@ class Permit:
         while not self.granted:
             await self.wait_changed()
 
-    def _tell_the_loop(self) -> None:
-        """Bring the loop's view of this permit into step."""
-        self._on_loop(self._sync)
-
-    def _on_loop(self, func: Callable[[], None]) -> None:
-        if threading.get_ident() == getattr(self._loop, "_thread_id", None) or not self._loop.is_running():
-            func()
-        else:
-            self._loop.call_soon_threadsafe(func)
-
-    def _sync(self) -> None:
-        """Bring the loop's view of this permit's own reasons into step."""
-        self._pulse.fire()
+    def _must_be_on_the_loop(self, action: str) -> None:
+        if not running_on(self._loop):
+            raise RuntimeError(
+                f"Permit.{action} must be called on the loop the permit belongs to, and this "
+                "is not it. Whatever is calling owns the crossing: a suspender tripping on "
+                "its signal's thread schedules the write with call_soon_threadsafe, which "
+                "is what SuspenderBase.__tell_loop does."
+            )

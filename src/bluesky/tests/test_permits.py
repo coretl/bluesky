@@ -205,34 +205,71 @@ def test_no_checkpoint_mid_plan_aborts(RE, hw):
 # The permit itself
 
 
-def test_a_permit_is_withheld_for_every_thread_at_once():
-    """`withhold` takes effect as it returns, not when the loop catches up."""
+def test_a_permit_is_written_only_on_its_own_loop():
+    """Whoever has to cross onto the loop owns the crossing, not the permit.
+
+    Was: `withhold` and `grant` hopped onto the loop themselves, so they were
+    callable from anywhere and every permit method hid a thread boundary.
+    """
     permit = Permit("test", loop=asyncio.new_event_loop())
-    permit.withhold("beam", "beam is down")
-    assert not permit.granted
-    assert join_justifications(permit.withheld_by) == "beam is down"
-    permit.grant("beam")
-    assert permit.granted
-    assert not permit.withheld_by
+
+    with pytest.raises(RuntimeError, match="must be called on the loop"):
+        permit.withhold("beam", "beam is down")
+    with pytest.raises(RuntimeError, match="must be called on the loop"):
+        permit.grant("beam")
+
+    assert permit.granted, "and nothing was written"
+
+
+def test_a_permit_is_read_from_any_thread():
+    """Reports cross freely. Only the writes are pinned to the loop.
+
+    The reasons are swapped rather than mutated, so a reader off the loop sees
+    one snapshot or the next -- never a mapping being merged as it is unpacked.
+    """
+    loop = asyncio.new_event_loop()
+    permit = Permit("test", loop=loop)
+
+    async def withhold():
+        permit.withhold("beam", "beam is down")
+
+    loop.run_until_complete(withhold())
+
+    seen = {}
+
+    def read():
+        seen["granted"] = permit.granted
+        seen["why"] = join_justifications(permit.withheld_by)
+
+    reader = threading.Thread(target=read)
+    reader.start()
+    reader.join()
+    loop.close()
+
+    assert seen == {"granted": False, "why": "beam is down"}
 
 
 def test_a_child_permit_is_withheld_whenever_its_parent_is():
     """The chain, which is what makes durable and plan-local one mechanism."""
-    loop = asyncio.new_event_loop()
-    parent = Permit("session", loop=loop)
-    child = Permit("plan", loop=loop, parent=parent)
 
-    parent.withhold("beam", "beam is down")
-    assert not child.granted, "held up by its parent"
-    assert join_justifications(child.withheld_by) == "beam is down"
+    async def check():
+        loop = asyncio.get_running_loop()
+        parent = Permit("session", loop=loop)
+        child = Permit("plan", loop=loop, parent=parent)
 
-    child.withhold("shutter", "shutter is closed")
-    parent.grant("beam")
-    assert not child.granted, "still holding its own reason"
-    assert parent.granted, "which is not the parent's business"
+        parent.withhold("beam", "beam is down")
+        assert not child.granted, "held up by its parent"
+        assert join_justifications(child.withheld_by) == "beam is down"
 
-    child.grant("shutter")
-    assert child.granted
+        child.withhold("shutter", "shutter is closed")
+        parent.grant("beam")
+        assert not child.granted, "still holding its own reason"
+        assert parent.granted, "which is not the parent's business"
+
+        child.grant("shutter")
+        assert child.granted
+
+    asyncio.run(check())
 
 
 def test_pre_plans_run_in_fire_order_and_post_plans_in_reverse(RE, hw):
