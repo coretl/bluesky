@@ -80,6 +80,15 @@ Changed
   suspender outlived the plan and had to be removed by hand.
   ``RunEngine.suspenders`` reports the durable suspenders together with the
   running plan's, and ``RunEngine.clear_suspenders`` clears both.
+- A suspender's trip reaches the RunEngine on its event loop rather than on the
+  thread the signal called back on, so ``RunEngine.suspenders`` and the standing
+  suspensions may lag a ``put`` by a loop iteration.  Code that starts a plan
+  after tripping a signal is unaffected -- everything reaches the loop in order,
+  so the trip is applied first -- but code that trips a signal and *inspects* the
+  engine immediately must let the loop catch up.  ``install`` still waits, so a
+  suspender installed on an already-bad signal is holding the permit by the time
+  it returns.
+
 - ``RunEngine.ignore_callback_exceptions`` now covers the subscribers of the
   plan already running, not only those installed afterwards.  Each plan's
   subscribers live in their own dispatcher, and a dispatcher answers for its
