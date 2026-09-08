@@ -6,6 +6,7 @@ import asyncio
 import threading
 from collections.abc import Callable, Coroutine, Hashable, Iterable, Mapping
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Any
 
 from .utils import Msg
@@ -89,7 +90,12 @@ class Permit:
         self.name = name
         self._loop = loop
         self._parent = parent
-        self._reasons: dict[Hashable, Suspension] = {}
+        # Immutable, and replaced wholesale rather than mutated in place.
+        # A reader off the loop -- `RunEngine.suspenders` and
+        # `PlanSession.suspensions` are read from whatever thread asks -- then
+        # sees one snapshot or the next and never a mapping mid-change. It also
+        # costs nothing: reasons change when a suspender trips, not per message.
+        self._reasons: Mapping[Hashable, Suspension] = MappingProxyType({})
         # Pending delayed grants, so that a key withholding again cancels the
         # release its own recovery scheduled. Without this a signal that
         # recovers and trips again inside the settle-down time has the older
@@ -104,26 +110,37 @@ class Permit:
         self._pulse = parent._pulse if parent is not None else _Pulse()
 
     def __repr__(self) -> str:
-        state = "granted" if self.granted else f"withheld by {len(self._reasons)}"
+        state = "granted" if self.granted else f"withheld by {len(self.withheld_by)}"
         return f"<{type(self).__name__} {self.name!r} {state}>"
 
     @property
     def granted(self) -> bool:
-        """Whether the plan may run: no reason here, and none above."""
-        if self._reasons:
-            return False
-        return self._parent.granted if self._parent is not None else True
+        """Whether the plan may run: nothing is withholding it, here or above.
+
+        Derived rather than tracked, so that it cannot disagree with
+        `withheld_by`. Two independent walks of the chain could return a
+        verdict and a set of reasons that did not match, and whoever read both
+        had to reconcile them.
+
+        This walks to the root and merges on every call where the short-circuit
+        it replaced did not. Chains are two deep -- a session's permit and the
+        running plan's -- so that is one merge of two small mappings, and it
+        happens once per pulse rather than per message. Anything deeper would
+        want a loop-side fast path, not a second public accessor.
+        """
+        return not self.withheld_by
 
     @property
-    def withheld_by(self) -> dict[Hashable, Suspension]:
+    def withheld_by(self) -> Mapping[Hashable, Suspension]:
         """Everything withholding this permit, keyed by whoever withheld it.
 
         Includes the chain above, outermost permit first, because that is the
         order a suspension runs pre-plans in and the reverse of the order it
         runs post-plans in. Empty exactly when the permit is granted.
         """
-        above = self._parent.withheld_by if self._parent is not None else {}
-        return {**above, **self._reasons}
+        if self._parent is None:
+            return self._reasons
+        return MappingProxyType({**self._parent.withheld_by, **self._reasons})
 
     def withhold(
         self,
@@ -137,7 +154,7 @@ class Permit:
         release = self._releases.pop(key, None)
         if release is not None:
             release.cancel()
-        self._reasons[key] = Suspension(justification, pre_plan, post_plan)
+        self._reasons = MappingProxyType({**self._reasons, key: Suspension(justification, pre_plan, post_plan)})
         self._tell_the_loop()
 
     def grant(self, key: Hashable, *, after: float = 0) -> None:
@@ -153,7 +170,8 @@ class Permit:
 
     def _release(self, key: Hashable) -> None:
         self._releases.pop(key, None)
-        self._reasons.pop(key, None)
+        if key in self._reasons:
+            self._reasons = MappingProxyType({k: v for k, v in self._reasons.items() if k != key})
         self._tell_the_loop()
 
     async def wait_changed(self) -> None:

@@ -1150,12 +1150,13 @@ class PlanExecutor:
         if held_at_start:
             await self._permit.wait_granted()
         while True:
-            while self._permit.granted:
+            # The read that decides is the read that reports, so there is no
+            # window in which this task is told to suspend and then finds
+            # nothing to suspend for: whatever `withheld_by` hands back is both
+            # the verdict and the reasons behind it.
+            while not (withheld := self._permit.withheld_by):
                 await self._permit.wait_changed()
-            seen = dict(self._permit.withheld_by)
-            if not seen:
-                # Granted again before this task looked: nothing to suspend for.
-                continue
+            seen = dict(withheld)
             first = next(iter(seen.values()))
             joined: list[Suspension] = []
 
