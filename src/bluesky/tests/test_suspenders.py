@@ -194,7 +194,10 @@ def test_suspender_plans_async_signal(RE):
     start = ttime.time()
     RE([Msg("install_suspender", None, my_suspender)] + scan)
     assert ttime.time() - start > 0.4 + 0.2 + 0.2
-    assert my_suspender in RE.suspenders
+    # and it is gone once that plan ends: installing from inside a plan is
+    # ephemeral now, so it does not carry into the next one. See
+    # test_suspender_installed_by_a_plan_ends_with_it for the lifetime itself.
+    assert my_suspender not in RE.suspenders
 
     # removed from inside a plan, it no longer does
     trip_then_clear()
