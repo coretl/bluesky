@@ -7,10 +7,12 @@ RunEngine: that it is pure asyncio, and that it can be driven directly.
 import asyncio
 import dataclasses
 import inspect
+import pathlib
 import threading
 
 import pytest
 
+import bluesky
 from bluesky import Msg
 from bluesky.permits import join_justifications
 from bluesky.plan_executor import (
@@ -73,6 +75,54 @@ def test_source_takes_no_locks(cls):
     source = inspect.getsource(cls)
     for forbidden in ("threading.", "_state_lock", ".acquire(", ".join("):
         assert forbidden not in source, f"{cls.__name__} uses {forbidden}"
+
+
+def _crossings(module_name):
+    """The innermost function around every hop onto the loop in a module."""
+    import ast
+
+    source = pathlib.Path(bluesky.__file__).parent / module_name
+    tree = ast.parse(source.read_text())
+    crossing = {"call_soon_threadsafe", "run_coroutine_threadsafe"}
+    found = set()
+
+    def walk(node, enclosing):
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                walk(child, child.name)
+            else:
+                if (
+                    isinstance(child, ast.Call)
+                    and isinstance(child.func, ast.Attribute)
+                    and child.func.attr in crossing
+                ):
+                    found.add(enclosing)
+                walk(child, enclosing)
+
+    walk(tree, None)
+    return found
+
+
+def test_every_hop_onto_the_loop_is_one_of_the_few_we_mean():
+    """Where a foreign thread reaches the loop, and why each one is allowed.
+
+    Not a ban. Three of these are unavoidable, because something outside
+    bluesky picks the thread: ophyd completes a status on whichever thread
+    finished the move, a signal calls a suspender back on whichever thread it
+    likes, and a user calls the RunEngine from their own. The rule is that
+    whoever owns that boundary owns the hop, so the list stays short and
+    visible -- and `permits.py` is on it with nothing, which is the point of
+    making a permit loop-only.
+
+    If this fails, either a new boundary is real and belongs in this list with
+    a reason, or a thread hop has been hidden inside something that should have
+    left the crossing to its caller.
+    """
+    assert _crossings("permits.py") == set(), "a permit is written on the loop; its caller crosses"
+    assert _crossings("plan_executor.py") == {"done_callback"}, "only the ophyd status callback"
+    assert _crossings("suspenders.py") == {"__on_loop", "__tell_loop"}, "the two named crossings"
+    # The RunEngine is the thread-safe facade, so it may hop wherever it likes.
+    assert _crossings("run_engine.py"), "the facade has stopped crossing, which cannot be right"
 
 
 def test_session_holds_no_threading_primitives(idle_session):

@@ -54,11 +54,55 @@ A permit is granted exactly when no reason stands, here or anywhere above it. Th
 reasons are the state, and they are kept apart rather than merged, because each
 condition runs its own pre-plan as it fires.
 
-``withhold`` and ``grant`` may be called from any thread. A suspender trips on
-whatever thread its signal calls back on, and whether a permit is granted has to
-be true for that thread the moment it says so -- otherwise a plan built between
-the trip and the loop noticing it would start unheld. Telling the loop is the
-permit's own business; nothing outside it can forget to.
+``withhold`` and ``grant`` run on the event loop and raise anywhere else, while
+``granted`` and the standing reasons can be read from any thread. See
+:ref:`which-thread` for why the writes are pinned and the reads are not.
+
+.. _which-thread:
+
+Which thread
+------------
+
+The `RunEngine` is the thread-safe object. Everything it drives -- the session,
+the executor, the permit, the dispatchers -- runs on the event loop, and calling
+into them from another thread is a bug rather than a slow path. That is why
+`test_executor_holds_no_threading_primitives` and `test_source_takes_no_locks`
+pass: single-threaded by construction needs no locks.
+
+Three boundaries are real, because something outside bluesky picks the thread:
+
+* a user calls the `RunEngine` from their own thread;
+* ophyd completes a status on whichever thread finished the move, and the
+  executor attached that callback;
+* a signal calls a suspender back on whichever thread it likes.
+
+At each one, the object that owns the boundary owns the hop, and does it with
+``call_soon_threadsafe``. A permit does not, which is the difference from how
+this started: a permit used to hop internally, so every one of its methods hid
+a thread boundary and the one object that knew which thread it was standing on
+-- the suspender -- was not the one deciding. ``__on_loop`` waits for the loop
+and must never be called holding the suspender's lock; ``__tell_loop`` does not
+wait and is what a trip uses.
+
+`test_every_hop_onto_the_loop_is_one_of_the_few_we_mean` pins that list, so a
+fourth crossing cannot appear without saying so.
+
+What the writes being loop-only costs: a trip is applied where the permit's
+state lives rather than where the signal fired, so code that trips a signal and
+inspects the engine in the next statement can see the old answer. Starting a
+plan after a trip is unaffected, because everything reaches the loop in order.
+
+What it buys is that the reads need nothing. The reasons are an immutable
+mapping, replaced rather than mutated, so a reader on any thread sees one
+snapshot or the next. Those readers -- ``RunEngine.suspenders``, the standing
+suspensions, a message printed for a human -- report rather than decide, and the
+only reader that decides is the supervisor, which is on the loop.
+
+`CallbackRegistry` is the exception, and not by choice. It drops a subscriber
+from a weakref destroy callback, which runs on whichever thread collected it,
+and that cannot be scheduled onto the loop. So it takes a lock, and snapshots
+its subscribers before calling them rather than holding that lock across
+arbitrary user code.
 
 .. autoclass:: bluesky.permits.Suspension
     :members:
