@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import threading
-from collections.abc import Callable, Hashable, Iterable, Mapping
+from collections.abc import Callable, Coroutine, Hashable, Iterable, Mapping
 from dataclasses import dataclass
+from typing import Any
 
 from .utils import Msg
 
@@ -28,6 +29,41 @@ class Suspension:
 def join_justifications(reasons: Mapping[Hashable, Suspension]) -> str:
     """Every standing reason's justification, one per line, outermost first."""
     return "\n".join(reason.justification for reason in reasons.values() if reason.justification)
+
+
+class _Pulse:
+    """A broadcast edge, shared by every permit in a chain.
+
+    One `asyncio.Event`, and nobody clears it: `fire` swaps a fresh event in
+    and sets the old one, so every waiter parked on it wakes and no waiter can
+    consume the edge out from under another. Waking on a pulse means "something
+    in the chain moved" and nothing more -- the caller re-tests the condition
+    it actually cares about, which is what the `while` around every wait here
+    already does.
+
+    The chain shares one of these because a permit is withheld by its own
+    reasons *or* its parent's, so a waiter on a child has to be woken by a
+    change at the parent. Sharing the parent's pulse gets that without the
+    parent holding any reference to its children: a child reaches up, as it
+    already does for `granted` and `withheld_by`, and nothing reaches down.
+    """
+
+    def __init__(self) -> None:
+        self._event = asyncio.Event()
+
+    def wait(self) -> Coroutine[Any, Any, bool]:
+        """Park until the next `fire`.
+
+        The event is bound now, not when the coroutine is first stepped, so a
+        pulse between this call and that step still wakes it: it sets the very
+        event this coroutine is holding.
+        """
+        return self._event.wait()
+
+    def fire(self) -> None:
+        """Wake everything parked on the chain. Loop thread only."""
+        event, self._event = self._event, asyncio.Event()
+        event.set()
 
 
 class Permit:
@@ -59,11 +95,13 @@ class Permit:
         # recovers and trips again inside the settle-down time has the older
         # release come due and drop the newer reason.
         self._releases: dict[Hashable, asyncio.TimerHandle] = {}
-        # Pulsed on every change to this permit's own reasons. One event and
-        # not one per edge: every wait here is a `while <condition>` loop over
-        # it, so the edge a caller cares about is the condition it tests, and
-        # `granted` -- which also asks the parent -- is the only state.
-        self._changed = asyncio.Event()
+        # Pulsed on every change anywhere in the chain. One event and not one
+        # per edge: every wait here is a `while <condition>` loop over it, so
+        # the edge a caller cares about is the condition it tests, and
+        # `granted` -- which also asks the parent -- is the only state. Shared
+        # with the parent rather than composed with it at each wait, so that a
+        # wait is one await on one event however deep the chain runs.
+        self._pulse = parent._pulse if parent is not None else _Pulse()
 
     def __repr__(self) -> str:
         state = "granted" if self.granted else f"withheld by {len(self._reasons)}"
@@ -119,16 +157,15 @@ class Permit:
         self._tell_the_loop()
 
     async def wait_changed(self) -> None:
-        """Wait until a reason is raised or dropped, anywhere in the chain."""
-        waiters: list[asyncio.Future] = [asyncio.ensure_future(self._changed.wait())]
-        if self._parent is not None:
-            waiters.append(asyncio.ensure_future(self._parent.wait_changed()))
-        try:
-            await asyncio.wait(waiters, return_when=asyncio.FIRST_COMPLETED)
-        finally:
-            for waiter in waiters:
-                waiter.cancel()
-        self._changed.clear()
+        """Wait until a reason is raised or dropped, anywhere in the chain.
+
+        Callers must not await between testing their condition and calling
+        this, or they can miss the edge that would have woken them. Every
+        caller here is a `while <condition>: await wait_changed()` loop, where
+        the test and this call are one uninterrupted stretch of loop thread,
+        so no pulse can slip between them.
+        """
+        await self._pulse.wait()
 
     async def wait_granted(self) -> None:
         """Wait until no reason stands in the chain."""
@@ -147,4 +184,4 @@ class Permit:
 
     def _sync(self) -> None:
         """Bring the loop's view of this permit's own reasons into step."""
-        self._changed.set()
+        self._pulse.fire()
