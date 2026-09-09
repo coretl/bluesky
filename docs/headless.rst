@@ -162,3 +162,10 @@ The lifecycle verbs are coroutines, because there is no main thread to block::
 
 ``executor.state`` says where the plan is, and ``executor.hooks`` -- shared with
 the session -- is where to attach a message hook or a progress display.
+
+Nothing here writes to standard output. A `RunEngine` prints what a plan has to
+say because it is driving a terminal; a session says it through
+``hooks.announce_hook``, which is unset by default, so a service that wants
+those lines must attach something. ``hooks.suspend_hook`` is the same, and is
+called with the reasons a suspension began rather than a sentence, because how
+a user of your service interrupts a suspended plan is yours to word.
