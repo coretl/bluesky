@@ -25,7 +25,7 @@ from opentelemetry import trace
 from opentelemetry.trace import Span
 
 from bluesky._vendor.super_state_machine.errors import TransitionError
-from bluesky._vendor.super_state_machine.extras import PropertyMachine, ProxyString
+from bluesky._vendor.super_state_machine.extras import PropertyMachine
 from bluesky._vendor.super_state_machine.machines import StateMachine
 
 from .bundlers import RunBundler, maybe_await
@@ -248,21 +248,6 @@ def announce_suspend() -> None:
     """
     print("Suspending....To get prompt hit Ctrl-C twice to pause.")
     print(f"Suspension occurred at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}.")
-
-
-def _panicked_state() -> ProxyString:
-    """The value `RunEngine.state` reports once the engine has panicked.
-
-    A panicked RunEngine is not described by its session's state machine --
-    the panic belongs to the engine, whose loop thread is wedged. But callers
-    ask a state for more than its text: `bluesky.suspenders` reads
-    ``RE.state.is_running``. So report a ProxyString over a machine forced to
-    'panicked', which answers every ``is_*`` correctly, rather than a bare str
-    which answers none of them.
-    """
-    machine = RunEngineStateMachine()
-    machine.set_("panicked")
-    return ProxyString("panicked", machine)
 
 
 class LoggingPropertyMachine(PropertyMachine):

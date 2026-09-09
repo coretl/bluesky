@@ -10,6 +10,7 @@ from inspect import isawaitable, iscoroutine
 from warnings import warn
 
 from bluesky._vendor.super_state_machine.errors import TransitionError
+from bluesky._vendor.super_state_machine.extras import ProxyString
 
 from .bundlers import RunBundler
 from .log import ComposableLogAdapter, logger
@@ -31,7 +32,6 @@ from .plan_executor import (  # noqa: F401
     RunEngineResult,
     RunEngineStateMachine,
     WaitForTimeoutError,
-    _panicked_state,
     announce_state_change,
     default_scan_id_source,
 )
@@ -77,6 +77,18 @@ __all__ = [
 
 
 class _RunEnginePanic(Exception): ...
+
+
+def _panicked_state() -> ProxyString:
+    """The value `RunEngine.state` reports once this engine has panicked.
+
+    Callers ask a state for more than its text: `bluesky.suspenders` reads
+    ``RE.state.is_running``. A ProxyString over a machine forced to 'panicked'
+    answers every ``is_*`` correctly, where a bare str answers none of them.
+    """
+    machine = RunEngineStateMachine()
+    machine.set_("panicked")
+    return ProxyString("panicked", machine)
 
 
 #: What `RunEngine.state` reports once this engine has panicked.
