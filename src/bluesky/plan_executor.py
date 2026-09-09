@@ -1135,7 +1135,7 @@ class PlanExecutor:
         There is no plan stack, no checkpoint and no rewind here.
         """
         for msg in ensure_generator(_called(plan)):
-            await self.commands[msg.command](msg)
+            await self._command_registry[msg.command](msg)
 
     async def _supervise_permit(self, held_at_start=False):
         """Suspend this plan whenever permission to run is withheld.

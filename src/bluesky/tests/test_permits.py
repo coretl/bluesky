@@ -12,6 +12,7 @@ import threading
 import time as ttime
 
 import pytest
+from ophyd.signal import Signal
 
 from bluesky import Msg
 from bluesky.permits import Permit, join_justifications
@@ -296,6 +297,37 @@ def test_installing_a_suspender_twice_is_an_error(RE, hw):
 
     RE.remove_suspender(suspender)
     RE.install_suspender(suspender)  # and removing frees it to be installed again
+
+
+def test_a_condition_joining_a_suspension_runs_its_pre_plan(RE):
+    """A pre-plan runs off the plan stack, so it needs the executor's commands.
+
+    The plan is parked in the suspension's ``wait_for`` and will not reach
+    anything pushed onto its stack, so the second condition's pre-plan is
+    worked off out of band.
+    """
+    first = Signal(value=0, name="first")
+    second = Signal(value=0, name="second")
+    first.put(0)
+    second.put(0)
+    finished = []
+
+    def pre(name):
+        def plan():
+            yield Msg("null")
+            finished.append(name)
+
+        return plan
+
+    RE.install_suspender(SuspendBoolHigh(first, pre_plan=pre("first")))
+    RE.install_suspender(SuspendBoolHigh(second, pre_plan=pre("second")))
+
+    _at(0.1, first.put, 1)
+    _at(0.3, second.put, 1)
+    _at(0.6, lambda: (first.put(0), second.put(0)))
+    RE([Msg("checkpoint")] + [Msg("sleep", None, 0.2)] * 5)
+
+    assert finished == ["first", "second"], "both pre-plans ran to completion"
 
 
 # --------------------------------------------------------------------------
