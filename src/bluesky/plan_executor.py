@@ -240,9 +240,8 @@ class LoggingPropertyMachine(PropertyMachine):
     """A state machine that announces every transition.
 
     Expects the owning object to have an ``_on_state_change`` attribute that is
-    ``None``, or a callable with signature ``f(new_value, old_value)``. One
-    attribute rather than the ``log`` and ``state_hook`` pair this used to
-    duck-type -- see :func:`announce_state_change`.
+    ``None``, or a callable with signature ``f(new_value, old_value)``. See
+    :func:`announce_state_change`.
     """
 
     def __init__(self, machine_type):
@@ -667,8 +666,8 @@ class PlanSession:
         ----------
         name : str
         """
-        # Raise KeyError for an unknown command, as deleting from the registry
-        # directly used to.
+        # Built-ins can be unregistered too, and are not in the registry, so
+        # membership is asked of the names rather than of what has been added.
         if name not in self.commands:
             raise KeyError(name)
         self._registered_commands.pop(name, None)

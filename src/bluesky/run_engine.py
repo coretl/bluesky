@@ -17,10 +17,8 @@ from .bundlers import RunBundler
 from .log import ComposableLogAdapter, logger
 from .permits import join_justifications, running_on
 
-# Everything this module used to define now lives in plan_executor, and is
-# exported from there. These are imported, and deliberately left out of the
-# __all__ below, so that `from bluesky.run_engine import Dispatcher` and its
-# like keep working for code written before the split.
+# Re-exported, and deliberately left out of the __all__ below, so that
+# `from bluesky.run_engine import Dispatcher` and its like keep working.
 from .plan_executor import (  # noqa: F401
     NO_PLAN_RETURN,
     UNCACHEABLE_COMMANDS,
@@ -863,10 +861,8 @@ class RunEngine:
             print()
             print("Suspending... To get to the prompt, hit Ctrl-C twice to pause.")
 
-        # Building the executor loads the plan, so a malformed one raises here,
-        # on this thread, as it did before the split. The session also builds
-        # the wait for any already-tripped suspenders, which is why the futures
-        # gathered above are only used for the message printed to the user.
+        # Building the executor loads the plan, so a malformed one raises on
+        # this thread rather than inside the loop.
         self._new_executor(plan, metadata=metadata_kw, subs=subs)
         self.log.info("Executing plan %r", plan)
 
@@ -1220,14 +1216,14 @@ class RunEngine:
         self.emit(name, doc)
 
 
-# Names the RunEngine used to hold itself, which now belong to the executor for
-# the plan being run. Mapped to the executor attribute they forward to.
+# Private names that live on the executor for the plan being run, mapped to the
+# executor attribute they forward to. Tests and downstream code read and write
+# them, so they keep working.
 #
-# These are private, but they are read and written by tests and by downstream
-# code, so they keep working. Forwarding silently is deliberate: the test suite
-# turns warnings into errors, so a DeprecationWarning here would break callers
-# rather than warn them. One can be added once the ecosystem has moved to
-# reading RunEngine._executor, or to using a PlanExecutor directly.
+# Forwarding silently is deliberate: the test suite turns warnings into errors,
+# so a DeprecationWarning here would break callers rather than warn them. One
+# can be added once the ecosystem reads RunEngine._executor, or uses a
+# PlanExecutor directly.
 
 # Forwards with a caller we can point at, inside bluesky or outside it.
 _FORWARDS_WITH_CALLERS = {

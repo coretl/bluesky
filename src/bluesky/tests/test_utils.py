@@ -482,9 +482,9 @@ def test_CallbackRegistry_class_method_survives_collection_of_its_class():
 def test_CallbackRegistry_callback_on_unweakreferenceable_instance():
     """An instance that cannot be weakly referenced keeps a working callback.
 
-    ``__slots__`` without ``__weakref__`` makes ``ref()`` raise, and the fallback
-    used to keep the *unbound* function, which then got called without its
-    instance -- at process time, long after connect had reported success.
+    ``__slots__`` without ``__weakref__`` makes ``ref()`` raise, so the
+    registry holds the bound method strongly. Holding the unbound function
+    instead would fail at process time, long after connect reported success.
     """
 
     class Slotted:

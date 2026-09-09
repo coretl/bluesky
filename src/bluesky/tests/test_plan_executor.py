@@ -152,10 +152,8 @@ def test_every_hop_onto_the_loop_is_one_of_the_few_we_mean():
 def test_a_suspender_holds_no_threading_primitives():
     """A suspender's state is written on the loop and nowhere else.
 
-    Was: a lock, because the decision about a reading was made on whichever
-    thread the signal called back on, and a counter, because a write raised on
-    that thread could land after an install or remove had moved on. Neither is
-    needed once the reading is handed to the loop and decided there.
+    A reading is handed to the loop and decided there, so nothing guards it
+    and no write has to be superseded on arrival.
     """
     from bluesky.suspenders import SuspendBoolHigh
 
@@ -552,8 +550,8 @@ def test_re_class_answers_for_whoever_is_driving(RE):
     A ``RunEngine`` names itself, so a plan asking what is running it gets the
     RunEngine rather than the executor that happens to be executing it. With
     nothing driving, an executor answers for itself, which is what a headless
-    caller wants. One field does what two used to: the same value names the
-    subject of a state change in the log.
+    caller wants. The same value names the subject of a state change in the
+    log.
     """
     seen = []
 

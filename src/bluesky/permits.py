@@ -93,26 +93,14 @@ class Permit:
     plan run under it while one installed by a plan holds up only that plan.
 
     Written only on the loop, and read from anywhere. `withhold` and `grant`
-    do not check that for themselves: this class is internal, its callers are
-    the two boundaries that already have to think about threads -- a suspender
-    tripping on its signal's thread, and the `RunEngine` methods a user calls
-    from the prompt -- and each of them owns its crossing. Enforcing it here as
-    well put the check in the one place that never crosses anything, and made
-    every caller pay for a question it had already answered.
+    do not check that: this class is internal, and its callers are the two
+    boundaries that own their crossings -- a suspender tripping on its signal's
+    thread, and the `RunEngine` methods called from the prompt.
 
-    What justified hopping onto the loop inside these methods instead -- that
-    whether a permit is granted must be true for the calling thread the moment
-    it says so -- costs nothing to give up, because the only reader that
-    *decides* anything is the supervisor, and it runs on the loop: a write
-    queued from another thread lands ahead of every loop callback that follows
-    it, so the ordering that mattered is kept for the only reader that can
-    observe it.
-
-    Reading is not restricted. `granted` and `withheld_by` answer on any thread,
-    because the reasons are an immutable mapping swapped rather than mutated, so
-    a reader sees one snapshot or the next and never a mapping mid-change. Those
-    readers report -- ``RunEngine.suspenders``, ``PlanSession.suspensions``, a
-    message printed for a human -- and eventual consistency is what they need.
+    `granted` and `withheld_by` answer on any thread. The reasons are an
+    immutable mapping, swapped rather than mutated, so a reader sees one
+    snapshot or the next and never a mapping mid-change. Their callers report
+    rather than decide, so eventual consistency is what they need.
     """
 
     def __init__(self, name: str, loop: asyncio.AbstractEventLoop, parent: Permit | None = None) -> None:
@@ -130,23 +118,16 @@ class Permit:
         # recovers and trips again inside the settle-down time has the older
         # release come due and drop the newer reason.
         self._releases: dict[Hashable, asyncio.TimerHandle] = {}
-        # Pulsed on every change anywhere in the chain. One event and not one
-        # per edge: every wait here is a `while <condition>` loop over it, so
-        # the edge a caller cares about is the condition it tests, and
-        # `granted` -- which also asks the parent -- is the only state. Shared
-        # with the parent rather than composed with it at each wait, so that a
-        # wait is one await on one event however deep the chain runs.
+        # Pulsed on every change anywhere in the chain, and shared with the
+        # parent, so a wait is one await on one event however deep the chain.
         self._pulse: _Pulse = parent._pulse if parent is not None else _Pulse()
 
     @property
     def loop(self) -> asyncio.AbstractEventLoop:
         """The loop this permit's state lives on.
 
-        Exposed because crossing onto it is the caller's job, not this class's.
-        A suspender trips on whatever thread its signal calls back on and has
-        to get back here; it owns that hop, so that there is one visible
-        crossing rather than one hidden inside every method that might be
-        called from anywhere.
+        Public because crossing onto it is the caller's job: a suspender trips
+        on whatever thread its signal calls back on and owns that hop.
         """
         return self._loop
 
@@ -158,16 +139,10 @@ class Permit:
     def granted(self) -> bool:
         """Whether the plan may run: nothing is withholding it, here or above.
 
-        Derived rather than tracked, so that it cannot disagree with
-        `withheld_by`. Two independent walks of the chain could return a
-        verdict and a set of reasons that did not match, and whoever read both
-        had to reconcile them.
-
-        This walks to the root and merges on every call where the short-circuit
-        it replaced did not. Chains are two deep -- a session's permit and the
-        running plan's -- so that is one merge of two small mappings, and it
-        happens once per pulse rather than per message. Anything deeper would
-        want a loop-side fast path, not a second public accessor.
+        Derived from `withheld_by` rather than tracked, so the two cannot
+        disagree. Chains are two deep -- a session's permit and the running
+        plan's -- so this is one merge of two small mappings, once per pulse
+        rather than per message.
         """
         return not self.withheld_by
 

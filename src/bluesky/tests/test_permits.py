@@ -204,14 +204,10 @@ def test_no_checkpoint_mid_plan_aborts(RE, hw):
 
 
 def test_no_checkpoint_abort_raises_nothing_into_the_loop(RE, hw):
-    """Aborting is not a half-arranged suspension.
+    """Aborting arranges no suspension, so nothing is left to fail.
 
-    Was: the ``not resumable`` branch fell through, so it queued a suspension
-    onto the plan stack it had just started tearing down and then attempted an
-    ``'aborting' -> 'suspending'`` transition the state machine forbids. Since
-    the request runs in a fire-and-forget task, the `TransitionError` went
-    unretrieved and asyncio reported it whenever that task was finally
-    collected -- during some later, unrelated test.
+    The request runs in a fire-and-forget task, where an exception is reported
+    only when the task is collected -- during some later, unrelated test.
     """
     reported = []
     RE.loop.call_soon_threadsafe(RE.loop.set_exception_handler, lambda loop, ctx: reported.append(ctx))
@@ -231,14 +227,7 @@ def test_no_checkpoint_abort_raises_nothing_into_the_loop(RE, hw):
 
 
 def test_clear_suspenders_reaches_a_plans_own_from_the_prompt(RE, hw):
-    """The escape hatch is reached from the prompt, never from the loop.
-
-    Was: uninstalling a plan's suspender granted this plan's permit directly,
-    on whatever thread called in, so ``RE.clear_suspenders()`` raised for any
-    caller that was not the loop -- which is every caller it has. `remove`
-    already drops the reason, on the loop, so the second grant was both
-    redundant and the only unsynchronised write left.
-    """
+    """The escape hatch is reached from the prompt, never from the loop."""
     suspender = SuspendBoolHigh(hw.bool_sig)
     raised = []
 
@@ -261,13 +250,7 @@ def test_clear_suspenders_reaches_a_plans_own_from_the_prompt(RE, hw):
 
 
 def test_removing_a_suspender_settles_before_it_returns(RE, hw):
-    """`remove` finishes what it started, as `install` does.
-
-    Was: the grant went onto the loop and was not waited for, so a permit
-    stayed withheld for a loop iteration after the suspender withholding it had
-    gone. `install` fenced and `remove` did not, which made the two ends of the
-    same contract disagree.
-    """
+    """`remove` settles its grant before returning, as `install` does."""
     sig = hw.bool_sig
     sig.put(1)  # bad, and it has emitted, so the subscription reports it
     suspender = SuspendBoolHigh(sig)
@@ -281,14 +264,7 @@ def test_removing_a_suspender_settles_before_it_returns(RE, hw):
 
 
 def test_installing_a_suspender_twice_is_an_error(RE, hw):
-    """One suspender, one permit.
-
-    Was: the second install overwrote the first permit, which stayed withheld
-    with nothing able to grant it -- and when the second scope ended, `remove`
-    cleared the suspender, so a durable suspender re-installed by a plan was
-    left listed by ``RE.suspenders`` and silently unable to suspend anything
-    ever again.
-    """
+    """One suspender, one permit: a second install would orphan the first."""
     suspender = SuspendBoolHigh(hw.bool_sig)
     RE.install_suspender(suspender)
 
@@ -485,7 +461,7 @@ def test_installing_a_suspender_on_the_run_engine_still_works(RE, hw):
     with pytest.warns(DeprecationWarning, match="takes the permit"):
         susp.install(RE)
 
-    assert susp in RE.suspenders, "installed durably, as it used to be"
+    assert susp in RE.suspenders, "the deprecated call installs on the engine"
     sig.put(1)
     _settle(RE)
     assert RE._session.suspensions, "and it holds up the engine"

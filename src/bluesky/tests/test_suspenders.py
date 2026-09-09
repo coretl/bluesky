@@ -200,7 +200,7 @@ def test_suspender_plans_async_signal(RE):
     # test_suspender_installed_by_a_plan_ends_with_it for the lifetime itself.
     assert my_suspender not in RE.suspenders
 
-    # removed from inside a plan, it no longer does
+    # Removing it from inside a plan takes it out of the next plan too.
     trip_then_clear()
     start = ttime.time()
     RE([Msg("remove_suspender", None, my_suspender)] + scan)
@@ -550,11 +550,9 @@ def test_suspender_plans(RE, hw):
 def test_two_conditions_make_one_suspension(RE):
     """Two conditions going bad at once suspend the plan once, not once each.
 
-    Was: each suspender guarded its own trip path, so the second condition
-    passed its own guard and requested a second suspension. The plan rewound
-    twice and the pre-plans ran nested. Now the reasons accumulate on one
-    permit, so the plan rewinds once and each condition's pre-plan runs as it
-    fires -- which is why pre- and post-plans must be idempotent.
+    The reasons accumulate on one permit, so the plan rewinds once while each
+    condition's pre-plan runs as it fires -- which is why pre- and post-plans
+    must be idempotent.
     """
     sig_a = Signal(value=0, name="sig_a")
     sig_b = Signal(value=0, name="sig_b")
@@ -583,10 +581,8 @@ def test_trip_while_paused_suspends_on_resume(RE, hw):
     """A condition that goes bad while the plan is paused suspends it when it
     resumes.
 
-    Was: the trip was dropped, because suspending was asked of the RunEngine
-    from the device's thread and paused there was nothing to suspend -- and no
-    later trip suspended that plan either. Now the condition withholds the
-    permit, which is state rather than a request, so resuming waits for it.
+    The condition withholds the permit, which is state rather than a request,
+    so resuming waits for it.
     """
     sig = hw.bool_sig
     sig.put(0)
@@ -645,12 +641,9 @@ def test_suspender_installed_by_a_plan_ends_with_it(RE, hw):
     """A suspender a plan installs for itself is visible while that plan runs
     and gone once it ends.
 
-    Was: ``Msg('install_suspender')`` was the same call as
-    ``RE.install_suspender``, so the suspender outlived the plan and
-    ``suspend_wrapper`` had to remove it by hand. Now it withholds the plan's
-    own permit and is released with the plan. ``RE.suspenders`` still reports
-    it while the plan runs, because it reports the union of the durable ones
-    and the running plan's.
+    It withholds the plan's own permit and is released with the plan.
+    ``RE.suspenders`` reports it meanwhile, being the union of the durable
+    suspenders and the running plan's.
     """
     sig = hw.bool_sig
     sig.put(0)

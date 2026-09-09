@@ -2797,11 +2797,9 @@ def test_abs_set_fails(RE, wait):
 def test_md_written_midplan_takes_effect_on_the_next_plan(RE, hw):
     """``RE.md`` is snapshotted as a plan is launched.
 
-    Was: the RunEngine held one metadata mapping and read it as each run
-    opened, so a key added part way through a plan landed in the runs opened
-    after it. Now each plan is given a copy of the metadata as it stands when
-    the plan is launched, so a plan's environment does not change under it, and
-    the write takes effect for the next plan instead.
+    Each plan gets a copy of the metadata as it stands at launch, so a plan's
+    environment does not change under it and a mid-plan write takes effect for
+    the next plan.
 
     ``scan_id`` deliberately still comes from the session, because the counter
     is durable and two plans must never be handed the same id.
@@ -2873,12 +2871,10 @@ def test_monitor_documents_arrive_off_the_loop_thread(RE, hw):
 
 
 def test_verbose_round_trips_and_actually_silences(RE):
-    """``RE.verbose`` answers, and answers about something that matters.
+    """``RE.verbose`` reports the logger, and setting it really silences.
 
-    Was: the getter read ``disabled`` off the log *adapter*, which never has
-    one, so it raised ``AttributeError`` until a set had created it -- and the
-    set put it on the adapter, where logging never looks, so it silenced
-    nothing. Both halves now go to the logger the adapter wraps.
+    Both halves go to the logger the adapter wraps: a `logging.LoggerAdapter`
+    has no ``disabled`` of its own, and nothing consults one if given it.
     """
     assert RE.verbose is True
     assert RE.log.isEnabledFor(logging.ERROR)

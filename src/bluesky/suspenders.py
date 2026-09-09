@@ -106,8 +106,7 @@ class SuspenderBase(metaclass=ABCMeta):
             # `install_suspender` and would otherwise ignore it silently.
             raise RuntimeError(f"Can not specify non-None event_type {event_type=} with Subscribable protocol")
         if not isinstance(permit, Permit):
-            # Was `install(RE)` before suspension went through permits. Do what
-            # it used to do, which is a durable install on that engine.
+            # Given a RunEngine, install durably on it.
             warn(
                 f"Passing a RunEngine to {type(self).__name__}.install is deprecated; "
                 "it now takes the permit to withhold, which is not something a "
@@ -120,23 +119,18 @@ class SuspenderBase(metaclass=ABCMeta):
         if self._permit is not None:
             raise RuntimeError(
                 f"This {type(self).__name__} is already installed. A suspender holds one permit, "
-                "so installing it again would orphan the first: that permit would stay withheld "
-                "with nothing left able to grant it, and this suspender would stop watching for "
-                "whatever it was installed on. Call remove() first."
+                "so a second install would leave the first withheld with nothing able to grant "
+                "it. Call remove() first."
             )
         if not running_on(permit.loop):
             raise RuntimeError(
                 f"{type(self).__name__}.install must be called on the permit's event loop, and "
-                "this is not it. A suspender's state is written where its signal's readings are "
-                "applied, so that the two cannot interleave, and it does not cross on its own. "
-                "Use RunEngine.install_suspender(suspender), which crosses for you."
+                "this is not it. Use RunEngine.install_suspender(suspender), which crosses for you."
             )
         self._permit = permit
         # Both subscription styles call back with the current reading before
-        # they return, and this is already the loop, so an already-bad signal
-        # has withheld the permit by the time this returns. Waiting for beam
-        # that is already down is what suspenders are for, and a caller that
-        # installs one and then starts a plan must not be raced by its own trip.
+        # they return, and this is the loop, so an already-bad signal has
+        # withheld the permit by the time this returns.
         if self._implements_protocol:
             self._sig.subscribe_reading(self)
         elif callable(getattr(self._sig, "subscribe", None)):
@@ -157,9 +151,7 @@ class SuspenderBase(metaclass=ABCMeta):
         if permit is not None and not running_on(permit.loop):
             raise RuntimeError(
                 f"{type(self).__name__}.remove must be called on the permit's event loop, and "
-                "this is not it. Use RunEngine.remove_suspender(suspender), which crosses for "
-                "you. An uninstalled suspender may be removed from anywhere: there is no permit "
-                "to write and no subscription to drop."
+                "this is not it. Use RunEngine.remove_suspender(suspender), which crosses for you."
             )
         if permit is not None or not self._implements_protocol:
             # Nothing was subscribed if we were never installed, and a
@@ -168,10 +160,8 @@ class SuspenderBase(metaclass=ABCMeta):
         self._permit = None
         self._tripped = False
         if permit is not None:
-            # An uninstalled suspender must not go on suspending, and nothing
-            # else will drop its reason once it has stopped watching its
-            # signal. Every reading raised before this was applied before it,
-            # so this is the last word on the permit.
+            # Nothing else drops the reason once this has stopped watching, and
+            # every reading raised earlier has already been applied.
             permit.grant(self)
 
     @abstractmethod
@@ -259,11 +249,9 @@ class SuspenderBase(metaclass=ABCMeta):
                 )
         elif self._should_resume(value):
             if self._tripped:
-                # Only release what actually tripped. Subscribing with
-                # ``run=True`` calls back with the current reading, and an
-                # already-nominal signal must not schedule a release: it would
-                # come due `sleep` seconds later and drop a reason raised by a
-                # trip in between.
+                # Only release what tripped. A nominal signal must not
+                # schedule a release, which would come due `sleep` seconds
+                # later and drop a reason raised by a trip in between.
                 permit.grant(self, after=self._sleep)
             self._tripped = False
 
