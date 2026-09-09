@@ -140,8 +140,13 @@ def test_every_hop_onto_the_loop_is_one_of_the_few_we_mean():
     assert _crossings("permits.py") == set(), "a permit is written on the loop; its caller crosses"
     assert _crossings("plan_executor.py") == {"done_callback"}, "only the ophyd status callback"
     assert _crossings("suspenders.py") == {"__call__"}, "only the signal's own callback"
-    # The RunEngine is the thread-safe facade, so it may hop wherever it likes.
-    assert _crossings("run_engine.py"), "the facade has stopped crossing, which cannot be right"
+    # The facade crosses for everyone, which is why it may cross at all -- but
+    # through one implementation, so that "where does a thread reach the loop"
+    # keeps a short answer. `_build_task` is the single exception, and is one
+    # because it wants the future rather than the result: the wait that matters
+    # for a running plan is `_resume_task` blocking on `_blocking_event`, which
+    # Ctrl-C can interrupt where waiting on a future cannot.
+    assert _crossings("run_engine.py") == {"_run_on", "_build_task"}, "one crossing, plus the plan task"
 
 
 def test_a_suspender_holds_no_threading_primitives():

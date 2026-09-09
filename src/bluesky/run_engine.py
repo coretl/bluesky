@@ -6,7 +6,7 @@ import typing
 import weakref
 from contextlib import ExitStack
 from functools import partial
-from inspect import iscoroutine
+from inspect import isawaitable, iscoroutine
 from warnings import warn
 
 from bluesky._vendor.super_state_machine.errors import TransitionError
@@ -766,9 +766,7 @@ class RunEngine:
             False by default.
         """
         self._raise_if_panicked()
-        future = asyncio.run_coroutine_threadsafe(self._executor.pause(defer), loop=self.loop)
-        # TODO add a timeout here?
-        return future.result()
+        return self.__on_loop(self._executor.pause(defer))
 
     def _create_result(self, plan_return):
         """
@@ -858,6 +856,9 @@ class RunEngine:
         self.log.info("Executing plan %r", plan)
 
         def _build_task():
+            # The one crossing that keeps the future rather than the result.
+            # `_resume_task` waits on `_blocking_event` instead, because that
+            # wait has to be interruptible by Ctrl-C and a future's is not.
             self._blocking_event.clear()
             self._task_fut = asyncio.run_coroutine_threadsafe(
                 self._executor.run(),
@@ -902,7 +903,7 @@ class RunEngine:
         def _release_plan():
             # Inside _resume_task's context managers, so that SigintHandler is
             # reinstalled before the plan is allowed to move again.
-            asyncio.run_coroutine_threadsafe(self._executor.resume(), self._loop).result()
+            self.__on_loop(self._executor.resume())
 
         plan_return = self._resume_task(init_func=_release_plan)
         if self._executor.interrupted:
@@ -1026,7 +1027,7 @@ class RunEngine:
         # Reaches a plan already in progress without anything having to be
         # told: that plan's permit is a child of the session's, so it is
         # withheld whenever this one is.
-        self.__on_loop(partial(self._session.install_suspender, suspender))
+        self.__on_loop(partial(self._session.install_suspender, suspender), timeout=SUBSCRIPTION_TIMEOUT)
 
     def remove_suspender(self, suspender):
         """
@@ -1042,7 +1043,7 @@ class RunEngine:
         :meth:`RunEngine.clear_suspenders`
         """
         self._raise_if_panicked()
-        self.__on_loop(partial(self._session.remove_suspender, suspender))
+        self.__on_loop(partial(self._session.remove_suspender, suspender), timeout=SUBSCRIPTION_TIMEOUT)
 
     def clear_suspenders(self):
         """
@@ -1069,7 +1070,7 @@ class RunEngine:
             self._session.clear_suspenders()
             self._executor.clear_suspenders()
 
-        self.__on_loop(clear_both)
+        self.__on_loop(clear_both, timeout=SUBSCRIPTION_TIMEOUT)
 
     def abort(self, reason=""):
         """
@@ -1128,35 +1129,32 @@ class RunEngine:
         """
         return self.__interrupter_helper(self._executor.halt())
 
-    def __on_loop(self, func):
-        """Run ``func`` on the event loop, and wait for it.
+    def __on_loop(self, work, *, timeout=None):
+        """Run ``work`` on this engine's loop, and wait for what it returns.
 
-        The one place a caller's thread crosses onto the loop to work on
-        suspenders. A suspender does not cross for itself: `install` and
-        `remove` are called from here, already on the loop, so the state they
-        write is written where every reading is applied and the two cannot
-        interleave. The other direction -- a signal calling back on a monitor
-        thread -- is crossed where that callback is defined, in
-        `SuspenderBase.__call__`.
+        The RunEngine is the thread-safe facade, so this is where a caller's
+        own thread crosses onto the loop -- all of it, whether the caller had a
+        coroutine to await or a function to call. Nothing the facade calls
+        crosses for itself: `SuspenderBase.install` and `remove` are loop-side
+        methods, and a permit is written by whoever crossed to reach it. The
+        other direction, a signal or a status calling back on a thread bluesky
+        did not choose, is crossed where that callback is defined.
 
-        Waiting is what lets `install_suspender` promise something: a suspender
-        installed on a signal that already reads badly is withholding the
-        permit by the time the call returns, rather than a loop iteration
-        later, so starting a plan straight afterwards cannot race its own trip.
+        Waiting is the point. It is what lets `install_suspender` promise that
+        a suspender installed on an already-bad signal is withholding the
+        permit by the time the call returns, so that starting a plan straight
+        afterwards cannot race its own trip.
+
+        There is one crossing that deliberately does not wait here, in
+        `__call__`: it keeps the future instead, because the wait that matters
+        there is `_resume_task` blocking on `_blocking_event`, which Ctrl-C can
+        interrupt and this cannot.
         """
-        if running_on(self.loop):
-            return func()
-
-        future: concurrent.futures.Future = concurrent.futures.Future()
-
-        def call():
-            try:
-                future.set_result(func())
-            except BaseException as exc:
-                future.set_exception(exc)
-
-        self.loop.call_soon_threadsafe(call)
-        return future.result(timeout=SUBSCRIPTION_TIMEOUT)
+        if not isawaitable(work) and running_on(self.loop):
+            # Already there. A coroutine still has to be handed over, since
+            # there is no way to await one from inside a running loop.
+            return work()
+        return _run_on(self.loop, work, timeout=timeout)
 
     def __interrupter_helper(self, coro):
         if self._is_panicked:
@@ -1165,22 +1163,11 @@ class RunEngine:
             coro.close()
         self._raise_if_panicked()
 
-        coro_event = threading.Event()
-        task = None
-
-        def end_cb(fut):
-            coro_event.set()
-
-        def start_task():
-            nonlocal task
-            task = self.loop.create_task(coro)
-            task.add_done_callback(end_cb)
-
         was_paused = self._executor.state == "paused"
-        self.loop.call_soon_threadsafe(start_task)
-        coro_event.wait()
-        # Re-raise anything the coroutine raised, e.g. a TransitionError.
-        task.result()
+        # Whatever the coroutine raises, e.g. a TransitionError, is raised here.
+        # No timeout: an abort has nowhere else to go, and giving up on it would
+        # leave the plan running with the caller told it had stopped.
+        self.__on_loop(coro)
         # Describe the outcome before resuming, since resuming lets the plan
         # run its cleanup and change what we would report.
         result = self._interrupted_result()
@@ -1331,17 +1318,50 @@ def in_bluesky_event_loop() -> bool:
         return loop is _bluesky_event_loop
 
 
+def _run_on(loop, work, *, timeout=None):
+    """Run ``work`` on ``loop`` from another thread, and wait for its result.
+
+    ``work`` is whatever the caller happened to have: a coroutine becomes a
+    task, and anything else is called as it stands. That is the only difference
+    between the two, so it is not worth two functions -- and having one is what
+    makes "where does a thread cross onto the loop" a question with a short
+    answer.
+
+    Whatever ``work`` raises is raised here, on the calling thread, rather than
+    being left in a future nobody reads.
+    """
+    if isawaitable(work):
+        future: concurrent.futures.Future = asyncio.run_coroutine_threadsafe(work, loop=loop)  # type: ignore
+    else:
+        future = concurrent.futures.Future()
+
+        def call():
+            try:
+                future.set_result(work())
+            except BaseException as exc:
+                future.set_exception(exc)
+
+        loop.call_soon_threadsafe(call)
+    try:
+        return future.result(timeout=timeout)
+    except BaseException:
+        # The work is ours: nothing else holds a reference able to stop it. If
+        # this wait is cut short -- a timeout, or a KeyboardInterrupt on its way
+        # to the prompt, which is how a hard pause reaches us -- the task would
+        # otherwise run on against a loop that may be closing, and asyncio would
+        # report it as destroyed-while-pending long afterwards. Already-finished
+        # work is unaffected: cancelling a done future does nothing.
+        future.cancel()
+        raise
+
+
 def call_in_bluesky_event_loop(coro: typing.Awaitable[T], timeout: float | None = None) -> T:
     if _bluesky_event_loop is None or not _bluesky_event_loop.is_running():
         # Quell "coroutine never awaited" warnings
         if iscoroutine(coro):
             coro.close()
         raise RuntimeError("Bluesky event loop not running")
-    fut: concurrent.futures.Future = asyncio.run_coroutine_threadsafe(
-        coro,  # type: ignore
-        loop=_bluesky_event_loop,
-    )
-    return fut.result(timeout=timeout)
+    return _run_on(_bluesky_event_loop, coro, timeout=timeout)
 
 
 def autoawait_in_bluesky_event_loop(ip=None):
