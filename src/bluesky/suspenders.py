@@ -201,16 +201,24 @@ class SuspenderBase(metaclass=ABCMeta):
         else:
             self._sig.clear_sub(self)
         with self._lock:
-            if self._permit is not None:
+            permit = self._permit
+            if permit is not None:
                 # An uninstalled suspender must not go on suspending, and
                 # nothing else will drop its reason once it has stopped
                 # watching its signal. Bumping the generation first supersedes
                 # any withhold this suspender already has in flight, so the
                 # release cannot be undone by a trip raised a moment ago.
                 self._generation += 1
-                self.__tell_loop(self._permit, partial(self._permit.grant, self))
+                self.__tell_loop(permit, partial(permit.grant, self))
             self._permit = None
             self._tripped = False
+        if permit is not None:
+            # Settle it, as `install` settles the withhold: nothing this call
+            # started is still in flight when it returns, so a permit cannot be
+            # released a loop iteration after the suspender holding it has gone.
+            # Outside the lock, because waiting inside it is the deadlock
+            # `__on_loop` warns about.
+            self.__on_loop(permit, lambda: None)
 
     @abstractmethod
     def _should_suspend(self, value):

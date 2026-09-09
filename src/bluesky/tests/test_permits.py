@@ -259,6 +259,26 @@ def test_clear_suspenders_reaches_a_plans_own_from_the_prompt(RE, hw):
     assert RE.suspenders == (), "and the plan's own suspender is gone"
 
 
+def test_removing_a_suspender_settles_before_it_returns(RE, hw):
+    """`remove` finishes what it started, as `install` does.
+
+    Was: the grant went onto the loop and was not waited for, so a permit
+    stayed withheld for a loop iteration after the suspender withholding it had
+    gone. `install` fenced and `remove` did not, which made the two ends of the
+    same contract disagree.
+    """
+    sig = hw.bool_sig
+    sig.put(1)  # bad, and it has emitted, so the subscription reports it
+    suspender = SuspendBoolHigh(sig)
+
+    RE.install_suspender(suspender)
+    permit = RE._session._permit
+    assert not permit.granted, "installed on a bad signal, so it is holding"
+
+    RE.remove_suspender(suspender)
+    assert permit.granted, "and it has let go by the time remove returns"
+
+
 # --------------------------------------------------------------------------
 # The permit itself
 
