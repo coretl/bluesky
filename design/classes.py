@@ -137,7 +137,7 @@ class PlanHooks:
     state_hook: Callable[[str, str], None] | None = None
     """Called with the new and old state on every state change."""
 
-    on_pause: Callable[[], None] | None = None
+    pause_hook: Callable[[], None] | None = None
     """Called with no arguments once a plan has come to rest paused."""
 
 

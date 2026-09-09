@@ -410,7 +410,7 @@ class PlanHooks:
         once there is nothing left to wait for. Drives progress bars.
     state_hook
         Called ``f(new_state, old_state)`` on every state change.
-    on_pause
+    pause_hook
         Called with no arguments when an executor comes to rest paused. A
         `RunEngine` uses this to release the main thread; a headless caller has
         no thread to release and can leave it unset.
@@ -419,7 +419,7 @@ class PlanHooks:
     msg_hook: Callable | None = None
     waiting_hook: Callable | None = None
     state_hook: Callable | None = None
-    on_pause: Callable[[], None] | None = None
+    pause_hook: Callable[[], None] | None = None
 
 
 class PlanSession:
@@ -582,7 +582,7 @@ class PlanSession:
         # The observation points, shared by reference with every executor this
         # session builds, so that setting one mid-plan takes effect on that
         # plan. Set them on this record rather than through a constructor
-        # argument each: `session.hooks.on_pause = f` reaches a running plan,
+        # argument each: `session.hooks.pause_hook = f` reaches a running plan,
         # which is the whole point of holding them in one mutable place.
         self.hooks = PlanHooks()
 
@@ -1025,8 +1025,8 @@ class PlanExecutor:
 
     def _notify_paused(self) -> None:
         """Announce that this plan has reached a paused resting state."""
-        if self._hooks.on_pause is not None:
-            self._hooks.on_pause()
+        if self._hooks.pause_hook is not None:
+            self._hooks.pause_hook()
 
     def _on_state_change(self, value, old_value) -> None:
         """Say that this plan changed state, in the name of whoever drives it."""

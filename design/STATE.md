@@ -94,7 +94,7 @@ constructor argument. That keeps `md`, `loop`, `log`, `run_bundler_cls` and
 `record_interruptions`, `strict_pre_declare` and `rewindable`, which already
 were. `md` is in both halves, and has to be.
 
-`on_pause` is the one exception, decided against the rule: it is written once and
+`pause_hook` is the one exception, decided against the rule: it is written once and
 has no property, but `hooks` is how all four hooks are reached, and one of the
 four arriving by another route would say otherwise. It is assigned after
 construction. `PlanSession()` still constructs with no arguments at all.

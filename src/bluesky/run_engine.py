@@ -373,7 +373,7 @@ class RunEngine:
         # reached and one of the four arriving by another route would say
         # otherwise. A headless caller has no thread to release and leaves it
         # unset.
-        self._session.hooks.on_pause = self._blocking_event.set
+        self._session.hooks.pause_hook = self._blocking_event.set
 
         if context_managers is None:
             context_managers = [SigintHandler]
