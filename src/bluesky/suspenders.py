@@ -123,12 +123,10 @@ class SuspenderBase(metaclass=ABCMeta):
             )
         # Both subscription styles call back with the current reading before
         # they return, so an already-bad signal has raised its withhold by now
-        # -- but onto the loop, not here. Wait for the loop to catch up, so a
-        # suspender installed on a tripped signal is holding the permit by the
-        # time this returns. Waiting for beam that is already down is what
-        # suspenders are for, and a caller that installed one and then started a
-        # plan must not be raced by its own trip.
-        self.__on_loop(permit, lambda: None)
+        # -- but onto the loop, not here. Waiting for beam that is already down
+        # is what suspenders are for, and a caller that installed one and then
+        # started a plan must not be raced by its own trip.
+        self.__settle_loop(permit)
 
     def __on_loop(self, permit, func):
         """Call ``func`` on the permit's event loop, and wait for it.
@@ -163,6 +161,19 @@ class SuspenderBase(metaclass=ABCMeta):
 
         loop.call_soon_threadsafe(call)
         future.result(timeout=SUBSCRIPTION_TIMEOUT)
+
+    def __settle_loop(self, permit):
+        """Block until everything this call put on the loop has run.
+
+        A fence rather than a call. `call_soon_threadsafe` is FIFO, so a no-op
+        queued behind the writes `install` and `remove` raise runs only once
+        those writes have -- including the ones raised indirectly, by a
+        subscription calling back on whatever thread it pleases. That is what
+        lets both return with nothing of their own still in flight, which is a
+        weaker promise than "the permit is withheld" and the one that is
+        actually true: whether a reason exists depends on what the signal said.
+        """
+        self.__on_loop(permit, lambda: None)
 
     def __tell_loop(self, permit, func):
         """Schedule ``func`` on the permit's loop, and do not wait for it.
@@ -213,12 +224,10 @@ class SuspenderBase(metaclass=ABCMeta):
             self._permit = None
             self._tripped = False
         if permit is not None:
-            # Settle it, as `install` settles the withhold: nothing this call
-            # started is still in flight when it returns, so a permit cannot be
-            # released a loop iteration after the suspender holding it has gone.
-            # Outside the lock, because waiting inside it is the deadlock
-            # `__on_loop` warns about.
-            self.__on_loop(permit, lambda: None)
+            # A permit must not be released a loop iteration after the
+            # suspender holding it has gone. Outside the lock, because waiting
+            # inside it is the deadlock `__on_loop` warns about.
+            self.__settle_loop(permit)
 
     @abstractmethod
     def _should_suspend(self, value):
