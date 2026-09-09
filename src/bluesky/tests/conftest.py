@@ -16,7 +16,7 @@ from bluesky.run_engine import RunEngine, TransitionError
 from bluesky.utils import SigintHandler
 
 
-def _error_on_unclosed_tasks(loop, test_name, test_passed):
+def _error_on_unclosed_tasks(loop, test_name, test_passed, loop_answered=True):
     """Cancel whatever is still running on ``loop``, and object if it was there.
 
     A task still pending when the loop closes makes asyncio report "Task was
@@ -27,6 +27,13 @@ def _error_on_unclosed_tasks(loop, test_name, test_passed):
 
     Only when the test passed. A test that failed has every reason to leave
     work in flight, and the failure worth reading is the one it already raised.
+
+    And only when the loop was still running. A panicked RunEngine is one whose
+    loop stopped answering, which is the condition `test_sigint_many_hits_panic`
+    exists to produce: work scheduled onto it after that can never be finished
+    or cancelled by the code under test, because nothing will run another
+    callback there. Objecting to it would be objecting to the premise of the
+    test rather than to a leak.
 
     Simplified from ophyd-async's fixture of the same shape: bluesky's ``RE``
     fixture makes the loop itself, so there are no pytest-asyncio helper tasks
@@ -39,7 +46,7 @@ def _error_on_unclosed_tasks(loop, test_name, test_passed):
     for task in pending:
         task.cancel()
     loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
-    if test_passed:
+    if test_passed and loop_answered:
         raise RuntimeError(f"Tasks still running at the end of {test_name}:\n{pprint.pformat(pending, width=88)}")
 
 
@@ -60,7 +67,12 @@ def RE(request):
         loop.call_soon_threadsafe(loop.stop)
         RE._th.join()
         try:
-            _error_on_unclosed_tasks(loop, request.node.name, request.session.testsfailed == fail_count)
+            _error_on_unclosed_tasks(
+                loop,
+                request.node.name,
+                request.session.testsfailed == fail_count,
+                loop_answered=RE.state != "panicked",
+            )
         finally:
             loop.close()
 
