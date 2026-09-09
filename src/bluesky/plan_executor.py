@@ -630,19 +630,6 @@ class PlanSession:
 
         # public dispatcher for callbacks
         self.dispatcher = Dispatcher()
-        self.ignore_exceptions = False
-
-    @property
-    def ignore_exceptions(self):
-        return self.dispatcher.ignore_exceptions
-
-    @ignore_exceptions.setter
-    def ignore_exceptions(self, val):
-        # Only this session's dispatcher: a running plan's own subscribers live
-        # on its executor, which this session does not hold. A `RunEngine`
-        # holds both and sets both, so that RE.ignore_callback_exceptions goes
-        # on meaning one thing.
-        self.dispatcher.ignore_exceptions = val
 
     async def _next_scan_id(self) -> int:
         """Compute the ``scan_id`` for a run that is opening, and return it.

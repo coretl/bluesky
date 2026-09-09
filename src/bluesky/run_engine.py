@@ -698,9 +698,9 @@ class RunEngine:
     @ignore_callback_exceptions.setter
     def ignore_callback_exceptions(self, val):
         # One setting. A plan's dispatcher answers for its parent rather than
-        # copying the value when it is built, so this reaches the plan already
-        # running as well as every plan after it.
-        self._session.ignore_exceptions = val
+        # holding a copy, so this reaches the plan already running as well as
+        # every plan after it.
+        self.dispatcher.ignore_exceptions = val
 
     def register_command(self, name, func):
         """

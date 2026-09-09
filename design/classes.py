@@ -194,9 +194,6 @@ class PlanSession:
     preprocessors: Sequence[Callable]
     """Applied to each plan as its executor is built, ``[f, g]`` as ``f(g(plan))``."""
 
-    ignore_exceptions: bool
-    """Whether a raising subscriber is warned about. Settable, and read live by every plan."""
-
     md_validator: Callable[[dict[str, Any]], None]
     md_normalizer: Callable[[dict[str, Any]], dict[str, Any]]
     run_bundler_cls: type[RunBundler]
