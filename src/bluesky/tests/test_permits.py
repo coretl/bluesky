@@ -229,6 +229,36 @@ def test_no_checkpoint_abort_raises_nothing_into_the_loop(RE, hw):
     assert not reported, [ctx.get("message") for ctx in reported]
 
 
+def test_clear_suspenders_reaches_a_plans_own_from_the_prompt(RE, hw):
+    """The escape hatch is reached from the prompt, never from the loop.
+
+    Was: uninstalling a plan's suspender granted this plan's permit directly,
+    on whatever thread called in, so ``RE.clear_suspenders()`` raised for any
+    caller that was not the loop -- which is every caller it has. `remove`
+    already drops the reason, on the loop, so the second grant was both
+    redundant and the only unsynchronised write left.
+    """
+    suspender = SuspendBoolHigh(hw.bool_sig)
+    raised = []
+
+    def clear_from_another_thread():
+        try:
+            RE.clear_suspenders()
+        except BaseException as exc:  # noqa: BLE001
+            raised.append(exc)
+
+    def plan():
+        yield Msg("install_suspender", None, suspender)
+        yield Msg("checkpoint")
+        yield Msg("sleep", None, 0.4)
+
+    _at(0.2, clear_from_another_thread)
+    RE(plan())
+
+    assert not raised, repr(raised[0])
+    assert RE.suspenders == (), "and the plan's own suspender is gone"
+
+
 # --------------------------------------------------------------------------
 # The permit itself
 

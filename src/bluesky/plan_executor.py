@@ -1102,9 +1102,15 @@ class PlanExecutor:
         session's permit rather than this plan's.
         """
         if suspender in self._plan_suspenders:
+            # `remove` drops the suspender's reason itself, on this permit and
+            # under this key, and crosses onto the loop to do it. Granting
+            # again here would be the same write a second time -- and a bare
+            # one, made on whatever thread called in, which is how
+            # `RunEngine.clear_suspenders` came to raise when reached from the
+            # prompt. A durable suspender named here holds the session's
+            # permit, not this one, so there is nothing to grant for it either.
             suspender.remove()
         self._plan_suspenders.discard(suspender)
-        self._permit.grant(suspender)
 
     def clear_suspenders(self) -> None:
         """Uninstall every suspender this plan installed for itself."""
