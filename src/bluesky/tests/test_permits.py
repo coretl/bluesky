@@ -7,6 +7,7 @@ against memory. The rest are the bugs permits exist to fix, and fail on ``main``
 
 import asyncio
 import concurrent.futures
+import gc
 import threading
 import time as ttime
 
@@ -199,6 +200,33 @@ def test_no_checkpoint_mid_plan_aborts(RE, hw):
     assert RE.state == "idle"
     # Aborted rather than suspended: there was nothing to rewind to.
     assert isinstance(RE._exception, FailedPause) or RE._exception is None
+
+
+def test_no_checkpoint_abort_raises_nothing_into_the_loop(RE, hw):
+    """Aborting is not a half-arranged suspension.
+
+    Was: the ``not resumable`` branch fell through, so it queued a suspension
+    onto the plan stack it had just started tearing down and then attempted an
+    ``'aborting' -> 'suspending'`` transition the state machine forbids. Since
+    the request runs in a fire-and-forget task, the `TransitionError` went
+    unretrieved and asyncio reported it whenever that task was finally
+    collected -- during some later, unrelated test.
+    """
+    reported = []
+    RE.loop.call_soon_threadsafe(RE.loop.set_exception_handler, lambda loop, ctx: reported.append(ctx))
+
+    sig = hw.bool_sig
+    sig.put(0)
+    RE.install_suspender(SuspendBoolHigh(sig))
+
+    _at(0.1, sig.put, 1)
+    with pytest.raises(RunEngineInterrupted):
+        RE([Msg("clear_checkpoint"), Msg("sleep", None, 0.5)])
+    assert RE.state == "idle"
+
+    # The report is made from ``Task.__del__``, so collect before looking.
+    gc.collect()
+    assert not reported, [ctx.get("message") for ctx in reported]
 
 
 # --------------------------------------------------------------------------

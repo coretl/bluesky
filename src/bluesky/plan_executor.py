@@ -1335,7 +1335,8 @@ class PlanExecutor:
 
     async def _request_suspend(self, fut, *, pre_plan=None, post_plan=None, justification=None):
         """Suspend until ``fut`` is finished. Must be called on the loop."""
-        if not self.resumable:
+        unresumable = not self.resumable
+        if unresumable:
             print("No checkpoint; cannot suspend.")
             print("Aborting: running cleanup and marking exit_status as 'abort'...")
             self.interrupted = True
@@ -1346,6 +1347,14 @@ class PlanExecutor:
                 self._task.cancel()
         if justification is not None:
             print(f"Justification for this suspension:\n{justification}")
+        if unresumable:
+            # Nothing to rewind to, so there is no suspension to arrange. The
+            # plan stack is being torn down, and a suspension queued onto it
+            # would never be reached; worse, 'aborting' -> 'suspending' below
+            # is not a legal transition, so falling through raises into this
+            # fire-and-forget task and is reported at collection as "Task
+            # exception was never retrieved", against an unrelated test.
+            return
 
         # add starting the suspender logic to the stack
         self._plan_stack.append(single_gen(Msg("_start_suspender", None, pre_plan, post_plan, justification, fut)))
