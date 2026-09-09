@@ -19,6 +19,22 @@ Added
   event types, so a caller asking for one would otherwise get a suspender
   watching something else with nothing said.
 
+Fixed
+-----
+
+- A suspender that trips while the plan is paused now suspends it when it
+  resumes.  Previously the trip was dropped, and no later trip could suspend
+  that plan either.
+- A suspender that recovers and trips again within its ``sleep`` period stays
+  tripped.  Previously the release scheduled by the recovery could come due and
+  clear the newer condition.
+- A suspension requested with no checkpoint to rewind to now arranges nothing
+  before aborting.  It queued the suspension onto the plan stack it had already
+  begun tearing down, then attempted an ``'aborting'`` to ``'suspending'``
+  transition the state machine forbids.  The error was raised inside a
+  fire-and-forget task, so asyncio reported it as an unretrieved task exception
+  whenever that task was finally collected, against unrelated work.
+
 Changed
 -------
 
@@ -57,7 +73,9 @@ Changed
   the last of them clears.  The permit itself is internal; installing a
   suspender is how a suspension is raised, and ``RunEngine.install_suspender``
   is unchanged.  Calling a `RunEngine` while a suspender is already tripped
-  prints what is holding it up, as it did before.
+  prints what is holding it up, as it did before.  ``install`` waits for the
+  subscription to be in place, so a suspender installed on an already-bad
+  signal is holding the permit by the time the call returns.
 - ``SuspenderBase.install`` takes the permit to withhold rather than a
   ``RunEngine``.  Passing a ``RunEngine`` still works, with a
   ``DeprecationWarning``, and does a durable install on it as before.
@@ -66,33 +84,12 @@ Changed
   Each suspender still runs its own pre-plan when its condition fires, and
   post-plans run in the reverse order, so **pre- and post-plans should be
   idempotent**.
-- A suspender that trips while the plan is paused now suspends it when it
-  resumes.  Previously the trip was dropped, and no later trip could suspend
-  that plan either.
-- A suspender that recovers and trips again within its ``sleep`` period stays
-  tripped.  Previously the release scheduled by the recovery could come due and
-  clear the newer condition.
-- A suspension requested with no checkpoint to rewind to aborts without also
-  queueing a suspension onto the plan stack being torn down.
 - A suspender a plan installs with ``Msg('install_suspender')`` now holds up
   that plan alone, and is uninstalled when the plan ends.  Previously the
   message was the same call as ``RunEngine.install_suspender``, so the
   suspender outlived the plan and had to be removed by hand.
   ``RunEngine.suspenders`` reports the durable suspenders together with the
   running plan's, and ``RunEngine.clear_suspenders`` clears both.
-- A suspender's trip reaches the RunEngine on its event loop rather than on the
-  thread the signal called back on, so ``RunEngine.suspenders`` and the standing
-  suspensions may lag a ``put`` by a loop iteration.  Code that starts a plan
-  after tripping a signal is unaffected -- everything reaches the loop in order,
-  so the trip is applied first -- but code that trips a signal and *inspects* the
-  engine immediately must let the loop catch up.  ``install`` still waits, so a
-  suspender installed on an already-bad signal is holding the permit by the time
-  it returns.
-
-- ``RunEngine.ignore_callback_exceptions`` now covers the subscribers of the
-  plan already running, not only those installed afterwards.  Each plan's
-  subscribers live in their own dispatcher, and a dispatcher answers for its
-  parent rather than copying the setting when it is built.
 - ``RunEngine.md`` is snapshotted as a plan is launched, so writing to it part
   way through a plan takes effect for the next plan rather than the runs the
   current one has yet to open.  A plan's environment no longer changes under
