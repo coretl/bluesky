@@ -131,6 +131,15 @@ Changed
   counter is durable and two plans must never be handed the same id.  Whatever
   mapping ``RE.md`` is -- a ``PersistentDict``, say -- stays where it is; only
   its contents are copied.
+- The executor no longer prints.  Two new hooks carry what it used to say:
+  ``announce_hook``, called with a line about what happened, and
+  ``suspend_hook``, called with the joined justifications as a suspension
+  begins.  A ``RunEngine`` wires the first to ``print`` and renders the second
+  itself, so nothing changes at a prompt.  A headless ``PlanSession`` leaves
+  both unset and is silent unless it sets them, which is what lets a service
+  route them somewhere that is not a terminal: nothing the executor says now
+  tells anyone which key to press, since only a ``RunEngine`` and
+  ``SigintHandler`` know a keyboard is attached.
 - ``RunEngine.commands`` returns a sorted tuple of command names rather than a
   list in registration order.  It always reported names; it now says so in its
   type, and the names cannot be reordered by rebinding what they resolve to.

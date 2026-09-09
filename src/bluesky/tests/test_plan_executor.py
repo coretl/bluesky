@@ -168,6 +168,18 @@ def test_a_suspender_holds_no_threading_primitives():
     assert offenders == {}
 
 
+def test_the_executor_never_says_what_to_press():
+    """It cannot know that a keyboard is attached.
+
+    `announce_hook` may be wired to a websocket, where telling someone to hit
+    Ctrl-C is wrong. Saying what to press belongs to the `RunEngine` and to
+    `SigintHandler`, which exist only where a terminal does.
+    """
+    source = (pathlib.Path(bluesky.__file__).parent / "plan_executor.py").read_text()
+
+    assert "Ctrl" not in source, "not even in a docstring; SIGINT is the accurate word here"
+
+
 def test_session_holds_no_threading_primitives(idle_session):
     """The session is reachable from the main thread and from the loop, but
     everything that writes to it runs on the loop, so it needs no locks."""

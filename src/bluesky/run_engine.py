@@ -5,6 +5,7 @@ import threading
 import typing
 import weakref
 from contextlib import ExitStack
+from datetime import datetime
 from functools import partial
 from inspect import isawaitable, iscoroutine
 from warnings import warn
@@ -373,6 +374,10 @@ class RunEngine:
         # reached and one of the four arriving by another route would say
         # otherwise. A headless caller has no thread to release and leaves it
         # unset.
+        # The executor says what happened; this is the half that knows a
+        # terminal is watching, and so the only half that may say what to press.
+        self._session.hooks.announce_hook = print
+        self._session.hooks.suspend_hook = self._announce_suspension
         self._session.hooks.pause_hook = self._blocking_event.set
 
         if context_managers is None:
@@ -1185,6 +1190,13 @@ class RunEngine:
             self._resume_task()
 
         return result
+
+    def _announce_suspension(self, justification: str) -> None:
+        """Say a suspension has begun, and how to get back to a prompt."""
+        print("Suspending....To get prompt hit Ctrl-C twice to pause.")
+        print(f"Suspension occurred at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}.")
+        if justification:
+            print(f"Justification for this suspension:\n{justification}")
 
     def _interrupted_result(self):
         """What abort(), stop() and halt() return."""

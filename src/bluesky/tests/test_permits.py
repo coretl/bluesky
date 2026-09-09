@@ -330,6 +330,25 @@ def test_a_condition_joining_a_suspension_runs_its_pre_plan(RE):
     assert finished == ["first", "second"], "both pre-plans ran to completion"
 
 
+def test_a_suspension_reaches_both_hooks(RE):
+    """The event goes to `suspend_hook`; everything else to `announce_hook`."""
+    said: list[str] = []
+    suspensions: list[str] = []
+    RE._session.hooks.announce_hook = said.append
+    RE._session.hooks.suspend_hook = suspensions.append
+
+    sig = Signal(value=0, name="s")
+    sig.put(0)
+    RE.install_suspender(SuspendBoolHigh(sig))
+
+    _at(0.1, sig.put, 1)
+    _at(0.5, sig.put, 0)
+    RE([Msg("checkpoint")] + [Msg("sleep", None, 0.2)] * 4)
+
+    assert suspensions, "the suspension was reported as an event"
+    assert "Ctrl" not in "".join(said), "and nothing announced a key to press"
+
+
 # --------------------------------------------------------------------------
 # The permit itself
 

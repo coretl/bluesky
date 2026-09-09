@@ -13,7 +13,6 @@ import typing
 from collections import ChainMap, defaultdict, deque
 from collections.abc import Callable, MutableMapping
 from dataclasses import dataclass
-from datetime import datetime
 from enum import Enum
 from itertools import count
 from logging import LoggerAdapter
@@ -237,19 +236,6 @@ def announce_state_change(identity, hooks: "PlanHooks", old_value, value) -> Non
         hooks.state_hook(value, old_value)
 
 
-def announce_suspend() -> None:
-    """Tell the user a suspension is starting.
-
-    Called by whichever entry point was asked, before it hands the work to
-    the loop, so that the message reaches the user when they asked rather
-    than whenever the loop gets to it. The ways in are disjoint -- a
-    `RunEngine` goes straight to its executor rather than by way of its
-    session -- so this is said once per suspension.
-    """
-    print("Suspending....To get prompt hit Ctrl-C twice to pause.")
-    print(f"Suspension occurred at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}.")
-
-
 class LoggingPropertyMachine(PropertyMachine):
     """A state machine that announces every transition.
 
@@ -410,6 +396,14 @@ class PlanHooks:
         once there is nothing left to wait for. Drives progress bars.
     state_hook
         Called ``f(new_state, old_state)`` on every state change.
+    announce_hook
+        Called with a line addressed to whoever is watching the plan. Says what
+        happened, never what to press: a `RunEngine` prints it, a service may
+        put it anywhere.
+    suspend_hook
+        Called with the joined justifications as a suspension begins. Separate
+        from `announce_hook` because how a user interrupts a suspended plan
+        depends on what is driving it, so the wording is the caller's.
     pause_hook
         Called with no arguments when an executor comes to rest paused. A
         `RunEngine` uses this to release the main thread; a headless caller has
@@ -419,6 +413,8 @@ class PlanHooks:
     msg_hook: Callable | None = None
     waiting_hook: Callable | None = None
     state_hook: Callable | None = None
+    announce_hook: Callable[[str], None] | None = None
+    suspend_hook: Callable[[str], None] | None = None
     pause_hook: Callable[[], None] | None = None
 
 
@@ -1023,6 +1019,11 @@ class PlanExecutor:
         if self._hooks.waiting_hook is not None:
             self._hooks.waiting_hook(status_objs)
 
+    def _announce(self, message: str) -> None:
+        """Say something to whoever is watching. Never what key to press."""
+        if self._hooks.announce_hook is not None:
+            self._hooks.announce_hook(message)
+
     def _notify_paused(self) -> None:
         """Announce that this plan has reached a paused resting state."""
         if self._hooks.pause_hook is not None:
@@ -1154,7 +1155,8 @@ class PlanExecutor:
                 if first.post_plan is not None:
                     yield from ensure_generator(_called(first.post_plan))
 
-            announce_suspend()
+            if self._hooks.suspend_hook is not None:
+                self._hooks.suspend_hook(join_justifications(seen))
             self._loop.create_task(  # noqa: RUF006
                 self._request_suspend(
                     self._permit.wait_granted,
@@ -1315,16 +1317,14 @@ class PlanExecutor:
         """Suspend until ``fut`` is finished. Must be called on the loop."""
         unresumable = not self.resumable
         if unresumable:
-            print("No checkpoint; cannot suspend.")
-            print("Aborting: running cleanup and marking exit_status as 'abort'...")
+            self._announce("No checkpoint; cannot suspend.")
+            self._announce("Aborting: running cleanup and marking exit_status as 'abort'...")
             self.interrupted = True
             self._exception = FailedPause()
             was_paused = self.state == "paused"
             self.state = "aborting"
             if not was_paused:
                 self._task.cancel()
-        if justification is not None:
-            print(f"Justification for this suspension:\n{justification}")
         if unresumable:
             # Nothing to rewind to, so there is no suspension to arrange. The
             # plan stack is being torn down, and a suspension queued onto it
@@ -1616,10 +1616,9 @@ class PlanExecutor:
                     # -- overriding the RunEngine -- and then raises instead
                     # of (properly) calling the RunEngine's handler.
                     # See https://github.com/NSLS-II/bluesky/pull/242
-                    print(
+                    self._env.log.warning(
                         "An unknown external library has improperly raised "
-                        "KeyboardInterrupt. Intercepting and triggering "
-                        "a HALT."
+                        "KeyboardInterrupt. Intercepting and triggering a HALT."
                     )
                     await self.halt()
                 except asyncio.CancelledError as e:
@@ -1715,7 +1714,7 @@ class PlanExecutor:
                 try:
                     p.close()
                 except RuntimeError:
-                    print(f"The plan {p!r} tried to yield a value on close.  Please fix your plan.")
+                    self._announce(f"The plan {p!r} tried to yield a value on close.  Please fix your plan.")
 
             self._release_suspenders()
             supervisor.cancel()
@@ -2707,10 +2706,10 @@ class PlanExecutor:
 
         if defer:
             self._deferred_pause_requested = True
-            print("Deferred pause acknowledged. Continuing to checkpoint.")
+            self._announce("Deferred pause acknowledged. Continuing to checkpoint.")
             return
 
-        print("Pausing...")
+        self._announce("Pausing...")
 
         self._deferred_pause_requested = False
         self.interrupted = True
@@ -2728,7 +2727,7 @@ class PlanExecutor:
         can forget to.
 
         A `RunEngine` must still call this from inside its context managers, so
-        that Ctrl-C handling is reinstalled before the plan moves again.
+        that SIGINT handling is reinstalled before the plan moves again.
         """
         await self._prepare_resume()
         self._release_pause()
@@ -2736,7 +2735,7 @@ class PlanExecutor:
     async def abort(self, reason=""):
         if self.state.is_idle:
             raise TransitionError("RunEngine is already idle.")
-        print("Aborting: running cleanup and marking exit_status as 'abort'...")
+        self._announce("Aborting: running cleanup and marking exit_status as 'abort'...")
         self.interrupted = True
         self._reason = reason
 
@@ -2757,7 +2756,7 @@ class PlanExecutor:
     async def stop(self):
         if self.state.is_idle:
             raise TransitionError("RunEngine is already idle.")
-        print("Stopping: running cleanup and marking exit_status as 'success'...")
+        self._announce("Stopping: running cleanup and marking exit_status as 'success'...")
 
         self.interrupted = True
         was_paused = self.state == "paused"
@@ -2771,7 +2770,7 @@ class PlanExecutor:
     async def halt(self):
         if self.state.is_idle:
             raise TransitionError("RunEngine is already idle.")
-        print("Halting: skipping cleanup and marking exit_status as 'abort'...")
+        self._announce("Halting: skipping cleanup and marking exit_status as 'abort'...")
         self._destroy_open_run_tracing_spans()
         self.interrupted = True
         was_paused = self.state == "paused"
