@@ -110,6 +110,13 @@ class SuspenderBase(metaclass=ABCMeta):
             )
             permit.install_suspender(self)
             return
+        if self._permit is not None:
+            raise RuntimeError(
+                f"This {type(self).__name__} is already installed. A suspender holds one permit, "
+                "so installing it again would orphan the first: that permit would stay withheld "
+                "with nothing left able to grant it, and this suspender would stop watching for "
+                "whatever it was installed on. Call remove() first."
+            )
         with self._lock:
             self._permit = permit
             self._generation += 1

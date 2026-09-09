@@ -46,6 +46,13 @@ Fixed
   the plan and asyncio reported them as destroyed-while-pending at some
   unrelated later moment.  A ``wait`` that times out still leaves them alone, so
   waiting on the same group again finds them in flight.
+- Installing a suspender that is already installed raises ``RuntimeError``
+  rather than silently reassigning it.  A suspender holds one permit, so the
+  second install orphaned the first -- leaving it withheld with nothing able to
+  grant it -- and when the second scope ended the suspender was cleared
+  outright, so a durable suspender that a plan re-installed was still listed by
+  ``RunEngine.suspenders`` and could never suspend anything again.  Remove it
+  before installing it somewhere else.
 
 Changed
 -------

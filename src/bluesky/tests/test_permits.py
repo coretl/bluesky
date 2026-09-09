@@ -279,6 +279,25 @@ def test_removing_a_suspender_settles_before_it_returns(RE, hw):
     assert permit.granted, "and it has let go by the time remove returns"
 
 
+def test_installing_a_suspender_twice_is_an_error(RE, hw):
+    """One suspender, one permit.
+
+    Was: the second install overwrote the first permit, which stayed withheld
+    with nothing able to grant it -- and when the second scope ended, `remove`
+    cleared the suspender, so a durable suspender re-installed by a plan was
+    left listed by ``RE.suspenders`` and silently unable to suspend anything
+    ever again.
+    """
+    suspender = SuspendBoolHigh(hw.bool_sig)
+    RE.install_suspender(suspender)
+
+    with pytest.raises(RuntimeError, match="already installed"):
+        RE.install_suspender(suspender)
+
+    RE.remove_suspender(suspender)
+    RE.install_suspender(suspender)  # and removing frees it to be installed again
+
+
 # --------------------------------------------------------------------------
 # The permit itself
 
