@@ -1,5 +1,6 @@
 import asyncio
 import os
+import pprint
 import signal
 import threading
 import time
@@ -15,11 +16,40 @@ from bluesky.run_engine import RunEngine, TransitionError
 from bluesky.utils import SigintHandler
 
 
+def _error_on_unclosed_tasks(loop, test_name, test_passed):
+    """Cancel whatever is still running on ``loop``, and object if it was there.
+
+    A task still pending when the loop closes makes asyncio report "Task was
+    destroyed but it is pending!" whenever it is finally collected, which is
+    during some later, unrelated test. Cancelling here is what stops the noise;
+    raising here is what stops it being someone else's problem, by naming the
+    test that actually left the task behind.
+
+    Only when the test passed. A test that failed has every reason to leave
+    work in flight, and the failure worth reading is the one it already raised.
+
+    Simplified from ophyd-async's fixture of the same shape: bluesky's ``RE``
+    fixture makes the loop itself, so there are no pytest-asyncio helper tasks
+    to allow for, and ``asyncio.all_tasks`` already returns only unfinished
+    ones.
+    """
+    pending = asyncio.all_tasks(loop)
+    if not pending:
+        return
+    for task in pending:
+        task.cancel()
+    loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+    if test_passed:
+        raise RuntimeError(f"Tasks still running at the end of {test_name}:\n{pprint.pformat(pending, width=88)}")
+
+
 @pytest.fixture(scope="function", params=[False, True])
 def RE(request):
     loop = asyncio.new_event_loop()
     loop.set_debug(True)
     RE = RunEngine({}, call_returns_result=request.param, loop=loop)
+
+    fail_count = request.session.testsfailed
 
     def clean_event_loop():
         if RE.state not in ("idle", "panicked"):
@@ -29,17 +59,10 @@ def RE(request):
                 pass
         loop.call_soon_threadsafe(loop.stop)
         RE._th.join()
-        # A suspender that trips leaves a fire-and-forget request_suspend task
-        # on the loop, which may still be pending once the loop has stopped.
-        # Closing the loop on a pending task makes asyncio report "Task was
-        # destroyed but it is pending!" whenever that task is finally
-        # collected, which is during some later, unrelated test's teardown.
-        pending = asyncio.all_tasks(loop)
-        for task in pending:
-            task.cancel()
-        if pending:
-            loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
-        loop.close()
+        try:
+            _error_on_unclosed_tasks(loop, request.node.name, request.session.testsfailed == fail_count)
+        finally:
+            loop.close()
 
     request.addfinalizer(clean_event_loop)
     return RE
