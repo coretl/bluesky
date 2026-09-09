@@ -707,19 +707,24 @@ class PlanSession:
         self._unregistered_commands.add(name)
 
     @property
-    def commands(self) -> dict[str, typing.Callable]:
-        """The vocabulary the next plan will understand.
+    def commands(self) -> tuple[str, ...]:
+        """The names of the commands the next plan will understand.
 
-        Composed from `PlanExecutor`'s built-ins and whatever the user has
-        registered here. The built-ins are reported as the plain functions they
-        are defined as, since this session holds no executor to bind them to,
-        and they are named and documented the same either way.
+        `PlanExecutor`'s built-ins plus whatever has been registered here, less
+        whatever has been unregistered. Names only: the callable a name resolves
+        to is bound to the executor running the plan, and this session holds no
+        executor to bind one to.
         """
-        registry = PlanExecutor._unbound_default_commands()
+        names = set(PlanExecutor._DEFAULT_COMMANDS) | set(self._registered_commands)
+        return tuple(sorted(names - self._unregistered_commands))
+
+    def _command_docs(self) -> dict[str, str | None]:
+        """Docstring per command name, for `RunEngine.print_command_registry`."""
+        registry: dict[str, typing.Callable] = {
+            name: getattr(PlanExecutor, attr) for name, attr in PlanExecutor._DEFAULT_COMMANDS.items()
+        }
         registry.update(self._registered_commands)
-        for name in self._unregistered_commands:
-            registry.pop(name, None)
-        return registry
+        return {name: registry[name].__doc__ for name in self.commands}
 
     def make_executor(self, plan, *, metadata=None, subs=None) -> "PlanExecutor":
         """Build an executor for ``plan``, and hand it to the caller.
@@ -1317,11 +1322,6 @@ class PlanExecutor:
         "install_suspender": "_install_suspender",
         "remove_suspender": "_remove_suspender",
     }
-
-    @classmethod
-    def _unbound_default_commands(cls) -> dict[str, typing.Callable]:
-        """The built-in vocabulary as plain functions, without an executor."""
-        return {name: getattr(cls, attr) for name, attr in cls._DEFAULT_COMMANDS.items()}
 
     def _default_commands(self) -> dict[str, typing.Callable]:
         """The vocabulary this executor understands out of the box."""

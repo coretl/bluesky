@@ -252,7 +252,7 @@ class RunEngine:
         can be modified based on needs.
 
     commands:
-        The list of commands available to Msg.
+        The names of the commands available to Msg.
 
     """
 
@@ -495,7 +495,7 @@ class RunEngine:
     @property
     def commands(self):
         """
-        The list of commands available to Msg.
+        The names of the commands available to Msg.
 
         See Also
         --------
@@ -510,8 +510,7 @@ class RunEngine:
         >>> # to list commands
         >>> RE.commands
         """
-        # return as a list, not lazy loader, no surprises...
-        return list(self._session.commands)
+        return self._session.commands
 
     def print_command_registry(self, verbose=False):
         """
@@ -538,8 +537,7 @@ class RunEngine:
         """
         commands = "List of available commands\n"
 
-        for command, func in self._session.commands.items():
-            docstring = func.__doc__
+        for command, docstring in self._session._command_docs().items():
             if not verbose:
                 docstring = docstring.split("\n")[0]
             commands = commands + f"{command} : {docstring}\n"

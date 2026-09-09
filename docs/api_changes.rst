@@ -131,6 +131,9 @@ Changed
   counter is durable and two plans must never be handed the same id.  Whatever
   mapping ``RE.md`` is -- a ``PersistentDict``, say -- stays where it is; only
   its contents are copied.
+- ``RunEngine.commands`` returns a sorted tuple of command names rather than a
+  list in registration order.  It always reported names; it now says so in its
+  type, and the names cannot be reordered by rebinding what they resolve to.
 - ``RunEngine.emit`` is synchronous.  There was a synchronous ``emit_sync`` and
   a coroutine ``emit`` doing the same work; awaiting the latter never
   suspended.  ``RunBundler`` therefore takes one ``emit`` argument rather than

@@ -2344,24 +2344,18 @@ def test_print_commands(RE):
     the changes made breaking past API)
     """
 
-    # testing the commands list
-    commands1 = list(RE._command_registry.keys())
-    commands2 = RE.commands
+    # Names, in a fixed order, and every one of them resolvable.
+    assert RE.commands == tuple(sorted(RE._command_registry))
 
-    assert commands1 == commands2
-
-    # testing print commands
-    # copy and paste most of the code...
     verbose = False
-    print_command_reg1 = "List of available commands\n"
-    for command, func in RE._command_registry.items():
-        docstring = func.__doc__
+    expected = "List of available commands\n"
+    for command in RE.commands:
+        docstring = RE._command_registry[command].__doc__
         if verbose is False:
             docstring = docstring.split("\n")[0]
-        print_command_reg1 += f"{command} : {docstring}\n"
+        expected += f"{command} : {docstring}\n"
 
-    print_command_reg2 = RE.print_command_registry()
-    assert print_command_reg1 == print_command_reg2
+    assert RE.print_command_registry() == expected
 
 
 def test_broken_read_exception(RE):
