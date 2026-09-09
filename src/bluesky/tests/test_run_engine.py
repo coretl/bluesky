@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 import signal
 import sys
@@ -2875,3 +2876,23 @@ def test_monitor_documents_arrive_off_the_loop_thread(RE, hw):
     assert set(event_threads) - {"bluesky-run-engine"}, (
         "at least one monitor document reached subscribers off the loop thread"
     )
+
+
+def test_verbose_round_trips_and_actually_silences(RE):
+    """``RE.verbose`` answers, and answers about something that matters.
+
+    Was: the getter read ``disabled`` off the log *adapter*, which never has
+    one, so it raised ``AttributeError`` until a set had created it -- and the
+    set put it on the adapter, where logging never looks, so it silenced
+    nothing. Both halves now go to the logger the adapter wraps.
+    """
+    assert RE.verbose is True
+    assert RE.log.isEnabledFor(logging.ERROR)
+    try:
+        RE.verbose = False
+        assert RE.verbose is False
+        assert not RE.log.isEnabledFor(logging.ERROR), "and it is really quiet"
+    finally:
+        RE.verbose = True
+    assert RE.verbose is True
+    assert RE.log.isEnabledFor(logging.ERROR)

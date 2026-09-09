@@ -34,6 +34,12 @@ Fixed
   transition the state machine forbids.  The error was raised inside a
   fire-and-forget task, so asyncio reported it as an unretrieved task exception
   whenever that task was finally collected, against unrelated work.
+- ``RunEngine.verbose`` reports whether the engine logs, and turning it off
+  stops it.  It read ``disabled`` from the log adapter, which has no such
+  attribute, so reading raised ``AttributeError`` until something had assigned
+  one -- and assigning put it on the adapter, where the logging machinery never
+  looks, so turning it off silenced nothing.  Both halves now go to the logger
+  the adapter wraps.
 
 Changed
 -------
