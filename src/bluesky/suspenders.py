@@ -1,16 +1,16 @@
 import operator
-import threading
 from abc import ABCMeta, abstractmethod, abstractproperty
-from concurrent.futures import Future
-from functools import partial
 from warnings import warn
 
 from bluesky.protocols import Subscribable
 
 from .permits import Permit, running_on
 
-# How long install() and remove() wait for the RunEngine's event loop to
-# subscribe to a Subscribable signal, or unsubscribe from it, before giving up.
+# How long `RunEngine.install_suspender`, `remove_suspender` and
+# `clear_suspenders` wait for the event loop to run the work they hand it,
+# before giving up. Installing subscribes and removing unsubscribes, so a loop
+# that never gets to them leaves the caller with no idea whether the signal is
+# being watched.
 SUBSCRIPTION_TIMEOUT = 10
 
 
@@ -48,15 +48,16 @@ class SuspenderBase(metaclass=ABCMeta):
         # The permit to withhold while this reads as bad. A suspender does not
         # know what is running, or whether anything is: everything that must be
         # held up by this condition is waiting on that permit already.
+        # Every piece of mutable state below -- the permit, whether this is
+        # tripped, the last value it saw -- is written and read on the permit's
+        # event loop and nowhere else. `install` and `remove` are called there,
+        # and a reading arriving on a signal's own thread is handed over rather
+        # than acted on. One sequence, on one thread: no lock, and no write
+        # that a later one has to be able to supersede.
         self._permit = None
         self._tripped = False
-        # Bumped on every install and remove. A write this suspender schedules
-        # onto the loop carries the generation it was raised under, and is
-        # dropped on arrival if that is no longer current.
-        self._generation = 0
         self._tripped_message = tripped_message
         self._sleep = sleep
-        self._lock = threading.Lock()
         self._sig = signal
         self._pre_plan = pre_plan
         self._post_plan = post_plan
@@ -92,6 +93,12 @@ class SuspenderBase(metaclass=ABCMeta):
             signal following ophyd's subscription pattern; a `Subscribable` one
             has no such notion, so passing it there is an error rather than
             something to ignore.
+
+        Notes
+        -----
+        Call this on the permit's event loop. `RunEngine.install_suspender`
+        crosses onto it for you, and is what a user should reach for; nothing
+        here crosses on its own.
         """
         if self._implements_protocol and event_type is not None:
             # Checked before anything is recorded, and ahead of the deprecated
@@ -117,124 +124,55 @@ class SuspenderBase(metaclass=ABCMeta):
                 "with nothing left able to grant it, and this suspender would stop watching for "
                 "whatever it was installed on. Call remove() first."
             )
-        with self._lock:
-            self._permit = permit
-            self._generation += 1
+        if not running_on(permit.loop):
+            raise RuntimeError(
+                f"{type(self).__name__}.install must be called on the permit's event loop, and "
+                "this is not it. A suspender's state is written where its signal's readings are "
+                "applied, so that the two cannot interleave, and it does not cross on its own. "
+                "Use RunEngine.install_suspender(suspender), which crosses for you."
+            )
+        self._permit = permit
+        # Both subscription styles call back with the current reading before
+        # they return, and this is already the loop, so an already-bad signal
+        # has withheld the permit by the time this returns. Waiting for beam
+        # that is already down is what suspenders are for, and a caller that
+        # installs one and then starts a plan must not be raced by its own trip.
         if self._implements_protocol:
-            self.__on_loop(permit, partial(self._sig.subscribe_reading, self))
+            self._sig.subscribe_reading(self)
         elif callable(getattr(self._sig, "subscribe", None)):
             self._sig.subscribe(self, event_type=event_type, run=True)
         else:
+            self._permit = None
             raise RuntimeError(
                 "%s does not implement Subscribable protocol or adhere to ophyd subscription pattern." % self._sig
             )
-        # Both subscription styles call back with the current reading before
-        # they return, so an already-bad signal has raised its withhold by now
-        # -- but onto the loop, not here. Waiting for beam that is already down
-        # is what suspenders are for, and a caller that installed one and then
-        # started a plan must not be raced by its own trip.
-        self.__settle_loop(permit)
-
-    def __on_loop(self, permit, func):
-        """Call ``func`` on the permit's event loop, and wait for it.
-
-        Subscribing to a Subscribable signal, and unsubscribing from it, both
-        have to happen on the thread its event loop runs in: an EPICS channel
-        access monitor, for one, belongs to the loop that made it.
-
-        Waiting also gives ``install`` the same guarantee as ophyd's
-        ``subscribe(..., run=True)``, since ``subscribe_reading`` calls back
-        with the current reading: the suspender knows whether it is already
-        tripped by the time ``install`` returns.
-
-        **Never call this while holding ``self._lock``.** It blocks, and
-        `PlanExecutor._remove_suspender_now` calls `remove` on the loop thread:
-        a signal thread waiting here while holding the lock, with the loop
-        thread blocked entering `remove`'s ``with self._lock``, is a deadlock.
-        Use `_SuspenderBase__tell_loop` for anything raised under the lock.
-        """
-        loop = permit.loop
-        if running_on(loop):
-            func()
-            return
-
-        future: Future = Future()
-
-        def call():
-            try:
-                future.set_result(func())
-            except BaseException as exc:
-                future.set_exception(exc)
-
-        loop.call_soon_threadsafe(call)
-        future.result(timeout=SUBSCRIPTION_TIMEOUT)
-
-    def __settle_loop(self, permit):
-        """Block until everything this call put on the loop has run.
-
-        A fence rather than a call. `call_soon_threadsafe` is FIFO, so a no-op
-        queued behind the writes `install` and `remove` raise runs only once
-        those writes have -- including the ones raised indirectly, by a
-        subscription calling back on whatever thread it pleases. That is what
-        lets both return with nothing of their own still in flight, which is a
-        weaker promise than "the permit is withheld" and the one that is
-        actually true: whether a reason exists depends on what the signal said.
-        """
-        self.__on_loop(permit, lambda: None)
-
-    def __tell_loop(self, permit, func):
-        """Schedule ``func`` on the permit's loop, and do not wait for it.
-
-        The counterpart to `__on_loop`, and the only one of the two that may be
-        raised while holding ``self._lock``.
-
-        The write carries the generation it was raised under. `install` and
-        `remove` both bump that, so a withhold already in flight when the
-        suspender was uninstalled is dropped rather than re-holding the permit
-        that `remove` just released -- which would strand a plan on a suspender
-        that has stopped watching its signal and so will never grant again.
-        """
-        generation = self._generation
-
-        def call():
-            if generation == self._generation:
-                func()
-
-        loop = permit.loop
-        if running_on(loop):
-            call()
-        else:
-            loop.call_soon_threadsafe(call)
 
     def remove(self):
-        """Disable the suspender
+        """Stop watching the signal, and drop whatever this was withholding.
 
-        Removes the callback at the pyepics level
+        Call this on the permit's event loop, as with `install`.
+        `RunEngine.remove_suspender` crosses onto it for you.
         """
-        if self._implements_protocol:
-            # Nothing was subscribed if we were never installed, and there is
-            # no event loop to unsubscribe on either.
-            if self._permit is not None:
-                self.__on_loop(self._permit, partial(self._sig.clear_sub, self))
-        else:
+        permit = self._permit
+        if permit is not None and not running_on(permit.loop):
+            raise RuntimeError(
+                f"{type(self).__name__}.remove must be called on the permit's event loop, and "
+                "this is not it. Use RunEngine.remove_suspender(suspender), which crosses for "
+                "you. An uninstalled suspender may be removed from anywhere: there is no permit "
+                "to write and no subscription to drop."
+            )
+        if permit is not None or not self._implements_protocol:
+            # Nothing was subscribed if we were never installed, and a
+            # Subscribable signal has no subscription to drop in that case.
             self._sig.clear_sub(self)
-        with self._lock:
-            permit = self._permit
-            if permit is not None:
-                # An uninstalled suspender must not go on suspending, and
-                # nothing else will drop its reason once it has stopped
-                # watching its signal. Bumping the generation first supersedes
-                # any withhold this suspender already has in flight, so the
-                # release cannot be undone by a trip raised a moment ago.
-                self._generation += 1
-                self.__tell_loop(permit, partial(permit.grant, self))
-            self._permit = None
-            self._tripped = False
+        self._permit = None
+        self._tripped = False
         if permit is not None:
-            # A permit must not be released a loop iteration after the
-            # suspender holding it has gone. Outside the lock, because waiting
-            # inside it is the deadlock `__on_loop` warns about.
-            self.__settle_loop(permit)
+            # An uninstalled suspender must not go on suspending, and nothing
+            # else will drop its reason once it has stopped watching its
+            # signal. Every reading raised before this was applied before it,
+            # so this is the last word on the permit.
+            permit.grant(self)
 
     @abstractmethod
     def _should_suspend(self, value):
@@ -279,41 +217,55 @@ class SuspenderBase(metaclass=ABCMeta):
         pass it off to the ophyd callback stack.
 
         This expects the massive blob that comes from ophyd
+
+        A signal calls back on whatever thread it likes -- a channel access
+        monitor thread, for one. This is where that thread meets the loop,
+        because this is where the callback is defined; the reading is carried
+        across and decided there, not here.
         """
-        with self._lock:
-            if self._permit is None:
-                return
-            if self._implements_protocol:
-                # Subscribable calls back with {name: Reading}
-                value = value[self._sig.name]["value"]
-            self._last_value = value
-            if self._should_suspend(value):
-                was_tripped = self._tripped
-                self._tripped = True
-                if not was_tripped:
-                    # The justification is built here, on the thread and at the
-                    # moment the condition went bad, so it reports the value
-                    # that actually tripped it rather than whatever the signal
-                    # has become by the time the loop runs the withhold.
-                    self.__tell_loop(
-                        self._permit,
-                        partial(
-                            self._permit.withhold,
-                            self,
-                            self._get_justification(),
-                            pre_plan=self._pre_plan,
-                            post_plan=self._post_plan,
-                        ),
-                    )
-            elif self._should_resume(value):
-                if self._tripped:
-                    # Only release what actually tripped. Subscribing with
-                    # ``run=True`` calls back with the current reading, and an
-                    # already-nominal signal must not schedule a release: it
-                    # would come due `sleep` seconds later and drop a reason
-                    # raised by a trip in between.
-                    self.__tell_loop(self._permit, partial(self._permit.grant, self, after=self._sleep))
-                self._tripped = False
+        permit = self._permit
+        if permit is None:
+            return
+        if self._implements_protocol:
+            # Subscribable calls back with {name: Reading}
+            value = value[self._sig.name]["value"]
+        loop = permit.loop
+        if running_on(loop):
+            self.__decide(value)
+        else:
+            loop.call_soon_threadsafe(self.__decide, value)
+
+    def __decide(self, value):
+        """Work out what ``value`` means for the permit. On the loop.
+
+        The reading is the one the signal called back with, carried over rather
+        than read again here, so a justification reports the value that
+        actually tripped this rather than whatever the signal has since become.
+        """
+        permit = self._permit
+        if permit is None:
+            # Uninstalled between the callback and this running.
+            return
+        self._last_value = value
+        if self._should_suspend(value):
+            was_tripped = self._tripped
+            self._tripped = True
+            if not was_tripped:
+                permit.withhold(
+                    self,
+                    self._get_justification(),
+                    pre_plan=self._pre_plan,
+                    post_plan=self._post_plan,
+                )
+        elif self._should_resume(value):
+            if self._tripped:
+                # Only release what actually tripped. Subscribing with
+                # ``run=True`` calls back with the current reading, and an
+                # already-nominal signal must not schedule a release: it would
+                # come due `sleep` seconds later and drop a reason raised by a
+                # trip in between.
+                permit.grant(self, after=self._sleep)
+            self._tripped = False
 
     @property
     def tripped(self):

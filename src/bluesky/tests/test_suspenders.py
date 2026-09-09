@@ -112,8 +112,9 @@ def test_subscribes_on_run_engine_thread(RE, via_plan):
         # install/remove are reached from the event loop thread this way
         RE([Msg("install_suspender", None, susp), Msg("remove_suspender", None, susp)])
     else:
-        susp.install(RE)
-        susp.remove()
+        # Reached from this thread, so the RunEngine does the crossing.
+        RE.install_suspender(susp)
+        RE.remove_suspender(susp)
 
     loop_thread = _loop_thread_ident(RE)
     assert sig.threads == {"subscribe_reading": loop_thread, "clear_sub": loop_thread}

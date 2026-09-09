@@ -5,6 +5,7 @@ import threading
 import typing
 import weakref
 from contextlib import ExitStack
+from functools import partial
 from inspect import iscoroutine
 from warnings import warn
 
@@ -12,7 +13,7 @@ from bluesky._vendor.super_state_machine.errors import TransitionError
 
 from .bundlers import RunBundler
 from .log import ComposableLogAdapter, logger
-from .permits import join_justifications
+from .permits import join_justifications, running_on
 
 # Everything this module used to define now lives in plan_executor, and is
 # exported from there. These are imported, and deliberately left out of the
@@ -35,6 +36,7 @@ from .plan_executor import (  # noqa: F401
     default_scan_id_source,
 )
 from .protocols import SyncOrAsync, T
+from .suspenders import SUBSCRIPTION_TIMEOUT
 from .utils import (
     DefaultDuringTask,
     DuringTask,
@@ -1020,13 +1022,11 @@ class RunEngine:
         :meth:`RunEngine.remove_suspender`
         :meth:`RunEngine.clear_suspenders`
         """
-        # Marshals the subscribe onto the loop, so a wedged one would take
-        # the suspender and never watch anything.
         self._raise_if_panicked()
         # Reaches a plan already in progress without anything having to be
         # told: that plan's permit is a child of the session's, so it is
         # withheld whenever this one is.
-        self._session.install_suspender(suspender)
+        self.__on_loop(partial(self._session.install_suspender, suspender))
 
     def remove_suspender(self, suspender):
         """
@@ -1042,7 +1042,7 @@ class RunEngine:
         :meth:`RunEngine.clear_suspenders`
         """
         self._raise_if_panicked()
-        self._session.remove_suspender(suspender)
+        self.__on_loop(partial(self._session.remove_suspender, suspender))
 
     def clear_suspenders(self):
         """
@@ -1058,14 +1058,18 @@ class RunEngine:
         :meth:`RunEngine.remove_suspender`
         """
         self._raise_if_panicked()
+
         # Both halves, because :attr:`suspenders` reports both. The session
         # cannot uninstall a suspender a plan installed for itself, so looping
         # over the union here and calling :meth:`remove_suspender` would leave
         # the plan's own behind -- and this is the escape hatch reached for at
         # the prompt when a plan is held up, so leaving anything behind means
         # resuming into a wait nothing will end.
-        self._session.clear_suspenders()
-        self._executor.clear_suspenders()
+        def clear_both():
+            self._session.clear_suspenders()
+            self._executor.clear_suspenders()
+
+        self.__on_loop(clear_both)
 
     def abort(self, reason=""):
         """
@@ -1123,6 +1127,36 @@ class RunEngine:
         :meth:`RunEngine.stop`
         """
         return self.__interrupter_helper(self._executor.halt())
+
+    def __on_loop(self, func):
+        """Run ``func`` on the event loop, and wait for it.
+
+        The one place a caller's thread crosses onto the loop to work on
+        suspenders. A suspender does not cross for itself: `install` and
+        `remove` are called from here, already on the loop, so the state they
+        write is written where every reading is applied and the two cannot
+        interleave. The other direction -- a signal calling back on a monitor
+        thread -- is crossed where that callback is defined, in
+        `SuspenderBase.__call__`.
+
+        Waiting is what lets `install_suspender` promise something: a suspender
+        installed on a signal that already reads badly is withholding the
+        permit by the time the call returns, rather than a loop iteration
+        later, so starting a plan straight afterwards cannot race its own trip.
+        """
+        if running_on(self.loop):
+            return func()
+
+        future: concurrent.futures.Future = concurrent.futures.Future()
+
+        def call():
+            try:
+                future.set_result(func())
+            except BaseException as exc:
+                future.set_exception(exc)
+
+        self.loop.call_soon_threadsafe(call)
+        return future.result(timeout=SUBSCRIPTION_TIMEOUT)
 
     def __interrupter_helper(self, coro):
         if self._is_panicked:

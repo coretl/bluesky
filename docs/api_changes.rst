@@ -98,6 +98,21 @@ Changed
 - ``SuspenderBase.install`` takes the permit to withhold rather than a
   ``RunEngine``.  Passing a ``RunEngine`` still works, with a
   ``DeprecationWarning``, and does a durable install on it as before.
+- ``SuspenderBase.install`` and ``SuspenderBase.remove`` must be called on the
+  RunEngine's event loop, and raise ``RuntimeError`` otherwise.  A suspender no
+  longer crosses onto the loop for itself: ``RunEngine.install_suspender``,
+  ``remove_suspender`` and ``clear_suspenders`` cross for you, and are what to
+  call from the prompt.  Removing a suspender that was never installed still
+  works from anywhere, since there is nothing to write and nothing to
+  unsubscribe.
+- ``SuspenderBase.tripped`` reports what the event loop has applied, so it may
+  lag a ``put`` by a loop iteration.  A signal calls back on whatever thread it
+  pleases and the reading is carried to the loop and decided there, which is
+  what lets an install, a removal and a reading be one sequence on one thread
+  rather than three racing ones -- and lets a suspender hold no lock.  Code
+  that trips a signal and then starts a plan is unaffected, because everything
+  reaches the loop in order; code that trips a signal and *inspects* the
+  suspender immediately must let the loop catch up.
 - Two conditions going bad at once are now one suspension carrying both
   justifications, rather than one suspension each.  The plan rewinds once.
   Each suspender still runs its own pre-plan when its condition fires, and

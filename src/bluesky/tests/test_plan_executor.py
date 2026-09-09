@@ -22,6 +22,19 @@ from bluesky.plan_executor import (
 )
 from bluesky.utils import RunEngineInterrupted
 
+
+class _RecordingSignal:
+    """A Subscribable stand-in: enough for a suspender to be constructed."""
+
+    name = "recording"
+
+    def subscribe_reading(self, function):
+        pass
+
+    def clear_sub(self, function):
+        pass
+
+
 THREADING_PRIMITIVES = (
     threading.Event,
     threading.Lock().__class__,
@@ -106,23 +119,48 @@ def _crossings(module_name):
 def test_every_hop_onto_the_loop_is_one_of_the_few_we_mean():
     """Where a foreign thread reaches the loop, and why each one is allowed.
 
-    Not a ban. Three of these are unavoidable, because something outside
-    bluesky picks the thread: ophyd completes a status on whichever thread
-    finished the move, a signal calls a suspender back on whichever thread it
-    likes, and a user calls the RunEngine from their own. The rule is that
-    whoever owns that boundary owns the hop, so the list stays short and
-    visible -- and `permits.py` is on it with nothing, which is the point of
-    making a permit loop-only.
+    Two rules, and every crossing here is one or the other.
+
+    A caller's own thread reaches the loop only through the `RunEngine`. It is
+    the thread-safe facade, so it may hop wherever it likes -- and nothing it
+    calls hops for itself. `SuspenderBase.install` and `remove` are ordinary
+    loop-side methods, and a permit is written on the loop by whoever crossed
+    to get there.
+
+    A thread bluesky did not choose reaches the loop where the callback it
+    calls is defined. ophyd completes a status on whichever thread finished the
+    move, and calls a suspender back on whichever thread it likes, so
+    `done_callback` and `SuspenderBase.__call__` each own that crossing and do
+    nothing else on that thread but hand the value over.
 
     If this fails, either a new boundary is real and belongs in this list with
-    a reason, or a thread hop has been hidden inside something that should have
-    left the crossing to its caller.
+    a reason, or a hop has been hidden inside something that should have left
+    the crossing to its caller.
     """
     assert _crossings("permits.py") == set(), "a permit is written on the loop; its caller crosses"
     assert _crossings("plan_executor.py") == {"done_callback"}, "only the ophyd status callback"
-    assert _crossings("suspenders.py") == {"__on_loop", "__tell_loop"}, "the two named crossings"
+    assert _crossings("suspenders.py") == {"__call__"}, "only the signal's own callback"
     # The RunEngine is the thread-safe facade, so it may hop wherever it likes.
     assert _crossings("run_engine.py"), "the facade has stopped crossing, which cannot be right"
+
+
+def test_a_suspender_holds_no_threading_primitives():
+    """A suspender's state is written on the loop and nowhere else.
+
+    Was: a lock, because the decision about a reading was made on whichever
+    thread the signal called back on, and a counter, because a write raised on
+    that thread could land after an install or remove had moved on. Neither is
+    needed once the reading is handed to the loop and decided there.
+    """
+    from bluesky.suspenders import SuspendBoolHigh
+
+    suspender = SuspendBoolHigh(_RecordingSignal())
+    offenders = {
+        name: type(value).__name__
+        for name, value in vars(suspender).items()
+        if isinstance(value, THREADING_PRIMITIVES)
+    }
+    assert offenders == {}
 
 
 def test_session_holds_no_threading_primitives(idle_session):
