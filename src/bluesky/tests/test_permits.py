@@ -263,22 +263,6 @@ def test_clear_suspenders_reaches_a_plans_own_from_the_prompt(RE, hw):
 # The permit itself
 
 
-def test_a_permit_is_written_only_on_its_own_loop():
-    """Whoever has to cross onto the loop owns the crossing, not the permit.
-
-    Was: `withhold` and `grant` hopped onto the loop themselves, so they were
-    callable from anywhere and every permit method hid a thread boundary.
-    """
-    permit = Permit("test", loop=asyncio.new_event_loop())
-
-    with pytest.raises(RuntimeError, match="must be called on the loop"):
-        permit.withhold("beam", "beam is down")
-    with pytest.raises(RuntimeError, match="must be called on the loop"):
-        permit.grant("beam")
-
-    assert permit.granted, "and nothing was written"
-
-
 def test_a_permit_is_read_from_any_thread():
     """Reports cross freely. Only the writes are pinned to the loop.
 

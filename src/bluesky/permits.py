@@ -93,14 +93,20 @@ class Permit:
     plan run under it while one installed by a plan holds up only that plan.
 
     Written only on the loop, and read from anywhere. `withhold` and `grant`
-    raise if they are called from another thread: whoever has to cross owns the
-    crossing, which for a suspender tripping on its signal's thread is
-    ``SuspenderBase.__tell_loop``. What justified hopping in here instead -- that
-    whether a permit is granted must be true for the calling thread the moment it
-    says so -- costs nothing to give up, because the only reader that *decides*
-    anything is the supervisor, and it runs on the loop: a write queued from
-    another thread lands ahead of every loop callback that follows it, so the
-    ordering that mattered is kept for the only reader that can observe it.
+    do not check that for themselves: this class is internal, its callers are
+    the two boundaries that already have to think about threads -- a suspender
+    tripping on its signal's thread, and the `RunEngine` methods a user calls
+    from the prompt -- and each of them owns its crossing. Enforcing it here as
+    well put the check in the one place that never crosses anything, and made
+    every caller pay for a question it had already answered.
+
+    What justified hopping onto the loop inside these methods instead -- that
+    whether a permit is granted must be true for the calling thread the moment
+    it says so -- costs nothing to give up, because the only reader that
+    *decides* anything is the supervisor, and it runs on the loop: a write
+    queued from another thread lands ahead of every loop callback that follows
+    it, so the ordering that mattered is kept for the only reader that can
+    observe it.
 
     Reading is not restricted. `granted` and `withheld_by` answer on any thread,
     because the reasons are an immutable mapping swapped rather than mutated, so
@@ -186,7 +192,6 @@ class Permit:
         post_plan: PlanLike | None = None,
     ) -> None:
         """Withhold on ``key``'s behalf until granted. Loop thread only."""
-        self._must_be_on_the_loop("withhold")
         release = self._releases.pop(key, None)
         if release is not None:
             release.cancel()
@@ -195,7 +200,6 @@ class Permit:
 
     def grant(self, key: Hashable, *, after: float = 0) -> None:
         """Drop ``key``'s reason, ``after`` seconds from now. Loop thread only."""
-        self._must_be_on_the_loop("grant")
         if after:
             # Being on the loop is what makes this safe, and is also what makes
             # it possible: a timer belongs to the loop that scheduled it, and a
@@ -225,12 +229,3 @@ class Permit:
         """Wait until no reason stands in the chain."""
         while not self.granted:
             await self.wait_changed()
-
-    def _must_be_on_the_loop(self, action: str) -> None:
-        if not running_on(self._loop):
-            raise RuntimeError(
-                f"Permit.{action} must be called on the loop the permit belongs to, and this "
-                "is not it. Whatever is calling owns the crossing: a suspender tripping on "
-                "its signal's thread schedules the write with call_soon_threadsafe, which "
-                "is what SuspenderBase.__tell_loop does."
-            )
