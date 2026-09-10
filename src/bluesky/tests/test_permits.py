@@ -422,6 +422,45 @@ def test_pre_plans_run_in_fire_order_and_post_plans_in_reverse(RE, hw):
     assert commands.count("_start_suspender") == 1
 
 
+def test_two_conditions_tripping_in_one_turn_each_run_their_plans(RE, hw):
+    """Both conditions are in the opening snapshot, rather than one joining.
+
+    Two signals going bad in the same turn of the loop -- one interlock dropping
+    two readings -- have both withholds applied before the supervisor is
+    scheduled again, so neither arrives through the joining path. Each must
+    still run its own pre-plan, and the post-plans still unwind in reverse.
+    """
+    from ophyd import Signal
+
+    beam, shutter = hw.bool_sig, Signal(name="shutter_sig", value=0)
+    beam.put(0)
+    order = []
+
+    def note(tag):
+        def plan():
+            order.append(tag)
+            yield Msg("null")
+
+        return plan
+
+    RE.install_suspender(SuspendBoolHigh(beam, pre_plan=note("beam-pre"), post_plan=note("beam-post")))
+    RE.install_suspender(SuspendBoolHigh(shutter, pre_plan=note("shutter-pre"), post_plan=note("shutter-post")))
+    commands = []
+    RE.msg_hook = lambda msg: commands.append(msg.command)
+
+    def both_bad():
+        beam.put(1)
+        shutter.put(1)
+
+    _at(0.1, both_bad)
+    _at(0.6, lambda: (beam.put(0), shutter.put(0)))
+    RE([Msg("checkpoint")] + [Msg("sleep", None, 0.2)] * 5)
+
+    assert order == ["beam-pre", "shutter-pre", "shutter-post", "beam-post"]
+    # Still one rewind, as when they arrive one after the other.
+    assert commands.count("_start_suspender") == 1
+
+
 def test_a_trip_just_after_the_plan_starts_still_suspends(RE, hw):
     """The window between the plan starting and the supervisor's first turn.
 

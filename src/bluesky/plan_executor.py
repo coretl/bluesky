@@ -1140,26 +1140,40 @@ class PlanExecutor:
             while not (withheld := self._permit.withheld_by):
                 await self._permit.wait_changed()
             seen = dict(withheld)
-            first = next(iter(seen.values()))
+            # Everything already standing when the episode opens, in the order
+            # the conditions fired. More than one lands here whenever two
+            # signals go bad in the same turn of the loop -- one interlock
+            # dropping two readings does it -- because both withholds are
+            # applied before this task is scheduled again.
+            opening = list(seen.values())
             joined: list[Suspension] = []
 
-            def unwind(joined=joined, first=first):
+            def preamble(opening=opening):
+                # In band, inside the suspension, so these land after the
+                # rewind and after movable objects have been stopped, which is
+                # where a lone condition's pre-plan has always run.
+                for reason in opening:
+                    if reason.pre_plan is not None:
+                        yield from ensure_generator(_called(reason.pre_plan))
+
+            def unwind(joined=joined, opening=opening):
                 # A generator function, so its body runs when the suspension
                 # unwinds rather than when it starts -- by then `joined` holds
                 # every condition that turned up while the plan was held, and
-                # they are undone in the reverse of the order they arrived.
+                # everything is undone in the reverse of the order it arrived.
                 for reason in reversed(joined):
                     if reason.post_plan is not None:
                         yield from ensure_generator(_called(reason.post_plan))
-                if first.post_plan is not None:
-                    yield from ensure_generator(_called(first.post_plan))
+                for reason in reversed(opening):
+                    if reason.post_plan is not None:
+                        yield from ensure_generator(_called(reason.post_plan))
 
             if self._hooks.suspend_hook is not None:
                 self._hooks.suspend_hook(join_justifications(seen))
             self._loop.create_task(  # noqa: RUF006
                 self._request_suspend(
                     self._permit.wait_granted,
-                    pre_plan=first.pre_plan,
+                    pre_plan=preamble,
                     post_plan=unwind,
                     justification=join_justifications(seen),
                 )
