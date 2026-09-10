@@ -94,7 +94,13 @@ Changed
   is unchanged.  Calling a `RunEngine` while a suspender is already tripped
   prints what is holding it up, as it did before.  ``install`` waits for the
   subscription to be in place, so a suspender installed on an already-bad
-  signal is holding the permit by the time the call returns.
+  signal is holding the permit by the time the call returns.  Such a plan is
+  *held* at its first message rather than suspended, so a condition already bad
+  when it starts runs neither its pre-plan nor its post-plan.  That is what
+  happened before as well, and is now deliberate: a pre-plan reverses something
+  a plan did, and no plan has run yet, so there is nothing to reverse -- and
+  since a post-plan undoes its pre-plan, skipping one has to skip the other, or
+  the plan would begin by opening a shutter it never closed.
 - ``SuspenderBase.install`` takes the permit to withhold rather than a
   ``RunEngine``.  Passing a ``RunEngine`` still works, with a
   ``DeprecationWarning``, and does a durable install on it as before.

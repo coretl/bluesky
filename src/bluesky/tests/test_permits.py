@@ -275,6 +275,39 @@ def test_installing_a_suspender_twice_is_an_error(RE, hw):
     RE.install_suspender(suspender)  # and removing frees it to be installed again
 
 
+def test_a_pretripped_condition_runs_neither_of_its_plans(RE, hw):
+    """A plan held at its first message runs no pre-plan, and so no post-plan.
+
+    Tom Caswell's rule: a pre-plan reverses something a *plan* did, and no plan
+    has run yet, so there is nothing to reverse -- something else may well be
+    using the beamline. A post-plan undoes its pre-plan, so skipping one has to
+    skip the other, or the plan would begin by opening a shutter it never
+    closed.
+    """
+    sig = hw.bool_sig
+    sig.put(1)  # already bad before anything is installed
+    ran = []
+
+    def note(tag):
+        def plan():
+            ran.append(tag)
+            yield Msg("null")
+
+        return plan
+
+    RE.install_suspender(SuspendBoolHigh(sig, pre_plan=note("pre"), post_plan=note("post")))
+    commands = []
+    RE.msg_hook = lambda msg: commands.append(msg.command)
+
+    _at(0.4, sig.put, 0)
+    start = ttime.time()
+    RE(SCAN)
+
+    assert ttime.time() - start > 0.3, "the plan really was held"
+    assert ran == [], "neither plan ran"
+    assert commands.count("_start_suspender") == 0, "held, rather than suspended"
+
+
 def test_a_condition_joining_a_suspension_runs_its_pre_plan(RE):
     """A pre-plan runs off the plan stack, so it needs the executor's commands.
 
