@@ -217,8 +217,12 @@ def test_event_type_is_rejected_for_a_subscribable_signal(RE):
     with pytest.raises(RuntimeError, match="event_type"):
         susp.install(RE, event_type="value")
 
-    # A rejected install leaves the suspender uninstalled.
-    assert susp.RE is None
+    # The rejected install recorded nothing, so a valid one still goes through.
+    # Asserted through the public route rather than an attribute, because what
+    # a half-installed suspender would be holding differs between the RunEngine
+    # this test was written against and the permit it holds now.
+    RE.install_suspender(susp)
+    RE.remove_suspender(susp)
 
 
 @requires_ophyd_async
