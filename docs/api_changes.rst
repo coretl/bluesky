@@ -22,7 +22,7 @@ Added
 Fixed
 -----
 
-- A suspender that trips while the plan is paused now suspends it when it
+- A suspender that trips while the plan is paused now holds it when it
   resumes.  Previously the trip was dropped, and no later trip could suspend
   that plan either.
 - A suspender that recovers and trips again within its ``sleep`` period stays
@@ -124,6 +124,18 @@ Changed
   Each suspender still runs its own pre-plan when its condition fires, and
   post-plans run in the reverse order, so **pre- and post-plans should be
   idempotent**.
+- Returning from a pause is now like returning from idle.  While a plan is
+  paused the executor arranges nothing: a condition going bad withholds the
+  permit and does no more, and no pre-plan runs, because control has gone back
+  to the user and something else may be using the beamline.  On ``resume`` the
+  plan then *waits* for every condition to clear rather than suspending around
+  them, and runs no pre-plans on the way back in -- a pre-plan reverses
+  something a plan did, and across a pause it cannot know what the user did
+  instead.  ``RunEngine.resume`` therefore blocks until the conditions clear,
+  where before it returned at once, and prints what is holding it up the way
+  calling the `RunEngine` does.  (Tom Caswell has ruled on the blocking resume;
+  the rest of this entry is his tentative position and is still to be
+  confirmed.)
 - A suspender a plan installs with ``Msg('install_suspender')`` now holds up
   that plan alone, and is uninstalled when the plan ends.  Previously the
   message was the same call as ``RunEngine.install_suspender``, so the

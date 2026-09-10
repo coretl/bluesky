@@ -849,17 +849,7 @@ class RunEngine:
         # An already-tripped suspender is holding the session's permit, and
         # `make_executor` puts the wait for it in front of the plan. All this
         # adds is the heads-up, which only makes sense at a prompt.
-        suspensions = self._session.suspensions
-        if suspensions:
-            print(
-                "At least one suspender has tripped. The plan will begin "
-                "when all suspenders are ready. Justification:"
-            )
-            for i, justification in enumerate(join_justifications(suspensions).splitlines()):
-                print(f"    {i + 1}. {justification}")
-
-            print()
-            print("Suspending... To get to the prompt, hit Ctrl-C twice to pause.")
+        self._announce_tripped(self._session.suspensions, "begin")
 
         # Building the executor loads the plan, so a malformed one raises on
         # this thread rather than inside the loop.
@@ -910,6 +900,11 @@ class RunEngine:
             raise TransitionError(
                 f"The RunEngine is the {self._executor.state} state. You can only resume for the paused state."
             )
+
+        # `resume` waits for any condition that went bad while the plan was
+        # paused, rather than suspending around it, so this call can block for
+        # as long as the beam is down. Say so, as `__call__` does.
+        self._announce_tripped(self._executor.suspensions, "continue")
 
         def _release_plan():
             # Inside _resume_task's context managers, so that SigintHandler is
@@ -1186,6 +1181,25 @@ class RunEngine:
             self._resume_task()
 
         return result
+
+    def _announce_tripped(self, suspensions, verb: str) -> None:
+        """Say what is holding a plan up, and that the call will wait for it.
+
+        Only a prompt needs this: the wait itself is arranged by the executor,
+        which holds the plan whether or not anybody is watching. Without it a
+        blocking `resume` is indistinguishable from a hang.
+        """
+        if not suspensions:
+            return
+        print(
+            f"At least one suspender has tripped. The plan will {verb} "
+            "when all suspenders are ready. Justification:"
+        )
+        for i, justification in enumerate(join_justifications(suspensions).splitlines()):
+            print(f"    {i + 1}. {justification}")
+
+        print()
+        print("Suspending... To get to the prompt, hit Ctrl-C twice to pause.")
 
     def _announce_suspension(self, justification: str) -> None:
         """Say a suspension has begun, and how to get back to a prompt."""

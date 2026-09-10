@@ -581,16 +581,26 @@ def test_two_conditions_make_one_suspension(RE):
     RE.clear_suspenders()
 
 
-def test_trip_while_paused_suspends_on_resume(RE, hw):
-    """A condition that goes bad while the plan is paused suspends it when it
-    resumes.
+def test_trip_while_paused_holds_the_plan_on_resume(RE, hw):
+    """A condition that goes bad while the plan is paused holds it on resume.
 
-    The condition withholds the permit, which is state rather than a request,
-    so resuming waits for it.
+    Held, not suspended. A pause hands control back to the user, so returning
+    from one is like returning from idle: the plan waits for permission and runs
+    no pre-plans, because the user may well have opened the shutter themselves
+    and there is nothing a pre-plan should be reversing.
     """
     sig = hw.bool_sig
     sig.put(0)
-    susp = SuspendBoolHigh(sig)
+    ran = []
+
+    def note(tag):
+        def plan():
+            ran.append(tag)
+            yield Msg("null")
+
+        return plan
+
+    susp = SuspendBoolHigh(sig, pre_plan=note("pre"), post_plan=note("post"))
     RE.install_suspender(susp)
 
     m_coll = MsgCollector()
@@ -604,6 +614,7 @@ def test_trip_while_paused_suspends_on_resume(RE, hw):
     sig.put(1)
     ttime.sleep(0.3)
     assert susp.tripped, "the condition really is bad"
+    assert ran == [], "and nothing ran while the user had control"
 
     threading.Timer(0.5, sig.put, (0,)).start()
     start = ttime.time()
@@ -611,7 +622,9 @@ def test_trip_while_paused_suspends_on_resume(RE, hw):
     elapsed = ttime.time() - start
 
     assert elapsed > 0.4, "resuming waited for the condition to clear"
-    assert "_start_suspender" in [msg.command for msg in m_coll.msgs]
+    commands = [msg.command for msg in m_coll.msgs]
+    assert "_start_suspender" not in commands, "held, rather than suspended"
+    assert ran == [], "and neither plan ran on the way back in"
     RE.clear_suspenders()
 
 

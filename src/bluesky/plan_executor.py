@@ -889,6 +889,11 @@ class PlanExecutor:
         self._hooks = hooks
         self._identity = identity if identity is not None else self
 
+        # Set when the plan comes to rest paused; see the pause block in `run`.
+        self._permit_granted_when_paused = True
+        # The task watching this plan's permit, replaced whenever the plan
+        # enters from a state where the user had control. None until `run`.
+        self._supervisor: asyncio.Task | None = None
         # When cleared, run() will pause until it is set again.
         self._run_permit = asyncio.Event()
         self._run_permit.set()
@@ -1102,17 +1107,30 @@ class PlanExecutor:
         """Work off a short message sequence outside the plan stack.
 
         A suspender's pre-plan runs when its condition fires, which may be
-        while the plan is already suspended for another condition, or while it
-        is paused. In both of those the run loop will not reach a message
-        pushed onto the plan stack -- suspended, it is parked in a ``wait_for``;
-        paused, it is parked on the run permit -- so a shutter that must close
-        now cannot be closed by queueing a message.
+        while the plan is already suspended for another condition. The run loop
+        will not reach a message pushed onto the plan stack then -- it is parked
+        in the suspension's ``wait_for`` -- so a shutter that must close now
+        cannot be closed by queueing one.
+
+        Not used while the plan is paused. Nothing runs unprompted there.
 
         Only for the short, self-contained sequences a pre- or post-plan is.
         There is no plan stack, no checkpoint and no rewind here.
         """
         for msg in ensure_generator(_called(plan)):
             await self._command_registry[msg.command](msg)
+
+    def _start_supervisor(self, *, held_at_start: bool) -> None:
+        """Put a fresh permit supervisor on the loop, replacing any running one.
+
+        Called at the start of a plan and again when one resumes, because both
+        are entries into a running plan from a state where the user had control
+        and the permit may have moved without anything watching it.
+        """
+        if self._supervisor is not None:
+            if self._supervisor is not None:
+                self._supervisor.cancel()
+        self._supervisor = self._loop.create_task(self._supervise_permit(held_at_start=held_at_start))
 
     async def _supervise_permit(self, held_at_start=False):
         """Suspend this plan whenever permission to run is withheld.
@@ -1137,7 +1155,13 @@ class PlanExecutor:
             # window in which this task is told to suspend and then finds
             # nothing to suspend for: whatever `withheld_by` hands back is both
             # the verdict and the reasons behind it.
-            while not (withheld := self._permit.withheld_by):
+            while not (withheld := self._permit.withheld_by) or self.state in ("paused", "pausing"):
+                # Nothing is arranged while the plan is coming to rest or at
+                # rest: control has gone back to the user, and the executor runs
+                # nothing unprompted there. Returning from a pause is like
+                # returning from idle -- the plan waits for its permit rather
+                # than suspending -- and `resume` replaces this task to set that
+                # up, so parking here until then loses nothing.
                 await self._permit.wait_changed()
             seen = dict(withheld)
             # Everything already standing when the episode opens, in the order
@@ -1198,6 +1222,15 @@ class PlanExecutor:
                 joined.append(suspension)
                 if suspension.pre_plan is not None:
                     await self._run_out_of_band(suspension.pre_plan)
+
+    @property
+    def suspensions(self) -> typing.Mapping[typing.Hashable, Suspension]:
+        """What is holding this plan up, by who raised it.
+
+        The whole chain: conditions raised on the session as well as ones this
+        plan installed for itself. Empty when nothing is holding it.
+        """
+        return self._permit.withheld_by
 
     @property
     def resumable(self) -> bool:
@@ -1362,10 +1395,13 @@ class PlanExecutor:
         # The event loop is still running. The pre_plan will be processed,
         # and then the executor will be hung up on processing the
         # 'wait_for' message until `fut` is set.
-        if not self.state == "paused":
-            self.state = "suspending"
-            # bump the run task out of what ever it is awaiting
-            self._task.cancel()
+        #
+        # No paused case to consider: the supervisor does not arrange a
+        # suspension while the plan is paused or pausing, so the only way here
+        # is from a plan that is actually running.
+        self.state = "suspending"
+        # bump the run task out of what ever it is awaiting
+        self._task.cancel()
 
     async def _stop_movable_objects(self, *, success=True):
         "Call obj.stop() for all objects we have moved. Log any exceptions."
@@ -1430,7 +1466,7 @@ class PlanExecutor:
         # rather than by the task once it starts: a condition going bad in
         # between would otherwise be taken for the one this plan is already
         # being held for, and never suspend it.
-        supervisor = self._loop.create_task(self._supervise_permit(held_at_start=not self._permit.granted))
+        self._start_supervisor(held_at_start=not self._permit.granted)
         stashed_exception = None
         debug = msg_logger.debug
         self._reason = ""
@@ -1472,6 +1508,12 @@ class PlanExecutor:
                                 await maybe_await(obj.pause())
                             except NoReplayAllowed:
                                 self._reset_checkpoint_state_meth()
+                    # Whether the plan was already waiting on its permit when
+                    # it came to rest. If it was, the run loop re-sends that
+                    # message on the way out and the plan holds itself; if it
+                    # was not, anything withholding by then arrived during the
+                    # pause, and `resume` has to arrange the wait.
+                    self._permit_granted_when_paused = self._permit.granted
                     self.state = "paused"
                     # Let RunEngine.__call__ return...
                     self._notify_paused()
@@ -1738,7 +1780,8 @@ class PlanExecutor:
                     self._announce(f"The plan {p!r} tried to yield a value on close.  Please fix your plan.")
 
             self._release_suspenders()
-            supervisor.cancel()
+            if self._supervisor is not None:
+                self._supervisor.cancel()
 
             self.state = "idle"
 
@@ -2747,10 +2790,31 @@ class PlanExecutor:
         caller that has to release the gate itself afterwards is a caller that
         can forget to.
 
+        A condition that went bad while the plan was paused is waited for here
+        rather than suspended around: returning from a pause is returning from
+        the user having control, so the plan waits for permission the way one
+        starting from idle does, and runs no pre-plans on the way back in.
+
         A `RunEngine` must still call this from inside its context managers, so
         that SIGINT handling is reinstalled before the plan moves again.
         """
         await self._prepare_resume()
+        # One synchronous read decides both the wait and the supervisor, as
+        # `run` does at the start of a plan: a condition going bad after this
+        # is a real trip to be suspended for, not one this wait is holding.
+        held = not self._permit.granted
+        if held and self._permit_granted_when_paused:
+            # Ahead of the replayed messages, so the plan does not move until
+            # every condition has cleared. No rewind and no plans: there is
+            # nothing here for a pre-plan to reverse.
+            #
+            # Only when nothing was withholding as the plan came to rest. If
+            # something was, the plan was parked in a wait for it and the run
+            # loop re-sends that message now, so a second one would hold for
+            # the same thing twice.
+            self._plan_stack.append(single_gen(Msg("wait_for", None, [self._permit.wait_granted])))
+            self._response_stack.append(None)
+        self._start_supervisor(held_at_start=held)
         self._release_pause()
 
     async def abort(self, reason=""):
