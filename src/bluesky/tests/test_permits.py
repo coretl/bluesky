@@ -306,6 +306,29 @@ def test_a_condition_joining_a_suspension_runs_its_pre_plan(RE):
     assert finished == ["first", "second"], "both pre-plans ran to completion"
 
 
+def test_a_suspension_arriving_after_the_plan_ends_does_nothing(RE):
+    """The supervisor's task can outlive the plan that created it.
+
+    `_request_suspend` is created fire-and-forget, so it can be run after the
+    executor has gone idle. Neither transition it would attempt is legal from
+    'idle', and an exception raised in a task nobody awaits is reported at
+    collection against an unrelated test.
+    """
+    RE([Msg("null")])
+    executor = RE._executor
+    assert executor.state.is_idle
+
+    async def nothing():
+        return None
+
+    future = asyncio.run_coroutine_threadsafe(
+        executor._request_suspend(nothing, justification="too late"), RE.loop
+    )
+    future.result(timeout=10)
+
+    assert executor.state.is_idle, "and it left the state alone"
+
+
 def test_a_suspension_reaches_both_hooks(RE):
     """The event goes to `suspend_hook`; everything else to `announce_hook`."""
     said: list[str] = []

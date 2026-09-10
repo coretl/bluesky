@@ -1328,6 +1328,14 @@ class PlanExecutor:
 
     async def _request_suspend(self, fut, *, pre_plan=None, post_plan=None, justification=None):
         """Suspend until ``fut`` is finished. Must be called on the loop."""
+        if self.state.is_idle:
+            # The plan ended between the supervisor creating this task and the
+            # task being run. There is nothing left to suspend, and neither
+            # 'idle' -> 'suspending' below nor 'idle' -> 'aborting' just after
+            # is a legal transition, so falling through would raise inside a
+            # fire-and-forget task -- surfacing at collection as "Task exception
+            # was never retrieved", against whichever test happened to be next.
+            return
         unresumable = not self.resumable
         if unresumable:
             self._announce("No checkpoint; cannot suspend.")
