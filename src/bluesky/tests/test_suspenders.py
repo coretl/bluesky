@@ -515,8 +515,10 @@ def test_suspender_plans(RE, hw):
         yield Msg("remove_suspender", None, my_suspender)
 
     RE(note_while_running())
-    assert seen == [True], "installed while its own plan ran"
-    assert my_suspender not in RE.suspenders, "and gone once that plan ended"
+    # Installed while its own plan ran.
+    assert seen == [True]
+    # And gone once that plan ended.
+    assert my_suspender not in RE.suspenders
     RE([Msg("remove_suspender", None, my_suspender)])
     assert my_suspender not in RE.suspenders
 
@@ -576,8 +578,10 @@ def test_two_conditions_make_one_suspension(RE):
     RE([Msg("checkpoint"), Msg("sleep", None, 0.5), Msg("null")])
 
     commands = [msg.command for msg in m_coll.msgs]
-    assert commands.count("_start_suspender") == 1, "one suspension for both conditions"
-    assert commands.count("wait_for") == 1, "and the plan waits once"
+    # One suspension for both conditions.
+    assert commands.count("_start_suspender") == 1
+    # And the plan waits once.
+    assert commands.count("wait_for") == 1
     RE.clear_suspenders()
 
 
@@ -613,18 +617,23 @@ def test_trip_while_paused_holds_the_plan_on_resume(RE, hw):
 
     sig.put(1)
     ttime.sleep(0.3)
-    assert susp.tripped, "the condition really is bad"
-    assert ran == [], "and nothing ran while the user had control"
+    # The condition really is bad.
+    assert susp.tripped
+    # And nothing ran while the user had control.
+    assert ran == []
 
     threading.Timer(0.5, sig.put, (0,)).start()
     start = ttime.time()
     RE.resume()
     elapsed = ttime.time() - start
 
-    assert elapsed > 0.4, "resuming waited for the condition to clear"
+    # Resuming waited for the condition to clear.
+    assert elapsed > 0.4
     commands = [msg.command for msg in m_coll.msgs]
-    assert "_start_suspender" not in commands, "held, rather than suspended"
-    assert ran == [], "and neither plan ran on the way back in"
+    # Held, rather than suspended.
+    assert "_start_suspender" not in commands
+    # And neither plan ran on the way back in.
+    assert ran == []
     RE.clear_suspenders()
 
 
@@ -651,7 +660,8 @@ def test_retrip_inside_sleep_does_not_release_early(RE, hw):
     RE([Msg("checkpoint"), Msg("sleep", None, 0.1), Msg("null")])
     elapsed = ttime.time() - start
 
-    assert elapsed > 1.4, "the release scheduled by the first recovery must not free the plan"
+    # The release scheduled by the first recovery must not free the plan.
+    assert elapsed > 1.4
 
 
 def test_suspender_installed_by_a_plan_ends_with_it(RE, hw):
@@ -677,7 +687,8 @@ def test_suspender_installed_by_a_plan_ends_with_it(RE, hw):
     RE(note())
 
     assert seen == [("after install", True), ("after remove", False)]
-    assert susp not in RE.suspenders, "the plan's own suspenders end with the plan"
+    # The plan's own suspenders end with the plan.
+    assert susp not in RE.suspenders
 
 
 def test_clear_suspenders_while_paused_then_resume(RE, hw):
@@ -706,12 +717,14 @@ def test_clear_suspenders_while_paused_then_resume(RE, hw):
     with pytest.raises(RunEngineInterrupted):
         RE([Msg("checkpoint"), Msg("null")])
     assert RE.state == "paused"
-    assert susp.tripped, "still held by the condition"
+    # Still held by the condition.
+    assert susp.tripped
 
     RE.clear_suspenders()
     assert RE.suspenders == ()
 
     RE.resume()
-    assert RE.state == "idle", "the plan ran to the end rather than waiting forever"
+    # The plan ran to the end rather than waiting forever.
+    assert RE.state == "idle"
     assert [msg.command for msg in m_coll.msgs][-1] == "null"
     sig.put(0)

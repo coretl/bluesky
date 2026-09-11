@@ -87,7 +87,7 @@ def test_source_takes_no_locks(cls):
     """Neither class ever blocks a thread, so neither may lock or join."""
     source = inspect.getsource(cls)
     for forbidden in ("threading.", "_state_lock", ".acquire(", ".join("):
-        assert forbidden not in source, f"{cls.__name__} uses {forbidden}"
+        assert forbidden not in source
 
 
 def _crossings(module_name):
@@ -180,7 +180,8 @@ def test_the_executor_never_says_what_to_press():
     """
     source = (pathlib.Path(bluesky.__file__).parent / "plan_executor.py").read_text()
 
-    assert "Ctrl" not in source, "not even in a docstring; SIGINT is the accurate word here"
+    # Not even in a docstring; SIGINT is the accurate word here.
+    assert "Ctrl" not in source
 
 
 def test_session_holds_no_threading_primitives(idle_session):
@@ -302,8 +303,10 @@ def test_a_setting_reaches_the_next_plan_and_not_the_running_one():
         session.strict_pre_declare = True
         built_after = session.make_executor([Msg("null")])
 
-        assert already_built._env.strict_pre_declare is False, "frozen for its plan"
-        assert built_after._env.strict_pre_declare is True, "and live for the next"
+        # Frozen for its plan.
+        assert already_built._env.strict_pre_declare is False
+        # And live for the next.
+        assert built_after._env.strict_pre_declare is True
         assert already_built._env is not built_after._env
 
         await asyncio.gather(already_built.run(), built_after.run())
@@ -326,11 +329,13 @@ def test_metadata_is_snapshotted_and_the_session_keeps_its_own_store():
         executor = session.make_executor([Msg("null")])
 
         assert executor._env.md == {"from_the_store": True}
-        assert executor._env.md is not store, "a copy of the contents, not the store"
+        # A copy of the contents, not the store.
+        assert executor._env.md is not store
 
         session.md["written_after_launch"] = True
         assert "written_after_launch" not in executor._env.md
-        assert session.md is store, "and the session still holds what it was given"
+        # And the session still holds what it was given.
+        assert session.md is store
 
         await executor.run()
 
@@ -415,7 +420,8 @@ def test_a_durable_suspender_outlives_the_plan_it_held():
     # And the reason stands, so the next plan waits for it before it starts.
     assert session.suspensions
     assert join_justifications(session.suspensions) == "beam is down"
-    assert session.make_executor([Msg("null")])._plan_stack, "held by a prologue"
+    # Held by a prologue.
+    assert session.make_executor([Msg("null")])._plan_stack
 
 
 def test_one_durable_suspender_covers_every_running_plan():

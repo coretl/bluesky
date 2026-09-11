@@ -58,7 +58,8 @@ def test_trips_while_a_plan_is_running(RE, hw):
     RE(SCAN)
     delta = ttime.time() - start
 
-    assert delta > 0.4, "held until the signal recovered"
+    # Held until the signal recovered.
+    assert delta > 0.4
     # Rewound to the checkpoint, so everything after it ran twice.
     assert commands.count("sleep") == 2
     assert commands.count("_start_suspender") == 1
@@ -77,7 +78,8 @@ def test_releases_while_a_plan_is_suspended(RE, hw):
     delta = ttime.time() - start
 
     # Released at 0.4, plus the 0.3 settle, plus the replayed 0.2 sleep.
-    assert delta > 0.4 + 0.3, "did not release before the signal had settled"
+    # Did not release before the signal had settled.
+    assert delta > 0.4 + 0.3
 
 
 def test_trips_while_no_plan_is_running(RE, hw):
@@ -85,7 +87,8 @@ def test_trips_while_no_plan_is_running(RE, hw):
     sig = hw.bool_sig
     sig.put(1)  # already bad before any plan exists
     RE.install_suspender(SuspendBoolHigh(sig))
-    assert RE.state == "idle", "a trip with no plan running suspends nothing"
+    # A trip with no plan running suspends nothing.
+    assert RE.state == "idle"
 
     commands = []
     RE.msg_hook = lambda msg: commands.append(msg.command)
@@ -94,7 +97,8 @@ def test_trips_while_no_plan_is_running(RE, hw):
     RE(SCAN)
     delta = ttime.time() - start
 
-    assert delta > 0.4, "the plan waited for the signal before its first message"
+    # The plan waited for the signal before its first message.
+    assert delta > 0.4
     # Held by a wait, not a suspension: there is no checkpoint yet to rewind
     # to, so nothing is replayed and no suspension is started.
     assert commands.count("sleep") == 1
@@ -113,7 +117,8 @@ def test_releases_while_no_plan_is_running(RE, hw):
     RE(SCAN)
     delta = ttime.time() - start
 
-    assert delta < 0.9, "started without waiting"
+    # Started without waiting.
+    assert delta < 0.9
 
 
 # --------------------------------------------------------------------------
@@ -140,7 +145,8 @@ def test_two_conditions_are_one_suspension(RE, hw):
     RE(SCAN)
 
     assert len(seen) == 1
-    assert "beam" in seen[0] and "shutter" in seen[0], "both reasons reported"
+    # Both reasons reported.
+    assert "beam" in seen[0] and "shutter" in seen[0]
     # One suspension. On main each tripped suspender pushes its own, so the
     # plan rewinds once per condition and runs both pre-plans nested.
     assert commands.count("_start_suspender") == 1
@@ -160,7 +166,8 @@ def test_a_retrip_within_the_settle_time_stays_withheld(RE, hw):
     RE(SCAN)
     delta = ttime.time() - start
 
-    assert delta > 0.9 + 0.4, "the stale release did not clear the newer reason"
+    # The stale release did not clear the newer reason.
+    assert delta > 0.9 + 0.4
 
 
 def test_trips_while_paused_suspends_on_resume(RE, hw):
@@ -180,13 +187,15 @@ def test_trips_while_paused_suspends_on_resume(RE, hw):
 
     sig.put(1)
     _settle(RE)
-    assert RE._session.suspensions, "the reason stands while paused"
+    # The reason stands while paused.
+    assert RE._session.suspensions
 
     _at(0.5, sig.put, 0)
     start = ttime.time()
     RE.resume()
     delta = ttime.time() - start
-    assert delta > 0.4, "resuming waited for the condition to clear"
+    # Resuming waited for the condition to clear.
+    assert delta > 0.4
 
 
 def test_no_checkpoint_mid_plan_aborts(RE, hw):
@@ -223,7 +232,8 @@ def test_no_checkpoint_abort_raises_nothing_into_the_loop(RE, hw):
 
     # The report is made from ``Task.__del__``, so collect before looking.
     gc.collect()
-    assert not reported, [ctx.get("message") for ctx in reported]
+    # [ctx.get("message") for ctx in reported].
+    assert not reported
 
 
 def test_clear_suspenders_reaches_a_plans_own_from_the_prompt(RE, hw):
@@ -245,8 +255,10 @@ def test_clear_suspenders_reaches_a_plans_own_from_the_prompt(RE, hw):
     _at(0.2, clear_from_another_thread)
     RE(plan())
 
-    assert not raised, repr(raised[0])
-    assert RE.suspenders == (), "and the plan's own suspender is gone"
+    # Repr(raised[0].
+    assert not raised
+    # And the plan's own suspender is gone.
+    assert RE.suspenders == ()
 
 
 def test_removing_a_suspender_settles_before_it_returns(RE, hw):
@@ -257,10 +269,12 @@ def test_removing_a_suspender_settles_before_it_returns(RE, hw):
 
     RE.install_suspender(suspender)
     permit = RE._session._permit
-    assert not permit.granted, "installed on a bad signal, so it is holding"
+    # Installed on a bad signal, so it is holding.
+    assert not permit.granted
 
     RE.remove_suspender(suspender)
-    assert permit.granted, "and it has let go by the time remove returns"
+    # And it has let go by the time remove returns.
+    assert permit.granted
 
 
 def test_installing_a_suspender_twice_is_an_error(RE, hw):
@@ -303,9 +317,12 @@ def test_a_pretripped_condition_runs_neither_of_its_plans(RE, hw):
     start = ttime.time()
     RE(SCAN)
 
-    assert ttime.time() - start > 0.3, "the plan really was held"
-    assert ran == [], "neither plan ran"
-    assert commands.count("_start_suspender") == 0, "held, rather than suspended"
+    # The plan really was held.
+    assert ttime.time() - start > 0.3
+    # Neither plan ran.
+    assert ran == []
+    # Held, rather than suspended.
+    assert commands.count("_start_suspender") == 0
 
 
 def test_a_condition_joining_a_suspension_runs_its_pre_plan(RE):
@@ -336,7 +353,8 @@ def test_a_condition_joining_a_suspension_runs_its_pre_plan(RE):
     _at(0.6, lambda: (first.put(0), second.put(0)))
     RE([Msg("checkpoint")] + [Msg("sleep", None, 0.2)] * 5)
 
-    assert finished == ["first", "second"], "both pre-plans ran to completion"
+    # Both pre-plans ran to completion.
+    assert finished == ["first", "second"]
 
 
 def test_a_suspension_arriving_after_the_plan_ends_does_nothing(RE):
@@ -359,7 +377,8 @@ def test_a_suspension_arriving_after_the_plan_ends_does_nothing(RE):
     )
     future.result(timeout=10)
 
-    assert executor.state.is_idle, "and it left the state alone"
+    # And it left the state alone.
+    assert executor.state.is_idle
 
 
 def test_a_suspension_reaches_both_hooks(RE):
@@ -377,8 +396,10 @@ def test_a_suspension_reaches_both_hooks(RE):
     _at(0.5, sig.put, 0)
     RE([Msg("checkpoint")] + [Msg("sleep", None, 0.2)] * 4)
 
-    assert suspensions, "the suspension was reported as an event"
-    assert "Ctrl" not in "".join(said), "and nothing announced a key to press"
+    # The suspension was reported as an event.
+    assert suspensions
+    # And nothing announced a key to press.
+    assert "Ctrl" not in "".join(said)
 
 
 # --------------------------------------------------------------------------
@@ -422,13 +443,16 @@ def test_a_child_permit_is_withheld_whenever_its_parent_is():
         child = Permit("plan", loop=loop, parent=parent)
 
         parent.withhold("beam", "beam is down")
-        assert not child.granted, "held up by its parent"
+        # Held up by its parent.
+        assert not child.granted
         assert join_justifications(child.withheld_by) == "beam is down"
 
         child.withhold("shutter", "shutter is closed")
         parent.grant("beam")
-        assert not child.granted, "still holding its own reason"
-        assert parent.granted, "which is not the parent's business"
+        # Still holding its own reason.
+        assert not child.granted
+        # Which is not the parent's business.
+        assert parent.granted
 
         child.grant("shutter")
         assert child.granted
@@ -543,8 +567,10 @@ def test_a_trip_just_after_the_plan_starts_still_suspends(RE, hw):
     RE(SCAN)
     delta = ttime.time() - start
 
-    assert delta > 0.4, "the trip was not swallowed"
-    assert commands.count("_start_suspender") == 1, "and it suspended rather than merely waiting"
+    # The trip was not swallowed.
+    assert delta > 0.4
+    # And it suspended rather than merely waiting.
+    assert commands.count("_start_suspender") == 1
 
 
 def test_installing_a_suspender_on_the_run_engine_still_works(RE, hw):
@@ -556,10 +582,12 @@ def test_installing_a_suspender_on_the_run_engine_still_works(RE, hw):
     with pytest.warns(DeprecationWarning, match="takes the permit"):
         susp.install(RE)
 
-    assert susp in RE.suspenders, "the deprecated call installs on the engine"
+    # The deprecated call installs on the engine.
+    assert susp in RE.suspenders
     sig.put(1)
     _settle(RE)
-    assert RE._session.suspensions, "and it holds up the engine"
+    # And it holds up the engine.
+    assert RE._session.suspensions
     sig.put(0)
     _settle(RE)
     assert not RE._session.suspensions

@@ -2819,11 +2819,13 @@ def test_md_written_midplan_takes_effect_on_the_next_plan(RE, hw):
 
         assert len(starts) == 2
         assert "pinned_midplan" not in starts[0]
-        assert "pinned_midplan" not in starts[1], "the running plan kept the metadata it started with"
+        # The running plan kept the metadata it started with.
+        assert "pinned_midplan" not in starts[1]
 
         RE([Msg("open_run"), Msg("close_run")])
         assert starts[2]["pinned_midplan"] == "written while the plan was running"
-        assert starts[2]["scan_id"] == starts[1]["scan_id"] + 1, "the counter is still the session's"
+        # The counter is still the session's.
+        assert starts[2]["scan_id"] == starts[1]["scan_id"] + 1
     finally:
         RE.md.pop("pinned_midplan", None)
 
@@ -2880,7 +2882,8 @@ def test_verbose_round_trips_and_actually_silences(RE):
     try:
         RE.verbose = False
         assert RE.verbose is False
-        assert not RE.log.isEnabledFor(logging.ERROR), "and it is really quiet"
+        # And it is really quiet.
+        assert not RE.log.isEnabledFor(logging.ERROR)
     finally:
         RE.verbose = True
     assert RE.verbose is True
