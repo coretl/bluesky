@@ -368,11 +368,11 @@ class PlanEnvironment:
     log: LoggerAdapter
     md: RunEngineMetadata
     next_scan_id: Callable[[], SyncOrAsync[int]]
-    md_validator: Callable = _default_md_validator
-    md_normalizer: Callable = _default_md_normalizer
-    run_bundler_cls: type[RunBundler] = RunBundler
-    record_interruptions: bool = False
-    strict_pre_declare: bool = False
+    md_validator: Callable
+    md_normalizer: Callable
+    run_bundler_cls: type[RunBundler]
+    record_interruptions: bool
+    strict_pre_declare: bool
 
 
 @dataclass
