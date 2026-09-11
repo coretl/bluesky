@@ -129,24 +129,29 @@ def test_every_hop_onto_the_loop_is_one_of_the_few_we_mean():
 
     A thread bluesky did not choose reaches the loop where the callback it
     calls is defined. ophyd completes a status on whichever thread finished the
-    move, and calls a suspender back on whichever thread it likes, so
-    `done_callback` and `SuspenderBase.__call__` each own that crossing and do
+    move, calls a suspender back on whichever thread it likes, and calls a
+    monitor callback on the device's own thread, so `done_callback`,
+    `SuspenderBase.__call__` and `_queue_emit` each own that crossing and do
     nothing else on that thread but hand the value over.
 
     If this fails, either a new boundary is real and belongs in this list with
     a reason, or a hop has been hidden inside something that should have left
     the crossing to its caller.
     """
-    assert _crossings("permits.py") == set(), "a permit is written on the loop; its caller crosses"
-    assert _crossings("plan_executor.py") == {"done_callback"}, "only the ophyd status callback"
-    assert _crossings("suspenders.py") == {"__call__"}, "only the signal's own callback"
+    # A permit is written on the loop; its caller crosses.
+    assert _crossings("permits.py") == set()
+    # The ophyd status callback, and a monitor callback queueing its document.
+    assert _crossings("plan_executor.py") == {"done_callback", "_queue_emit"}
+    # Only the signal's own callback.
+    assert _crossings("suspenders.py") == {"__call__"}
     # The facade crosses for everyone, which is why it may cross at all -- but
     # through one implementation, so that "where does a thread reach the loop"
     # keeps a short answer. `_build_task` is the single exception, and is one
     # because it wants the future rather than the result: the wait that matters
     # for a running plan is `_resume_task` blocking on `_blocking_event`, which
     # Ctrl-C can interrupt where waiting on a future cannot.
-    assert _crossings("run_engine.py") == {"_run_on", "_build_task"}, "one crossing, plus the plan task"
+    # One crossing, plus the plan task.
+    assert _crossings("run_engine.py") == {"_run_on", "_build_task"}
 
 
 def test_a_suspender_holds_no_threading_primitives():

@@ -1216,18 +1216,19 @@ class RunEngine:
 
     # Emission belongs to the executor now, which hands a document to its
     # dispatcher and lets the chain carry it to the session's subscribers.
-    def emit(self, name, doc):
-        """Give a document to every subscriber."""
+    def emit_sync(self, name, doc):
+        """Give a document to every subscriber, here and now."""
         self._executor.emit(name, doc)
 
-    def emit_sync(self, name, doc):
-        """Deprecated. Use :meth:`emit`, which is synchronous."""
-        warn(  # noqa: B028
-            "RunEngine.emit_sync is deprecated. There is one emit now, and it "
-            "is synchronous: call RunEngine.emit.",
-            DeprecationWarning,
-        )
-        self.emit(name, doc)
+    async def emit(self, name, doc):
+        """Give a document to every subscriber, on the event loop.
+
+        The awaitable form, kept because it is what a `RunBundler` is handed and
+        what a monitor callback queues: emission is the loop's to schedule, so
+        that documents reach subscribers in the order they were produced rather
+        than in whatever order the threads producing them got there.
+        """
+        self.emit_sync(name, doc)
 
 
 # Private names that live on the executor for the plan being run, mapped to the
