@@ -293,6 +293,16 @@ See the API documentation (follow the links in the table below) for other
 suspender types and options, including a waiting period and cleanup
 procedures to run pre-suspend and pre-resume.
 
+.. note::
+
+   **Write pre- and post-plans to be idempotent.** More than one condition can
+   be bad at once, and each suspender runs its own pre-plan when its condition
+   fires -- in the order they fired, with the post-plans unwinding in the
+   reverse of it. A second suspender tripping while the plan is already
+   suspended will run its pre-plan then, so a pre-plan that closes a shutter
+   should tolerate the shutter already being closed. Otherwise two overlapping
+   conditions leave you with open-close-open.
+
 Built-in Suspenders
 -------------------
 
@@ -393,10 +403,11 @@ processed. It can also be called by user-defined agents. See the next example.
 .. automethod:: bluesky.run_engine.RunEngine.request_pause
     :noindex:
 
-This method is used by the ``PVSuspend*`` classes above. It can also be called
-by user-defined agents.
+Suspension has no matching method.  It is raised by installing a suspender and
+by nothing else, so a user-defined agent that wants to hold up the engine
+installs one rather than asking for a suspension directly.
 
-.. automethod:: bluesky.run_engine.RunEngine.request_suspend
+.. automethod:: bluesky.run_engine.RunEngine.install_suspender
     :noindex:
 
 

@@ -77,3 +77,24 @@ def _careful_event_set(ev):
             ...
 
     return inner
+
+
+def suspend_until(RE, fut=None, *, pre_plan=None, post_plan=None, justification=None):
+    """Raise a suspension on ``RE``'s plan without going through a suspender.
+
+    Not a supported route, and deliberately not a method on `RunEngine`: it
+    reaches past the permit straight into the executor, so a suspension raised
+    this way is not in ``RE.suspensions`` and does not merge with a suspender's.
+    That is what ``RunEngine.request_suspend`` did, and why it was deleted.
+
+    The suite keeps it for the conditions a suspender cannot easily produce: a
+    malformed pre-plan, a pre-plan that raises, a plan with no checkpoint to
+    rewind to. Anything testing ordinary suspension should install a suspender
+    instead.
+
+    Callable from any thread, including a ``threading.Timer``.
+    """
+    return asyncio.run_coroutine_threadsafe(
+        RE._executor._request_suspend(fut, pre_plan=pre_plan, post_plan=post_plan, justification=justification),
+        RE.loop,
+    )

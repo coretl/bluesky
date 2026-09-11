@@ -1,10 +1,17 @@
-import asyncio
 import operator
-import threading
 from abc import ABCMeta, abstractmethod, abstractproperty
-from datetime import datetime, timedelta
-from functools import partial
 from warnings import warn
+
+from bluesky.protocols import Subscribable
+
+from .permits import Permit, running_on
+
+# How long `RunEngine.install_suspender`, `remove_suspender` and
+# `clear_suspenders` wait for the event loop to run the work they hand it,
+# before giving up. Installing subscribes and removing unsubscribes, so a loop
+# that never gets to them leaves the caller with no idea whether the signal is
+# being watched.
+SUBSCRIPTION_TIMEOUT = 10
 
 
 class SuspenderBase(metaclass=ABCMeta):
@@ -13,7 +20,7 @@ class SuspenderBase(metaclass=ABCMeta):
 
     Parameters
     ----------
-    signal : `ophyd.Signal`
+    signal : `ophyd.Signal` or `bluesky.protocols.Subscribable`
         The signal to watch for changes to determine if the
         scan should be suspended
 
@@ -22,10 +29,15 @@ class SuspenderBase(metaclass=ABCMeta):
         before marking the event as done.  Defaults to 0
 
     pre_plan : iterable or iterator or generator function, optional
-            a generator, list, or similar containing `Msg` objects
+            a generator, list, or similar containing `Msg` objects, run when
+            this suspender's condition goes bad. Make it idempotent: another
+            condition may already have suspended the plan, and each suspender
+            runs its own pre-plan when it fires.
 
     post_plan : iterable or iterator or generator function, optional
-            a generator, list, or similar containing `Msg` objects
+            a generator, list, or similar containing `Msg` objects, run before
+            the plan resumes. Post-plans run in the reverse of the order their
+            pre-plans did, so the last condition to go bad is the first undone.
 
     tripped_message : str, optional
         Message to include in the trip notification
@@ -33,15 +45,24 @@ class SuspenderBase(metaclass=ABCMeta):
 
     def __init__(self, signal, *, sleep=0, pre_plan=None, post_plan=None, tripped_message=""):
         """ """
-        self.RE = None
-        self._ev = None
+        # The permit to withhold while this reads as bad. A suspender does not
+        # know what is running, or whether anything is: everything that must be
+        # held up by this condition is waiting on that permit already.
+        # Every piece of mutable state below -- the permit, whether this is
+        # tripped, the last value it saw -- is written and read on the permit's
+        # event loop and nowhere else. `install` and `remove` are called there,
+        # and a reading arriving on a signal's own thread is handed over rather
+        # than acted on. One sequence, on one thread: no lock, and no write
+        # that a later one has to be able to supersede.
+        self._permit = None
         self._tripped = False
         self._tripped_message = tripped_message
         self._sleep = sleep
-        self._lock = threading.Lock()
         self._sig = signal
         self._pre_plan = pre_plan
         self._post_plan = post_plan
+        self._last_value = None
+        self._implements_protocol = isinstance(signal, Subscribable)
 
     def __repr__(self):
         return "{}({!r}, sleep={}, pre_plan={}, post_plan={}, tripped_message={})".format(  # noqa: UP032
@@ -53,35 +74,101 @@ class SuspenderBase(metaclass=ABCMeta):
             self._tripped_message,
         )
 
-    def install(self, RE, *, event_type=None):
-        """Install callback on signal
+    def _require_loop(self, permit, method):
+        """Neither `install` nor `remove` crosses; both are already loop-side.
 
-        This (re)installs the required callbacks at the pyepics level
+        `RunEngine.install_suspender` and `remove_suspender` are the routes that
+        cross, and are what a user should reach for.
+        """
+        if not running_on(permit.loop):
+            raise RuntimeError(
+                f"{type(self).__name__}.{method} must be called on the permit's event loop, and "
+                f"this is not it. Use RunEngine.{method}_suspender(suspender), which crosses "
+                "for you."
+            )
+
+    def install(self, permit, *, event_type=None):
+        """Subscribe to the signal, and withhold ``permit`` while it reads as bad.
 
         Parameters
         ----------
 
-        RE : RunEngine
-            The run engine instance this should work on
+        permit : `bluesky.permits.Permit`
+            Withheld while this suspender is tripped, and what decides how far
+            the suspension reaches: a session's holds up every plan it runs, a
+            plan's holds up that plan alone. Nothing hands one out, so this is
+            reached through `RunEngine.install_suspender`,
+            `bluesky.plan_executor.PlanSession.install_suspender`, or
+            ``Msg('install_suspender')`` rather than called directly.
 
         event_type : str, optional
-            The event type (subscription type) to watch
+            The event type (subscription type) to watch. Only meaningful for a
+            signal following ophyd's subscription pattern; a `Subscribable` one
+            has no such notion, so passing it there is an error rather than
+            something to ignore.
+
+        Notes
+        -----
+        Call this on the permit's event loop. `RunEngine.install_suspender`
+        crosses onto it for you, and is what a user should reach for; nothing
+        here crosses on its own.
         """
-        with self._lock:
-            self.RE = RE
-        self._sig.subscribe(self, event_type=event_type, run=True)
+        if self._implements_protocol and event_type is not None:
+            # Checked before anything is recorded, and ahead of the deprecated
+            # route below, which drops `event_type` on its way to
+            # `install_suspender` and would otherwise ignore it silently.
+            raise RuntimeError(f"Can not specify non-None event_type {event_type=} with Subscribable protocol")
+        if not isinstance(permit, Permit):
+            # Given a RunEngine, install durably on it.
+            warn(
+                f"Passing a RunEngine to {type(self).__name__}.install is deprecated; "
+                "it now takes the permit to withhold, which is not something a "
+                "RunEngine hands out. Use RE.install_suspender(suspender).",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            permit.install_suspender(self)
+            return
+        if self._permit is not None:
+            raise RuntimeError(
+                f"This {type(self).__name__} is already installed. A suspender holds one permit, "
+                "so a second install would leave the first withheld with nothing able to grant "
+                "it. Call remove() first."
+            )
+        self._require_loop(permit, "install")
+        if not self._implements_protocol and not callable(getattr(self._sig, "subscribe", None)):
+            raise RuntimeError(
+                "%s does not implement Subscribable protocol or adhere to ophyd subscription pattern." % self._sig
+            )
+        self._permit = permit
+        # Both subscription styles call back with the current reading before
+        # they return, and this is the loop, so an already-bad signal has
+        # withheld the permit by the time this returns.
+        if self._implements_protocol:
+            self._sig.subscribe_reading(self)
+        else:
+            self._sig.subscribe(self, event_type=event_type, run=True)
 
     def remove(self):
-        """Disable the suspender
+        """Stop watching the signal, and drop whatever this was withholding.
 
-        Removes the callback at the pyepics level
+        Call this on the permit's event loop, as with `install`.
+        `RunEngine.remove_suspender` crosses onto it for you.
         """
+        permit = self._permit
+        if permit is None:
+            # `_permit` is what "installed" means, so there is nothing
+            # subscribed to drop, nothing withheld to grant back, and no loop to
+            # be on. Removing something never installed is allowed and does
+            # nothing, as on main.
+            return
+        self._require_loop(permit, "remove")
         self._sig.clear_sub(self)
-        with self._lock:
-            if self.RE is not None:
-                self.__set_event(self.RE._loop)
-            self.RE = None
-            self._tripped = False
+        self._permit = None
+        self._tripped = False
+        # Nothing else drops the reason once this has stopped watching, and
+        # every reading raised earlier has already been applied.
+        permit.grant(self)
 
     @abstractmethod
     def _should_suspend(self, value):
@@ -126,101 +213,66 @@ class SuspenderBase(metaclass=ABCMeta):
         pass it off to the ophyd callback stack.
 
         This expects the massive blob that comes from ophyd
-        """
-        with self._lock:
-            if self.RE is None:
-                return
-            loop = self.RE._loop
 
-            if self._should_suspend(value):
+        A signal calls back on whatever thread it likes -- a channel access
+        monitor thread, for one. This is where that thread meets the loop,
+        because this is where the callback is defined; the reading is carried
+        across and decided there, not here.
+        """
+        permit = self._permit
+        if permit is None:
+            return
+        if self._implements_protocol:
+            # Subscribable calls back with {name: Reading}
+            value = value[self._sig.name]["value"]
+        loop = permit.loop
+        if running_on(loop):
+            self.__decide(value)
+        else:
+            loop.call_soon_threadsafe(self.__decide, value)
+
+    def __decide(self, value):
+        """Work out what ``value`` means for the permit. On the loop.
+
+        The reading is the one the signal called back with, carried over rather
+        than read again here, so a justification reports the value that
+        actually tripped this rather than whatever the signal has since become.
+        """
+        permit = self._permit
+        if permit is None:
+            # Uninstalled between the callback and this running.
+            return
+        self._last_value = value
+        if self._should_suspend(value):
+            if not self._tripped:
                 self._tripped = True
-                # this does dirty things with internal state
-                if self._ev is None and self.RE is not None:
-                    self.__make_event()
-                    if self._ev is None:
-                        raise RuntimeError("Could not create the suspender event")
-                    cb = partial(
-                        self.RE.request_suspend,
-                        self._ev.wait,
-                        pre_plan=self._pre_plan,
-                        post_plan=self._post_plan,
-                        justification=self._get_justification(),
-                    )
-                    if self.RE.state.is_running:
-                        loop.call_soon_threadsafe(cb)
-            elif self._should_resume(value):
-                self.__set_event(loop)
-                self._tripped = False
-
-    def __make_event(self):
-        """Make or return the asyncio.Event to use as a bridge."""
-        assert self._lock.locked()
-        if self._ev is None and self.RE is not None:
-            if threading.get_ident() == getattr(self.RE._loop, "_thread_id", "unknown"):
-                self._ev = asyncio.Event()
-                return self._ev
-            else:
-                th_ev = threading.Event()
-
-                def really_make_the_event():
-                    self._ev = asyncio.Event()
-                    th_ev.set()
-
-                h = self.RE._loop.call_soon_threadsafe(really_make_the_event)
-                if not th_ev.wait(0.1):
-                    h.cancel()
-        return self._ev
-
-    def __set_event(self, loop):
-        """Notify the event that it can resume"""
-        assert self._lock.locked()
-        if self._ev:
-            ev = self._ev
-            sleep = self._sleep
-
-            def local():
-                ts = (datetime.now() + timedelta(seconds=sleep)).strftime("%Y-%m-%d %H:%M:%S")
-                print(
-                    f"Suspender {self!r} reports a return to nominal "
-                    f"conditions. Will sleep for {sleep} seconds and then "
-                    f"release suspension at {ts}."
+                permit.withhold(
+                    self,
+                    self._get_justification(),
+                    pre_plan=self._pre_plan,
+                    post_plan=self._post_plan,
                 )
-                # we can use call_later here because this function
-                # is scheduled to be run in the event loop thread
-                # by the `call_soon_threadsafe` call just below.
-                loop.call_later(sleep, ev.set)
-
-            loop.call_soon_threadsafe(local)
-        # clear that we have an event
-        self._ev = None
-
-    def get_futures(self):
-        """Return a list of futures to wait on.
-
-        This will only work correctly if this suspender is 'installed'
-        and watching a signal
-
-        Returns
-        -------
-        futs : list
-            List of futures to wait on
-
-        justification : str
-            String explaining why the suspender is tripped
-        """
-        if not self.tripped:
-            return [], ""
-        with self._lock:
-            return [self.__make_event().wait], self._get_justification()
+        elif self._should_resume(value) and self._tripped:
+            # Only release what tripped. A nominal signal must not schedule a
+            # release, which would come due `sleep` seconds later and drop a
+            # reason raised by a trip in between.
+            self._tripped = False
+            permit.grant(self, after=self._sleep)
 
     @property
     def tripped(self):
         return self._tripped
 
-    def _get_justification(self):
-        if not self.tripped:
-            return ""
+    def installed_on(self, permit) -> bool:
+        """Whether this suspender is installed on ``permit``.
 
+        A method rather than a property so that the suspender answers the
+        question without handing out the permit it is holding: what a caller
+        wants to know is whether this is theirs to remove.
+        """
+        return self._permit is permit
+
+    def _get_justification(self):
         template = "Suspender of type {} stopped by signal {!r}"
         just = template.format(self.__class__.__name__, self._sig)
         return ": ".join(s for s in (just, self._tripped_message) if s)
@@ -254,9 +306,6 @@ class SuspendBoolHigh(SuspenderBase):
         return not bool(value)
 
     def _get_justification(self):
-        if not self.tripped:
-            return ""
-
         just = f"Signal {self._sig.name} is high"
         return ": ".join(s for s in (just, self._tripped_message) if s)
 
@@ -289,9 +338,6 @@ class SuspendBoolLow(SuspenderBase):
         return bool(value)
 
     def _get_justification(self):
-        if not self.tripped:
-            return ""
-
         just = f"Signal {self._sig.name} is low"
         return ": ".join(s for s in (just, self._tripped_message) if s)
 
@@ -370,11 +416,8 @@ class SuspendFloor(_Threshold):
         return operator.lt
 
     def _get_justification(self):
-        if not self.tripped:
-            return ""
-
         just = (
-            f"Signal {self._sig.name} = {self._sig.get()!r} "
+            f"Signal {self._sig.name} = {self._last_value!r} "
             + f"fell below {self._suspend_thresh} "
             + f"and has not yet crossed above {self._resume_thresh}."
         )
@@ -425,11 +468,8 @@ class SuspendCeil(_Threshold):
         return operator.gt
 
     def _get_justification(self):
-        if not self.tripped:
-            return ""
-
         just = (
-            f"Signal {self._sig.name} = {self._sig.get()!r} "
+            f"Signal {self._sig.name} = {self._last_value!r} "
             + f"went above {self._suspend_thresh} "
             + f"and has not yet crossed below {self._resume_thresh}."
         )
@@ -486,11 +526,8 @@ class SuspendWhenOutsideBand(_SuspendBandBase):
         return not (self._bot < value < self._top)
 
     def _get_justification(self):
-        if not self.tripped:
-            return ""
-
         just = "Signal {} = {!r} is outside of the range ({}, {})".format(  # noqa: UP032
-            self._sig.name, self._sig.get(), self._bot, self._top
+            self._sig.name, self._last_value, self._bot, self._top
         )
         return ": ".join(s for s in (just, self._tripped_message) if s)
 
@@ -543,11 +580,8 @@ class SuspendOutBand(_SuspendBandBase):
         return self._bot < value < self._top
 
     def _get_justification(self):
-        if not self.tripped:
-            return ""
-
         just = "Signal {} = {!r} is inside of the range ({}, {})".format(  # noqa: UP032
-            self._sig.name, self._sig.get(), self._bot, self._top
+            self._sig.name, self._last_value, self._bot, self._top
         )
         return ": ".join(s for s in (just, self._tripped_message) if s)
 
@@ -588,14 +622,15 @@ class SuspendWhenChanged(SuspenderBase):
     Parameters
     ----------
 
-    signal : `ophyd.Signal`
+    signal : `ophyd.Signal` or `bluesky.protocols.Subscribable`
         The signal to watch for changes to determine if the
         scan should be suspended
 
     expected_value : str, float, or int
         RunEngine operations will be suspended when signal deviates
-        from this value.  If `None` (default), set to value of
-        ``signal`` when object is created.
+        from this value.  If `None` (default), set to the first value the
+        signal reports, when the object is installed on a RunEngine.  Until
+        then it stays `None`, whatever kind of signal this is watching.
 
     allow_resume : bool
         Should RunEngine be allowed to resume once ``signal.value == expected``
@@ -667,23 +702,26 @@ class SuspendWhenChanged(SuspenderBase):
         tripped_message="",
         **kwargs,
     ):
-        self.expected_value = signal.value if expected_value is None else expected_value
+        self.expected_value = expected_value
         self.allow_resume = allow_resume
         super().__init__(
             signal, sleep=sleep, pre_plan=pre_plan, post_plan=post_plan, tripped_message=tripped_message, **kwargs
         )
 
     def _should_suspend(self, value):
+        if self.expected_value is None:
+            # Latched on install, from the reading both subscription styles call
+            # back with before `install` returns. Reading an ophyd signal in
+            # __init__ instead would make *when* the default is captured depend
+            # on which protocol the signal happens to implement.
+            self.expected_value = value
         return value != self.expected_value
 
     def _should_resume(self, value):
         return self.allow_resume and value == self.expected_value
 
     def _get_justification(self):
-        if not self.tripped:
-            return ""
-
-        just = f'Signal {self._sig.name}, got "{self._sig.get()}", expected "{self.expected_value}"'
+        just = f'Signal {self._sig.name}, got "{self._last_value}", expected "{self.expected_value}"'
         if not self.allow_resume:
             just += '.  "RE.abort()" and then restart session to use new configuration.'
         return ": ".join(s for s in (just, self._tripped_message) if s)

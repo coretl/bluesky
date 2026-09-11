@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 import signal
 import sys
@@ -52,7 +53,7 @@ from bluesky.tests import requires_ophyd, uses_os_kill_sigint
 from bluesky.tests.utils import DocCollector, MsgCollector
 from bluesky.utils import SigintHandler
 
-from .utils import _careful_event_set, _fabricate_asycio_event
+from .utils import _careful_event_set, _fabricate_asycio_event, suspend_until
 
 
 def test_states():
@@ -70,11 +71,13 @@ def test_states():
 
 
 def test_panic_trap(RE):
-    RE._state = "panicked"
+    # The machine belongs to the executor: every non-idle state describes one
+    # plan's execution, and 'panicked' is the one-way latch out of all of them.
+    RE._executor._state = "panicked"
     for k in RunEngineStateMachine.States.states():
         if k != "panicked":
             with pytest.raises(TransitionError):
-                RE._state = k
+                RE._executor._state = k
 
 
 def test_state_is_readonly(RE):
@@ -665,7 +668,7 @@ def test_unrewindable_det_suspend(RE, plan, motor, det, msg_seq):
 
     ev = _fabricate_asycio_event(loop)
 
-    timer = threading.Timer(0.5, RE.request_suspend, kwargs=dict(fut=ev.wait))  # noqa: C408
+    timer = threading.Timer(0.5, suspend_until, args=(RE, ev.wait))
     timer.start()
 
     def verbose_set():
@@ -1119,7 +1122,7 @@ def test_sigint_during_suspender_active(RE, hw):
 
     bool_signal = hw.bool_sig
     suspender = SuspendBoolHigh(bool_signal)
-    suspender.install(RE)
+    RE.install_suspender(suspender)
     bool_signal.put(False)
 
     def send_sigints():
@@ -1463,7 +1466,7 @@ def test_invalid_generator(RE, hw, capsys):
 
     with pytest.raises(RunEngineInterrupted):
         RE(make_plan())
-    RE.request_suspend(None, pre_plan=pre_suspend_plan())
+    suspend_until(RE, None, pre_plan=pre_suspend_plan())
     capsys.readouterr()
     try:
         RE.resume()
@@ -1501,7 +1504,7 @@ def test_exception_cascade_REside(RE):
         RE(pausing_plan())
     ev = _fabricate_asycio_event(RE.loop)
     ev.set()
-    RE.request_suspend(ev.wait, pre_plan=pre_plan())
+    suspend_until(RE, ev.wait, pre_plan=pre_plan())
     with pytest.raises(KeyError):
         RE.resume()
     assert except_hit
@@ -1532,7 +1535,7 @@ def test_exception_cascade_planside(RE):
         RE(pausing_plan())
     ev = _fabricate_asycio_event(RE.loop)
     ev.set()
-    RE.request_suspend(ev.wait, pre_plan=pre_plan())
+    suspend_until(RE, ev.wait, pre_plan=pre_plan())
     with pytest.raises(RuntimeError):
         RE.resume()
     assert except_hit
@@ -1605,6 +1608,38 @@ def test_no_rewindable_msg(RE):
     assert msg_lst[:4] == plan[:4]
     assert msg_lst[4:7] == plan[:3]
     assert msg_lst[7:] == plan[4:]
+
+
+def test_rewindable_false_clears_msg_cache(RE):
+    """Characterization test: ``Msg('rewindable', None, False)`` discards
+    the checkpoint replay cache. RE._rewindable assigns ``self.rewindable``,
+    and that property setter calls ``self._reset_checkpoint_state()``
+    whenever the RunEngine is resumable and the value actually changes.
+    This is what stops a later pause from replaying through devices that
+    must not be re-triggered.
+    """
+    cache_lengths = []
+
+    def track_cache(msg):
+        cache_lengths.append((msg.command, len(RE._msg_cache)))
+
+    RE.msg_hook = track_cache
+
+    plan = [
+        Msg("checkpoint"),
+        Msg("null"),
+        Msg("null"),
+        Msg("null"),
+        Msg("rewindable", None, False),
+    ]
+    RE(plan)
+
+    # Just before 'rewindable' is processed, the cache holds the three
+    # cacheable 'null' messages accumulated since the checkpoint.
+    assert cache_lengths[-1] == ("rewindable", 3)
+
+    # Once 'rewindable' has been processed, the cache has been reset.
+    assert len(RE._msg_cache) == 0
 
 
 @pytest.mark.parametrize("start_state", [True, False])
@@ -2309,24 +2344,18 @@ def test_print_commands(RE):
     the changes made breaking past API)
     """
 
-    # testing the commands list
-    commands1 = list(RE._command_registry.keys())
-    commands2 = RE.commands
+    # Names, in a fixed order, and every one of them resolvable.
+    assert RE.commands == tuple(sorted(RE._command_registry))
 
-    assert commands1 == commands2
-
-    # testing print commands
-    # copy and paste most of the code...
     verbose = False
-    print_command_reg1 = "List of available commands\n"
-    for command, func in RE._command_registry.items():
-        docstring = func.__doc__
+    expected = "List of available commands\n"
+    for command in RE.commands:
+        docstring = RE._command_registry[command].__doc__
         if verbose is False:
             docstring = docstring.split("\n")[0]
-        print_command_reg1 += f"{command} : {docstring}\n"
+        expected += f"{command} : {docstring}\n"
 
-    print_command_reg2 = RE.print_command_registry()
-    assert print_command_reg1 == print_command_reg2
+    assert RE.print_command_registry() == expected
 
 
 def test_broken_read_exception(RE):
@@ -2700,6 +2729,29 @@ def test_async_scan_id_source(RE):
     assert RE.md["scan_id"] == 42
 
 
+def test_scan_id_increments_per_run(RE):
+    """Characterization test: ``scan_id`` is (re)assigned on every
+    'open_run' message, not once per plan. A single plan containing three
+    open_run/close_run pairs must therefore produce three consecutive
+    scan_ids, and RE.md['scan_id'] must end up holding the last of them.
+    """
+    scan_ids = []
+
+    def collect_start(name, doc):
+        if name == "start":
+            scan_ids.append(doc["scan_id"])
+
+    RE.subscribe(collect_start, "start")
+
+    plan = [Msg("open_run"), Msg("close_run")] * 3
+    RE(plan)
+
+    assert len(scan_ids) == 3
+    assert scan_ids[1] == scan_ids[0] + 1
+    assert scan_ids[2] == scan_ids[1] + 1
+    assert RE.md["scan_id"] == scan_ids[-1]
+
+
 @requires_ophyd
 def test_descriptor_order(RE):
     from itertools import permutations
@@ -2740,3 +2792,100 @@ def test_abs_set_fails(RE, wait):
 
     with pytest.raises(FailedStatus):
         RE(abs_set(device, 10, wait=wait))
+
+
+def test_md_written_midplan_takes_effect_on_the_next_plan(RE, hw):
+    """``RE.md`` is snapshotted as a plan is launched.
+
+    Each plan gets a copy of the metadata as it stands at launch, so a plan's
+    environment does not change under it and a mid-plan write takes effect for
+    the next plan.
+
+    ``scan_id`` deliberately still comes from the session, because the counter
+    is durable and two plans must never be handed the same id.
+    """
+    starts = []
+    RE.subscribe(lambda name, doc: starts.append(doc), "start")
+
+    def plan():
+        yield Msg("open_run")
+        yield Msg("close_run")
+        RE.md["pinned_midplan"] = "written while the plan was running"
+        yield Msg("open_run")
+        yield Msg("close_run")
+
+    try:
+        RE(plan())
+
+        assert len(starts) == 2
+        assert "pinned_midplan" not in starts[0]
+        # The running plan kept the metadata it started with.
+        assert "pinned_midplan" not in starts[1]
+
+        RE([Msg("open_run"), Msg("close_run")])
+        assert starts[2]["pinned_midplan"] == "written while the plan was running"
+        # The counter is still the session's.
+        assert starts[2]["scan_id"] == starts[1]["scan_id"] + 1
+    finally:
+        RE.md.pop("pinned_midplan", None)
+
+
+def test_monitor_documents_arrive_off_the_loop_thread(RE, hw):
+    """Characterization test: a monitored synchronous signal calls subscribers
+    on the device's thread, not the RunEngine's.
+
+    Status callbacks are marshalled onto the loop -- ``_add_status_to_group``
+    does nothing but ``call_soon_threadsafe`` -- but monitor emission goes
+    straight through to the dispatcher from wherever the signal fired. So a
+    subscriber can be re-entered concurrently by the device thread and the
+    loop, and there is no single order over the document stream.
+    """
+    event_threads = []
+    loop_thread = []
+
+    async def note_loop_thread():
+        loop_thread.append(threading.current_thread().name)
+
+    def cb(name, doc):
+        if name == "event":
+            event_threads.append(threading.current_thread().name)
+
+    RE.subscribe(cb)
+    sig = hw.bool_sig
+    sig.put(0)
+
+    def plan():
+        yield Msg("wait_for", None, [note_loop_thread])
+        yield Msg("open_run")
+        yield Msg("monitor", sig, name="mon")
+        yield Msg("sleep", None, 0.3)
+        yield Msg("unmonitor", sig)
+        yield Msg("close_run")
+
+    threading.Timer(0.1, sig.put, (1,)).start()
+    RE(plan())
+
+    assert loop_thread == ["bluesky-run-engine"]
+    # The monitor produced at least one event, and at least one of them reached
+    # subscribers off the loop thread.
+    assert event_threads
+    assert set(event_threads) - {"bluesky-run-engine"}
+
+
+def test_verbose_round_trips_and_actually_silences(RE):
+    """``RE.verbose`` reports the logger, and setting it really silences.
+
+    Both halves go to the logger the adapter wraps: a `logging.LoggerAdapter`
+    has no ``disabled`` of its own, and nothing consults one if given it.
+    """
+    assert RE.verbose is True
+    assert RE.log.isEnabledFor(logging.ERROR)
+    try:
+        RE.verbose = False
+        assert RE.verbose is False
+        # And it is really quiet.
+        assert not RE.log.isEnabledFor(logging.ERROR)
+    finally:
+        RE.verbose = True
+    assert RE.verbose is True
+    assert RE.log.isEnabledFor(logging.ERROR)

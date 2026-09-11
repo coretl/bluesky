@@ -5,9 +5,84 @@
 Unreleased
 ==========
 
+Added
+-----
+
+- Suspenders accept signals implementing ``bluesky.protocols.Subscribable``,
+  such as ophyd-async signals, as well as ophyd ones.  ``install`` picks the
+  subscription style from the signal.  For a ``Subscribable`` it subscribes,
+  and ``remove`` unsubscribes, on the RunEngine's event loop, since a
+  subscription belongs to the loop that made it.  Passing a signal that is
+  neither now raises a ``RuntimeError`` from ``install`` rather than an
+  ``AttributeError``.  Passing ``event_type`` alongside a ``Subscribable``
+  signal also raises, rather than being silently ignored: that style has no
+  event types, so a caller asking for one would otherwise get a suspender
+  watching something else with nothing said.
+
+Fixed
+-----
+
+- A suspension no longer duplicates the documents from a monitored signal.
+  Resuming from one re-subscribed every monitor, having never unsubscribed
+  them: monitors run throughout a suspension, and only a *pause* stops them.
+  One suspension therefore left each monitored signal subscribed twice, and
+  every Event it produced afterwards was emitted twice, compounding with each
+  further suspension.
+- A device is told a suspension has started only if it satisfies
+  `bluesky.protocols.Pausable`.  A suspension used to call ``pause()`` on
+  anything that had the attribute, where ``RunEngine.pause`` has always required
+  the protocol -- and ``Pausable`` requires ``resume`` as well, so a device with
+  only ``pause`` was told a suspension had begun and never told it had ended.
+  Both paths now ask the same question.
+- A suspender that trips while the plan is paused now holds it when it
+  resumes.  Previously the trip was dropped, and no later trip could suspend
+  that plan either.
+- A suspender that recovers and trips again within its ``sleep`` period stays
+  tripped.  Previously the release scheduled by the recovery could come due and
+  clear the newer condition.
+- A suspension requested with no checkpoint to rewind to now arranges nothing
+  before aborting.  It queued the suspension onto the plan stack it had already
+  begun tearing down, then attempted an ``'aborting'`` to ``'suspending'``
+  transition the state machine forbids.  The error was raised inside a
+  fire-and-forget task, so asyncio reported it as an unretrieved task exception
+  whenever that task was finally collected, against unrelated work.
+- ``RunEngine.verbose`` reports whether the engine logs, and turning it off
+  stops it.  It read ``disabled`` from the log adapter, which has no such
+  attribute, so reading raised ``AttributeError`` until something had assigned
+  one -- and assigning put it on the adapter, where the logging machinery never
+  looks, so turning it off silenced nothing.  Both halves now go to the logger
+  the adapter wraps.
+- A plan aborted while parked in a ``wait_for`` cancels the tasks that wait was
+  running.  Nothing else held a reference to them, and ``asyncio.wait`` does not
+  cancel what it was waiting on when it is itself cancelled, so they outlived
+  the plan and asyncio reported them as destroyed-while-pending at some
+  unrelated later moment.  A ``wait`` that times out still leaves them alone, so
+  waiting on the same group again finds them in flight.
+- Installing a suspender that is already installed raises ``RuntimeError``
+  rather than silently reassigning it.  A suspender holds one permit, so the
+  second install orphaned the first -- leaving it withheld with nothing able to
+  grant it -- and when the second scope ended the suspender was cleared
+  outright, so a durable suspender that a plan re-installed was still listed by
+  ``RunEngine.suspenders`` and could never suspend anything again.  Remove it
+  before installing it somewhere else.
+
 Changed
 -------
 
+- Suspender justification messages report the last value the suspender was
+  called back with, rather than calling ``signal.get()`` when the message is
+  built.  As well as being readable for signals that cannot be read
+  synchronously, this reports the value that actually tripped the suspender
+  rather than whatever it has since become.
+- ``SuspendWhenChanged`` defaults ``expected_value`` to the first value it is
+  called back with, for every kind of signal, and so latches it when the
+  suspender is installed rather than when it is created.  Previously an ophyd
+  signal was read synchronously in ``__init__`` while a ``Subscribable`` one --
+  which cannot be -- latched on install, so *when* the default was captured
+  depended on which protocol the signal happened to implement.  Until the
+  suspender is installed ``expected_value`` is now ``None``; code reading it
+  between construction and installation, or constructing a suspender and then
+  changing the signal before installing it, will see the difference.
 - The ``bluesky.protocols.Subscribable`` protocol now requires a
   ``subscribe_reading`` method rather than a ``subscribe`` method.  The
   protocol did not match the implementation it was written to describe:
@@ -23,6 +98,104 @@ Changed
   Devices that implemented the old ``Subscribable`` protocol should rename
   ``subscribe`` to ``subscribe_reading``; users of ophyd-async need at
   least v0.13.5.
+- Suspension now goes through a permit: permission to run, held open unless
+  something has a reason to withhold it.  Reasons are keyed by whoever raised
+  them, so two conditions going bad at once are one suspension that ends when
+  the last of them clears.  The permit itself is internal; installing a
+  suspender is how a suspension is raised, and ``RunEngine.install_suspender``
+  is unchanged.  Calling a `RunEngine` while a suspender is already tripped
+  prints what is holding it up, as it did before.  ``install`` waits for the
+  subscription to be in place, so a suspender installed on an already-bad
+  signal is holding the permit by the time the call returns.  Such a plan is
+  *held* at its first message rather than suspended, so a condition already bad
+  when it starts runs neither its pre-plan nor its post-plan.  That is what
+  happened before as well, and is now deliberate: a pre-plan reverses something
+  a plan did, and no plan has run yet, so there is nothing to reverse -- and
+  since a post-plan undoes its pre-plan, skipping one has to skip the other, or
+  the plan would begin by opening a shutter it never closed.
+- ``SuspenderBase.install`` takes the permit to withhold rather than a
+  ``RunEngine``.  Passing a ``RunEngine`` still works, with a
+  ``DeprecationWarning``, and does a durable install on it as before.
+- ``SuspenderBase.install`` and ``SuspenderBase.remove`` must be called on the
+  RunEngine's event loop, and raise ``RuntimeError`` otherwise.  A suspender no
+  longer crosses onto the loop for itself: ``RunEngine.install_suspender``,
+  ``remove_suspender`` and ``clear_suspenders`` cross for you, and are what to
+  call from the prompt.  Removing a suspender that was never installed still
+  works from anywhere, since there is nothing to write and nothing to
+  unsubscribe.
+- ``SuspenderBase.tripped`` reports what the event loop has applied, so it may
+  lag a ``put`` by a loop iteration.  A signal calls back on whatever thread it
+  pleases and the reading is carried to the loop and decided there, which is
+  what lets an install, a removal and a reading be one sequence on one thread
+  rather than three racing ones -- and lets a suspender hold no lock.  Code
+  that trips a signal and then starts a plan is unaffected, because everything
+  reaches the loop in order; code that trips a signal and *inspects* the
+  suspender immediately must let the loop catch up.
+- Two conditions going bad at once are now one suspension carrying both
+  justifications, rather than one suspension each.  The plan rewinds once.
+  Each suspender still runs its own pre-plan when its condition fires, and
+  post-plans run in the reverse order, so **pre- and post-plans should be
+  idempotent**.
+- Returning from a pause is now like returning from idle.  While a plan is
+  paused the executor arranges nothing: a condition going bad withholds the
+  permit and does no more, and no pre-plan runs, because control has gone back
+  to the user and something else may be using the beamline.  On ``resume`` the
+  plan then *waits* for every condition to clear rather than suspending around
+  them, and runs no pre-plans on the way back in -- a pre-plan reverses
+  something a plan did, and across a pause it cannot know what the user did
+  instead.  ``RunEngine.resume`` therefore blocks until the conditions clear,
+  where before it returned at once, and prints what is holding it up the way
+  calling the `RunEngine` does.  (Tom Caswell has ruled on the blocking resume;
+  the rest of this entry is his tentative position and is still to be
+  confirmed.)
+- A suspender a plan installs with ``Msg('install_suspender')`` now holds up
+  that plan alone, and is uninstalled when the plan ends.  Previously the
+  message was the same call as ``RunEngine.install_suspender``, so the
+  suspender outlived the plan and had to be removed by hand.
+  ``RunEngine.suspenders`` reports the durable suspenders together with the
+  running plan's, and ``RunEngine.clear_suspenders`` clears both.
+- ``RunEngine.md`` is snapshotted as a plan is launched, so writing to it part
+  way through a plan takes effect for the next plan rather than the runs the
+  current one has yet to open.  A plan's environment no longer changes under
+  it.  ``scan_id`` still comes from the RunEngine's own metadata, because the
+  counter is durable and two plans must never be handed the same id.  Whatever
+  mapping ``RE.md`` is -- a ``PersistentDict``, say -- stays where it is; only
+  its contents are copied.
+- The executor no longer prints.  Two new hooks carry what it used to say:
+  ``announce_hook``, called with a line about what happened, and
+  ``suspend_hook``, called with the joined justifications as a suspension
+  begins.  A ``RunEngine`` wires the first to ``print`` and renders the second
+  itself, so nothing changes at a prompt.  A headless ``PlanSession`` leaves
+  both unset and is silent unless it sets them, which is what lets a service
+  route them somewhere that is not a terminal: nothing the executor says now
+  tells anyone which key to press, since only a ``RunEngine`` and
+  ``SigintHandler`` know a keyboard is attached.
+- ``RunEngine.commands`` returns a sorted tuple of command names rather than a
+  list in registration order.  It always reported names; it now says so in its
+  type, and the names cannot be reordered by rebinding what they resolve to.
+- ``RunEngine.emit`` is synchronous.  There was a synchronous ``emit_sync`` and
+  a coroutine ``emit`` doing the same work; awaiting the latter never
+  suspended.  ``RunBundler`` therefore takes one ``emit`` argument rather than
+  the pair, which matters to anyone passing a custom ``run_bundler_cls``.
+
+Removed
+-------
+- ``SuspenderBase.get_futures`` and ``SuspenderBase.RE``.  Whether a suspender
+  is tripped is ``SuspenderBase.tripped``; a suspender no longer knows what it
+  is holding up, which is what lets the same one be installed on a session or
+  on a single plan.
+- ``RunEngine.request_suspend``, with no replacement.  Suspension is raised by
+  installing a suspender, and by nothing else.  ``request_suspend`` was a second
+  route to the same place that bypassed the permit, so a suspension raised
+  through it did not merge with one raised by a suspender, and two overlapping
+  conditions arriving by the two routes rewound the plan twice -- the thing the
+  permit exists to prevent.  Any condition worth suspending on can be written as
+  a suspender, which composes; to stop a plan yourself and decide yourself when
+  it goes on, use ``RunEngine.pause``.
+
+Deprecated
+----------
+- ``RunEngine.emit_sync``.  There is one ``emit`` now, and it is synchronous.
 
 v1.15.1 (2026-05-05)
 ====================
