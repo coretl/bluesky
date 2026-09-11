@@ -127,19 +127,18 @@ class SuspenderBase(metaclass=ABCMeta):
                 f"{type(self).__name__}.install must be called on the permit's event loop, and "
                 "this is not it. Use RunEngine.install_suspender(suspender), which crosses for you."
             )
+        if not self._implements_protocol and not callable(getattr(self._sig, "subscribe", None)):
+            raise RuntimeError(
+                "%s does not implement Subscribable protocol or adhere to ophyd subscription pattern." % self._sig
+            )
         self._permit = permit
         # Both subscription styles call back with the current reading before
         # they return, and this is the loop, so an already-bad signal has
         # withheld the permit by the time this returns.
         if self._implements_protocol:
             self._sig.subscribe_reading(self)
-        elif callable(getattr(self._sig, "subscribe", None)):
-            self._sig.subscribe(self, event_type=event_type, run=True)
         else:
-            self._permit = None
-            raise RuntimeError(
-                "%s does not implement Subscribable protocol or adhere to ophyd subscription pattern." % self._sig
-            )
+            self._sig.subscribe(self, event_type=event_type, run=True)
 
     def remove(self):
         """Stop watching the signal, and drop whatever this was withholding.
@@ -148,21 +147,25 @@ class SuspenderBase(metaclass=ABCMeta):
         `RunEngine.remove_suspender` crosses onto it for you.
         """
         permit = self._permit
-        if permit is not None and not running_on(permit.loop):
+        if permit is None:
+            # Never installed: nothing to grant back, nothing to cross for, and
+            # nothing tripped. An ophyd signal is still told to drop a
+            # subscription it never had, which it tolerates; a Subscribable one
+            # would not.
+            if not self._implements_protocol:
+                self._sig.clear_sub(self)
+            return
+        if not running_on(permit.loop):
             raise RuntimeError(
                 f"{type(self).__name__}.remove must be called on the permit's event loop, and "
                 "this is not it. Use RunEngine.remove_suspender(suspender), which crosses for you."
             )
-        if permit is not None or not self._implements_protocol:
-            # Nothing was subscribed if we were never installed, and a
-            # Subscribable signal has no subscription to drop in that case.
-            self._sig.clear_sub(self)
+        self._sig.clear_sub(self)
         self._permit = None
         self._tripped = False
-        if permit is not None:
-            # Nothing else drops the reason once this has stopped watching, and
-            # every reading raised earlier has already been applied.
-            permit.grant(self)
+        # Nothing else drops the reason once this has stopped watching, and
+        # every reading raised earlier has already been applied.
+        permit.grant(self)
 
     @abstractmethod
     def _should_suspend(self, value):
@@ -238,31 +241,26 @@ class SuspenderBase(metaclass=ABCMeta):
             return
         self._last_value = value
         if self._should_suspend(value):
-            was_tripped = self._tripped
-            self._tripped = True
-            if not was_tripped:
+            if not self._tripped:
+                self._tripped = True
                 permit.withhold(
                     self,
                     self._get_justification(),
                     pre_plan=self._pre_plan,
                     post_plan=self._post_plan,
                 )
-        elif self._should_resume(value):
-            if self._tripped:
-                # Only release what tripped. A nominal signal must not
-                # schedule a release, which would come due `sleep` seconds
-                # later and drop a reason raised by a trip in between.
-                permit.grant(self, after=self._sleep)
+        elif self._should_resume(value) and self._tripped:
+            # Only release what tripped. A nominal signal must not schedule a
+            # release, which would come due `sleep` seconds later and drop a
+            # reason raised by a trip in between.
             self._tripped = False
+            permit.grant(self, after=self._sleep)
 
     @property
     def tripped(self):
         return self._tripped
 
     def _get_justification(self):
-        if not self.tripped:
-            return ""
-
         template = "Suspender of type {} stopped by signal {!r}"
         just = template.format(self.__class__.__name__, self._sig)
         return ": ".join(s for s in (just, self._tripped_message) if s)
@@ -296,9 +294,6 @@ class SuspendBoolHigh(SuspenderBase):
         return not bool(value)
 
     def _get_justification(self):
-        if not self.tripped:
-            return ""
-
         just = f"Signal {self._sig.name} is high"
         return ": ".join(s for s in (just, self._tripped_message) if s)
 
@@ -331,9 +326,6 @@ class SuspendBoolLow(SuspenderBase):
         return bool(value)
 
     def _get_justification(self):
-        if not self.tripped:
-            return ""
-
         just = f"Signal {self._sig.name} is low"
         return ": ".join(s for s in (just, self._tripped_message) if s)
 
@@ -412,9 +404,6 @@ class SuspendFloor(_Threshold):
         return operator.lt
 
     def _get_justification(self):
-        if not self.tripped:
-            return ""
-
         just = (
             f"Signal {self._sig.name} = {self._last_value!r} "
             + f"fell below {self._suspend_thresh} "
@@ -467,9 +456,6 @@ class SuspendCeil(_Threshold):
         return operator.gt
 
     def _get_justification(self):
-        if not self.tripped:
-            return ""
-
         just = (
             f"Signal {self._sig.name} = {self._last_value!r} "
             + f"went above {self._suspend_thresh} "
@@ -528,9 +514,6 @@ class SuspendWhenOutsideBand(_SuspendBandBase):
         return not (self._bot < value < self._top)
 
     def _get_justification(self):
-        if not self.tripped:
-            return ""
-
         just = "Signal {} = {!r} is outside of the range ({}, {})".format(  # noqa: UP032
             self._sig.name, self._last_value, self._bot, self._top
         )
@@ -585,9 +568,6 @@ class SuspendOutBand(_SuspendBandBase):
         return self._bot < value < self._top
 
     def _get_justification(self):
-        if not self.tripped:
-            return ""
-
         just = "Signal {} = {!r} is inside of the range ({}, {})".format(  # noqa: UP032
             self._sig.name, self._last_value, self._bot, self._top
         )
@@ -729,9 +709,6 @@ class SuspendWhenChanged(SuspenderBase):
         return self.allow_resume and value == self.expected_value
 
     def _get_justification(self):
-        if not self.tripped:
-            return ""
-
         just = f'Signal {self._sig.name}, got "{self._last_value}", expected "{self.expected_value}"'
         if not self.allow_resume:
             just += '.  "RE.abort()" and then restart session to use new configuration.'
