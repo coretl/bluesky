@@ -663,7 +663,7 @@ class PlanSession:
         is the order their pre-plans ran and the reverse of the order their
         post-plans will.
         """
-        return self._permit.withheld_by
+        return self._permit.reasons
 
     def register_command(self, name, func):
         """Register a new Message command.
@@ -909,7 +909,7 @@ class PlanExecutor:
         self._identity = identity if identity is not None else self
 
         # Set when the plan comes to rest paused; see the pause block in `run`.
-        self._permit_granted_when_paused = True
+        self._cleared_when_paused = True
         # The task watching this plan's permit, replaced whenever the plan
         # enters from a state where the user had control. None until `run`.
         self._supervisor: asyncio.Task | None = None
@@ -1097,29 +1097,29 @@ class PlanExecutor:
         when it paused -- the run loop re-sends the message on the way out, so
         a second one would hold for the same thing twice.
         """
-        held = not self._permit.granted
-        if held and self._permit_granted_when_paused:
-            self._push_plan(single_gen(Msg("wait_for", None, [self._permit.wait_granted])))
+        tripped = self._permit.tripped
+        if tripped and self._cleared_when_paused:
+            self._push_plan(single_gen(Msg("wait_for", None, [self._permit.wait_cleared])))
         if self._supervisor is not None:
             self._supervisor.cancel()
-        self._supervisor = self._loop.create_task(self._supervise_permit(held_at_start=held))
+        self._supervisor = self._loop.create_task(self._supervise_permit(tripped_at_start=tripped))
 
-    async def _supervise_permit(self, held_at_start=False):
+    async def _supervise_permit(self, tripped_at_start=False):
         """Suspend the plan whenever permission to run is withheld.
 
         One suspension per episode, however many conditions are standing: a
         condition tripping while one is open joins it rather than starting a
         second rewind.
         """
-        if held_at_start:
+        if tripped_at_start:
             # Already held in band by `_arrange_permission`, and there is no
             # checkpoint yet to rewind to, so this must not suspend for it.
-            await self._permit.wait_granted()
+            await self._permit.wait_cleared()
         while True:
             opening = await self._wait_for_a_reason_to_suspend()
             joined: list[Suspension] = []
             self._hooks.suspend(join_justifications(opening))
-            if not self._begin_suspension(opening, joined, self._permit.wait_granted):
+            if not self._begin_suspension(opening, joined, self._permit.wait_cleared):
                 return
             await self._gather_joiners(opening, joined)
 
@@ -1128,7 +1128,7 @@ class PlanExecutor:
         while True:
             # The read that decides is the read that reports, so this cannot be
             # told to suspend and then find nothing to suspend for.
-            withheld = self._permit.withheld_by
+            withheld = self._permit.reasons
             # Nothing is arranged while the plan is at rest or coming to rest:
             # control has gone back to the user, and `resume` replaces this task.
             if withheld and self.state not in ("paused", "pausing"):
@@ -1206,9 +1206,9 @@ class PlanExecutor:
         post-plans wait for the unwind, so that they cannot race the plan
         resuming.
         """
-        while not self._permit.granted:
+        while self._permit.tripped:
             await self._permit.wait_changed()
-            for key, suspension in self._permit.withheld_by.items():
+            for key, suspension in self._permit.reasons.items():
                 if key in opening:
                     continue
                 opening[key] = suspension
@@ -1223,7 +1223,7 @@ class PlanExecutor:
         The whole chain: conditions raised on the session as well as ones this
         plan installed for itself. Empty when nothing is holding it.
         """
-        return self._permit.withheld_by
+        return self._permit.reasons
 
     @property
     def resumable(self) -> bool:
@@ -1431,7 +1431,7 @@ class PlanExecutor:
                     # message on the way out and the plan holds itself; if it
                     # was not, anything withholding by then arrived during the
                     # pause, and `resume` has to arrange the wait.
-                    self._permit_granted_when_paused = self._permit.granted
+                    self._cleared_when_paused = not self._permit.tripped
                     self.state = "paused"
                     # Let RunEngine.__call__ return...
                     self._hooks.pause()

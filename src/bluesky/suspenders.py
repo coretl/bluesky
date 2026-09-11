@@ -168,7 +168,7 @@ class SuspenderBase(metaclass=ABCMeta):
         self._tripped = False
         # Nothing else drops the reason once this has stopped watching, and
         # every reading raised earlier has already been applied.
-        permit.grant(self)
+        permit.clear(self)
 
     @abstractmethod
     def _should_suspend(self, value):
@@ -246,7 +246,7 @@ class SuspenderBase(metaclass=ABCMeta):
         if self._should_suspend(value):
             if not self._tripped:
                 self._tripped = True
-                permit.withhold(
+                permit.trip(
                     self,
                     self._get_justification(),
                     pre_plan=self._pre_plan,
@@ -257,7 +257,7 @@ class SuspenderBase(metaclass=ABCMeta):
             # release, which would come due `sleep` seconds later and drop a
             # reason raised by a trip in between.
             self._tripped = False
-            permit.grant(self, after=self._sleep)
+            permit.clear(self, after=self._sleep)
 
     @property
     def tripped(self):

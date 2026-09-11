@@ -49,7 +49,7 @@ class Permit:
     """Permission to run, withheld while anything has a reason to withhold it.
 
     Reasons are keyed, normally by the suspender that raised them, and the
-    permit is granted exactly when none stands. Two conditions tripping at once
+    nothing is tripped exactly when none stands. Two conditions tripping at once
     are two reasons and one suspension, rather than two suspensions.
 
     Permits chain. A permit with a ``parent`` is withheld whenever its parent
@@ -61,7 +61,7 @@ class Permit:
     boundaries that own their crossings -- a suspender tripping on its signal's
     thread, and the `RunEngine` methods called from the prompt.
 
-    `granted` and `withheld_by` answer on any thread. The reasons are an
+    `tripped` and `reasons` answer on any thread. The reasons are an
     immutable mapping, swapped rather than mutated, so a reader sees one
     snapshot or the next and never a mapping mid-change. Their callers report
     rather than decide, so eventual consistency is what they need.
@@ -87,7 +87,7 @@ class Permit:
         # own reasons *or* its parent's, so a waiter here has to be woken by a
         # change up there. Sharing gets that without the parent holding any
         # reference to its children: a child reaches up, as it already does for
-        # `granted` and `withheld_by`, and nothing reaches down.
+        # `tripped` and `reasons`, and nothing reaches down.
         self._changed: asyncio.Event = parent._changed if parent is not None else asyncio.Event()
 
     @property
@@ -100,33 +100,30 @@ class Permit:
         return self._loop
 
     def __repr__(self) -> str:
-        state = "granted" if self.granted else f"withheld by {len(self.withheld_by)}"
+        state = f"tripped by {len(self.reasons)}" if self.tripped else "clear"
         return f"<{type(self).__name__} {self.name!r} {state}>"
 
     @property
-    def granted(self) -> bool:
-        """Whether the plan may run: nothing is withholding it, here or above.
+    def tripped(self) -> bool:
+        """Whether anything is holding the plan up, here or above.
 
-        Derived from `withheld_by` rather than tracked, so the two cannot
-        disagree. Chains are two deep -- a session's permit and the running
-        plan's -- so this is one merge of two small mappings, once per pulse
-        rather than per message.
+        Derived from `reasons` rather than tracked, so the two cannot disagree.
         """
-        return not self.withheld_by
+        return bool(self.reasons)
 
     @property
-    def withheld_by(self) -> Mapping[Hashable, Suspension]:
+    def reasons(self) -> Mapping[Hashable, Suspension]:
         """Everything withholding this permit, keyed by whoever withheld it.
 
         Includes the chain above, outermost permit first, because that is the
         order a suspension runs pre-plans in and the reverse of the order it
-        runs post-plans in. Empty exactly when the permit is granted.
+        runs post-plans in. Empty exactly when nothing is tripped.
         """
         if self._parent is None:
             return self._reasons
-        return MappingProxyType({**self._parent.withheld_by, **self._reasons})
+        return MappingProxyType({**self._parent.reasons, **self._reasons})
 
-    def withhold(
+    def trip(
         self,
         key: Hashable,
         justification: str,
@@ -134,14 +131,14 @@ class Permit:
         pre_plan: PlanLike | None = None,
         post_plan: PlanLike | None = None,
     ) -> None:
-        """Withhold on ``key``'s behalf until granted. Loop thread only."""
+        """Record that ``key`` has tripped. Loop thread only."""
         release = self._releases.pop(key, None)
         if release is not None:
             release.cancel()
         self._reasons = MappingProxyType({**self._reasons, key: Suspension(justification, pre_plan, post_plan)})
         self._notify_changed()
 
-    def grant(self, key: Hashable, *, after: float = 0) -> None:
+    def clear(self, key: Hashable, *, after: float = 0) -> None:
         """Drop ``key``'s reason, ``after`` seconds from now. Loop thread only."""
         if after:
             # Being on the loop is what makes this safe, and is also what makes
@@ -179,7 +176,7 @@ class Permit:
         """
         await self._changed.wait()
 
-    async def wait_granted(self) -> None:
+    async def wait_cleared(self) -> None:
         """Wait until no reason stands in the chain."""
-        while not self.granted:
+        while self.tripped:
             await self.wait_changed()

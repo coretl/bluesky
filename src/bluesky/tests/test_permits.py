@@ -313,11 +313,11 @@ def test_removing_a_suspender_settles_before_it_returns(RE, hw):
     RE.install_suspender(suspender)
     permit = RE._session._permit
     # Installed on a bad signal, so it is holding.
-    assert not permit.granted
+    assert permit.tripped
 
     RE.remove_suspender(suspender)
     # And it has let go by the time remove returns.
-    assert permit.granted
+    assert not permit.tripped
 
 
 def test_installing_a_suspender_twice_is_an_error(RE, hw):
@@ -455,22 +455,22 @@ def test_a_permit_is_read_from_any_thread():
     permit = Permit("test", loop=loop)
 
     async def withhold():
-        permit.withhold("beam", "beam is down")
+        permit.trip("beam", "beam is down")
 
     loop.run_until_complete(withhold())
 
     seen = {}
 
     def read():
-        seen["granted"] = permit.granted
-        seen["why"] = join_justifications(permit.withheld_by)
+        seen["tripped"] = permit.tripped
+        seen["why"] = join_justifications(permit.reasons)
 
     reader = threading.Thread(target=read)
     reader.start()
     reader.join()
     loop.close()
 
-    assert seen == {"granted": False, "why": "beam is down"}
+    assert seen == {"tripped": True, "why": "beam is down"}
 
 
 def test_a_child_permit_is_withheld_whenever_its_parent_is():
@@ -481,20 +481,20 @@ def test_a_child_permit_is_withheld_whenever_its_parent_is():
         parent = Permit("session", loop=loop)
         child = Permit("plan", loop=loop, parent=parent)
 
-        parent.withhold("beam", "beam is down")
+        parent.trip("beam", "beam is down")
         # Held up by its parent.
-        assert not child.granted
-        assert join_justifications(child.withheld_by) == "beam is down"
+        assert child.tripped
+        assert join_justifications(child.reasons) == "beam is down"
 
-        child.withhold("shutter", "shutter is closed")
-        parent.grant("beam")
+        child.trip("shutter", "shutter is closed")
+        parent.clear("beam")
         # Still holding its own reason.
-        assert not child.granted
+        assert child.tripped
         # Which is not the parent's business.
-        assert parent.granted
+        assert not parent.tripped
 
-        child.grant("shutter")
-        assert child.granted
+        child.clear("shutter")
+        assert not child.tripped
 
     asyncio.run(check())
 
@@ -610,14 +610,14 @@ def test_a_trip_between_building_the_plan_and_running_it_still_holds():
         session = PlanSession()
         executor = session.make_executor(plan())
         # Nothing was withholding when this was built.
-        assert executor._permit.granted
+        assert not executor._permit.tripped
 
-        session._permit.withhold("beam", "beam is down")
+        session._permit.trip("beam", "beam is down")
         task = asyncio.ensure_future(executor.run())
         await asyncio.sleep(0.3)
         held = list(steps)
 
-        session._permit.grant("beam")
+        session._permit.clear("beam")
         await asyncio.wait_for(task, timeout=10)
         return held
 
