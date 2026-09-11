@@ -17,7 +17,11 @@ from ophyd.signal import Signal
 from bluesky import Msg
 from bluesky.permits import Permit, join_justifications
 from bluesky.suspenders import SuspendBoolHigh
+from bluesky.tests import ophyd_async, requires_ophyd_async
 from bluesky.utils import FailedPause, RunEngineInterrupted
+
+if ophyd_async:
+    from ophyd_async.core import soft_signal_rw
 
 # A plan with a checkpoint to rewind to, and long enough to be interrupted.
 SCAN = [Msg("checkpoint"), Msg("sleep", None, 0.2)]
@@ -25,6 +29,41 @@ SCAN = [Msg("checkpoint"), Msg("sleep", None, 0.2)]
 
 def _at(delay, func, *args):
     threading.Timer(delay, func, args).start()
+
+
+def _soft_signal(RE, name):
+    """A soft signal, connected on the RunEngine's loop and reading false."""
+    sig = soft_signal_rw(float, 0.0, name)
+    asyncio.run_coroutine_threadsafe(sig.connect(), RE.loop).result()
+    return sig
+
+
+def _at_message(RE, commands, **at):
+    """Drive signals from the message stream rather than from the clock.
+
+    ``msg_hook`` is called on the loop, for every message, so it is a place to
+    make a condition go bad *at* a message instead of at a wall-clock instant
+    that a loaded machine can miss. Each keyword names a command and gives a
+    function to run the first time that command is seen -- first time only,
+    because a suspension rewinds to the last checkpoint and replays, and the
+    hook sees the replayed messages too.
+
+    Setting a signal from here reaches the suspender on this loop: the set is a
+    task, the withhold is applied when it runs, and two sets made in one call are
+    two tasks queued before the supervisor is woken by the first -- which is what
+    makes "both conditions went bad in the same turn" a fact rather than a hope
+    about two timers.
+    """
+    seen = set()
+
+    def hook(msg):
+        commands.append(msg.command)
+        func = at.get(msg.command)
+        if func is not None and msg.command not in seen:
+            seen.add(msg.command)
+            func()
+
+    RE.msg_hook = hook
 
 
 def _settle(RE):
@@ -125,23 +164,25 @@ def test_releases_while_no_plan_is_running(RE, hw):
 # What permits change. These fail on main.
 
 
-def test_two_conditions_are_one_suspension(RE, hw):
+@requires_ophyd_async
+def test_two_conditions_are_one_suspension(RE):
     """Both reasons are reported, and the plan rewinds once, not twice."""
-    from ophyd import Signal
-
-    beam, shutter = hw.bool_sig, Signal(name="shutter_sig", value=0)
-    beam.put(0)
+    beam, shutter = _soft_signal(RE, "beam_sig"), _soft_signal(RE, "shutter_sig")
     RE.install_suspender(SuspendBoolHigh(beam, tripped_message="beam"))
     RE.install_suspender(SuspendBoolHigh(shutter, tripped_message="shutter"))
-    commands = []
-    RE.msg_hook = lambda msg: commands.append(msg.command)
 
-    seen = []
-    _at(0.1, beam.put, 1)
-    _at(0.15, shutter.put, 1)
-    _at(0.3, lambda: seen.append(join_justifications(RE._session.suspensions)))
-    _at(0.5, beam.put, 0)
-    _at(0.5, shutter.put, 0)
+    commands, seen = [], []
+
+    def both_bad():
+        beam.set(1)
+        shutter.set(1)
+
+    def look_then_release():
+        seen.append(join_justifications(RE._session.suspensions))
+        beam.set(0)
+        shutter.set(0)
+
+    _at_message(RE, commands, sleep=both_bad, _start_suspender=look_then_release)
     RE(SCAN)
 
     assert len(seen) == 1
@@ -502,18 +543,20 @@ def test_pre_plans_run_in_fire_order_and_post_plans_in_reverse(RE, hw):
     assert commands.count("_start_suspender") == 1
 
 
-def test_two_conditions_tripping_in_one_turn_each_run_their_plans(RE, hw):
+@requires_ophyd_async
+def test_two_conditions_tripping_in_one_turn_each_run_their_plans(RE):
     """Both conditions are in the opening snapshot, rather than one joining.
 
     Two signals going bad in the same turn of the loop -- one interlock dropping
     two readings -- have both withholds applied before the supervisor is
     scheduled again, so neither arrives through the joining path. Each must
     still run its own pre-plan, and the post-plans still unwind in reverse.
-    """
-    from ophyd import Signal
 
-    beam, shutter = hw.bool_sig, Signal(name="shutter_sig", value=0)
-    beam.put(0)
+    Both sets are made from one call on the loop, so the two tasks are queued
+    before the supervisor is woken by the first of them: "the same turn" is
+    arranged rather than hoped for.
+    """
+    beam, shutter = _soft_signal(RE, "beam_sig"), _soft_signal(RE, "shutter_sig")
     order = []
 
     def note(tag):
@@ -526,14 +569,16 @@ def test_two_conditions_tripping_in_one_turn_each_run_their_plans(RE, hw):
     RE.install_suspender(SuspendBoolHigh(beam, pre_plan=note("beam-pre"), post_plan=note("beam-post")))
     RE.install_suspender(SuspendBoolHigh(shutter, pre_plan=note("shutter-pre"), post_plan=note("shutter-post")))
     commands = []
-    RE.msg_hook = lambda msg: commands.append(msg.command)
 
     def both_bad():
-        beam.put(1)
-        shutter.put(1)
+        beam.set(1)
+        shutter.set(1)
 
-    _at(0.1, both_bad)
-    _at(0.6, lambda: (beam.put(0), shutter.put(0)))
+    def both_good():
+        beam.set(0)
+        shutter.set(0)
+
+    _at_message(RE, commands, sleep=both_bad, _start_suspender=both_good)
     RE([Msg("checkpoint")] + [Msg("sleep", None, 0.2)] * 5)
 
     assert order == ["beam-pre", "shutter-pre", "shutter-post", "beam-post"]
