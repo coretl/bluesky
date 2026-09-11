@@ -586,6 +586,49 @@ def test_two_conditions_tripping_in_one_turn_each_run_their_plans(RE):
     assert commands.count("_start_suspender") == 1
 
 
+def test_a_trip_between_building_the_plan_and_running_it_still_holds():
+    """The window between `make_executor` and the plan's first message.
+
+    Whether the permit is withheld is read when the plan starts, not when the
+    executor is built. It used to be read at both, and the two could disagree:
+    a condition going bad in between left the plan with nothing holding it and
+    a supervisor that believed it was already being held, so the plan ran to
+    completion through a tripped suspender.
+
+    A headless caller can hold an executor for as long as it likes before
+    awaiting it, so the window is as wide as it chooses.
+    """
+    from bluesky.plan_executor import PlanSession
+
+    steps = []
+
+    def plan():
+        yield Msg("checkpoint")
+        for _ in range(3):
+            steps.append("step")
+            yield Msg("sleep", None, 0.05)
+
+    async def main():
+        session = PlanSession()
+        executor = session.make_executor(plan())
+        # Nothing was withholding when this was built.
+        assert executor._permit.granted
+
+        session._permit.withhold("beam", "beam is down")
+        task = asyncio.ensure_future(executor.run())
+        await asyncio.sleep(0.3)
+        held = list(steps)
+
+        session._permit.grant("beam")
+        await asyncio.wait_for(task, timeout=10)
+        return held
+
+    ran_while_withheld = asyncio.run(main())
+
+    assert ran_while_withheld == []
+    assert steps == ["step"] * 3
+
+
 def test_a_trip_just_after_the_plan_starts_still_suspends(RE, hw):
     """The window between the plan starting and the supervisor's first turn.
 

@@ -14,7 +14,6 @@ import pytest
 
 import bluesky
 from bluesky import Msg
-from bluesky.permits import join_justifications
 from bluesky.plan_executor import (
     PlanEnvironment,
     PlanExecutor,
@@ -399,6 +398,12 @@ def test_a_durable_suspender_outlives_the_plan_it_held():
 
     susp = _Susp()
 
+    started: list[str] = []
+
+    def next_plan():
+        started.append("ran")
+        yield Msg("null")
+
     async def main():
         session = PlanSession()
         session.install_suspender(susp)
@@ -407,20 +412,30 @@ def test_a_durable_suspender_outlives_the_plan_it_held():
         # Trips after that plan ended. The session is still watching, so the
         # reason stands and the *next* plan is the one held for it.
         session._permit.withhold(susp, "beam is down")
-        return session, executor
 
-    session, executor = asyncio.run(main())
+        # Held before its first message rather than running and suspending:
+        # there is no checkpoint yet to rewind to. Arranged when the plan
+        # starts rather than when the executor is built, so it is the running
+        # that has to be watched.
+        nxt = session.make_executor(next_plan())
+        task = asyncio.ensure_future(nxt.run())
+        await asyncio.sleep(0.2)
+        held = not started
+        session._permit.grant(susp)
+        await asyncio.wait_for(task, timeout=10)
+        return session, executor, held
+
+    session, executor, next_plan_was_held = asyncio.run(main())
 
     assert susp.installed_on is session._permit
     # Never unsubscribed by the plan: it goes on watching its signal between
     # plans, which is what lets it report that it is *already* tripped.
     assert not susp.removed
     assert susp in session.suspenders
-    # And the reason stands, so the next plan waits for it before it starts.
-    assert session.suspensions
-    assert join_justifications(session.suspensions) == "beam is down"
-    # Held by a prologue.
-    assert session.make_executor([Msg("null")])._plan_stack
+    # The reason stood, so the next plan was held before its first message and
+    # ran only once the suspender was granted.
+    assert next_plan_was_held
+    assert started == ["ran"]
 
 
 def test_one_durable_suspender_covers_every_running_plan():

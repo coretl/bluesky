@@ -22,6 +22,14 @@ Added
 Fixed
 -----
 
+- A plan is held when a condition goes bad between the executor being built and
+  the plan starting.  Whether the permit was withheld was read twice, once when
+  the executor was built and once when the plan started, and the two readings
+  could disagree: a condition tripping in between left the plan with nothing
+  holding it and a supervisor that believed it was already being held, so the
+  plan ran to completion through a tripped suspender.  One reading now decides
+  both.  The window is brief through ``RunEngine.__call__`` and as wide as it
+  likes for a caller holding an executor of its own.
 - A suspension no longer duplicates the documents from a monitored signal.
   Resuming from one re-subscribed every monitor, having never unsubscribed
   them: monitors run throughout a suspension, and only a *pause* stops them.

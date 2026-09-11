@@ -1008,13 +1008,6 @@ class PlanExecutor:
         for wrapper_func in preprocessors:
             gen = wrapper_func(gen)
         self._push_plan(gen)
-        if not self._permit.granted:
-            # Something is already withholding this plan's permit -- a
-            # suspender tripped before the plan was built. Wait for it in band,
-            # ahead of the plan's first message. A suspension proper cannot do
-            # this job: there is no checkpoint yet to rewind to, so requesting
-            # one would abort the plan rather than hold it.
-            self._push_plan(single_gen(Msg("wait_for", None, [self._permit.wait_granted])))
 
     # The hooks are the session's; firing one, and checking whether it is set
     # at all, belongs to whoever has something to report -- which for all three
@@ -1085,17 +1078,32 @@ class PlanExecutor:
         for msg in ensure_generator(_called(plan)):
             await self._command_registry[msg.command](msg)
 
-    def _start_supervisor(self, *, held_at_start: bool) -> None:
-        """Put a fresh permit supervisor on the loop, replacing any running one.
+    def _arrange_permission(self) -> None:
+        """Hold the plan if it may not run yet, and watch the permit from here.
 
         Called at the start of a plan and again when one resumes, because both
         are entries into a running plan from a state where the user had control
         and the permit may have moved without anything watching it.
+
+        One read decides both halves. They used to be decided separately -- the
+        hold when the executor was built, the supervisor when the plan started
+        -- and could disagree: a condition going bad in between left the plan
+        with nothing holding it and a supervisor that thought it was already
+        being held, so the plan ran straight through a tripped suspender.
+
+        A withheld permit is waited for **in band**, ahead of the plan's first
+        message. A suspension proper cannot do that job: there is no checkpoint
+        yet to rewind to, so requesting one would abort the plan rather than
+        hold it. The exception is a plan that was already parked in that wait
+        when it paused -- the run loop re-sends the message on the way out, so
+        a second one would hold for the same thing twice.
         """
+        held = not self._permit.granted
+        if held and self._permit_granted_when_paused:
+            self._push_plan(single_gen(Msg("wait_for", None, [self._permit.wait_granted])))
         if self._supervisor is not None:
-            if self._supervisor is not None:
-                self._supervisor.cancel()
-        self._supervisor = self._loop.create_task(self._supervise_permit(held_at_start=held_at_start))
+            self._supervisor.cancel()
+        self._supervisor = self._loop.create_task(self._supervise_permit(held_at_start=held))
 
     async def _supervise_permit(self, held_at_start=False):
         """Suspend this plan whenever permission to run is withheld.
@@ -1106,12 +1114,12 @@ class PlanExecutor:
         rather than starting a second rewind, though it still runs its own
         pre-plan when it fires.
 
-        ``held_at_start`` keeps this out of the way of the wait `make_executor`
-        puts in front of the plan: a permit already withheld when the plan
-        starts is being held there, and must not also be suspended here, where
-        there is no checkpoint to rewind to. It is passed in rather than tested
-        here because this task starts a turn of the loop later, and a condition
-        going bad in that window is a real trip.
+        ``held_at_start`` keeps this out of the way of the wait
+        `_arrange_permission` puts in front of the plan: a permit already
+        withheld when the plan starts is being held there, and must not also be
+        suspended here, where there is no checkpoint to rewind to. It is passed
+        in rather than tested here because this task starts a turn of the loop
+        later, and a condition going bad in that window is a real trip.
         """
         if held_at_start:
             await self._permit.wait_granted()
@@ -1274,8 +1282,8 @@ class PlanExecutor:
     def state(self, value):
         self._state = value
 
-    async def _enter_rest(self) -> None:
-        """Bring the plan to rest: stop what is moving, tell the devices.
+    async def _stop_and_pause_objects(self) -> None:
+        """Bring the plan to rest: stop what is moving, pause what can be paused.
 
         Shared by the two kinds of rest a plan can come to, a pause and a
         suspension, which agree about devices and differ about everything else.
@@ -1295,7 +1303,7 @@ class PlanExecutor:
                 except NoReplayAllowed:
                     self._reset_checkpoint_state()
 
-    async def _leave_rest(self) -> None:
+    async def _resume_objects(self) -> None:
         """The plan is moving again: tell the devices, so they can prepare.
 
         Only the ways back *in* call this. Abort, stop and halt let a paused
@@ -1408,11 +1416,7 @@ class PlanExecutor:
         # that acts as a proxy that does not have the correct behavior
         # when `.cancel` is called on it.
         self._task = asyncio.current_task(self._env.loop)
-        # Whether the permit is already withheld is read here, synchronously,
-        # rather than by the task once it starts: a condition going bad in
-        # between would otherwise be taken for the one this plan is already
-        # being held for, and never suspend it.
-        self._start_supervisor(held_at_start=not self._permit.granted)
+        self._arrange_permission()
         stashed_exception = None
         debug = msg_logger.debug
         self._reason = ""
@@ -1443,7 +1447,7 @@ class PlanExecutor:
                     # self._monitor_params to re-instate them later.
                     for current_run in self._run_bundlers.values():
                         await current_run.suspend_monitors()
-                    await self._enter_rest()
+                    await self._stop_and_pause_objects()
                     # Whether the plan was already waiting on its permit when
                     # it came to rest. If it was, the run loop re-sends that
                     # message on the way out and the plan holds itself; if it
@@ -1867,22 +1871,11 @@ class PlanExecutor:
         for current_run in self._run_bundlers.values():
             current_run.record_interruption("resume")
         self._push_plan(self._rewind())
-        await self._leave_rest()
-        # One synchronous read decides both the wait and the supervisor, as
-        # `run` does at the start of a plan: a condition going bad after this
-        # is a real trip to be suspended for, not one this wait is holding.
-        held = not self._permit.granted
-        if held and self._permit_granted_when_paused:
-            # Ahead of the replayed messages, so the plan does not move until
-            # every condition has cleared. No rewind and no plans: there is
-            # nothing here for a pre-plan to reverse.
-            #
-            # Only when nothing was withholding as the plan came to rest. If
-            # something was, the plan was parked in a wait for it and the run
-            # loop re-sends that message now, so a second one would hold for
-            # the same thing twice.
-            self._push_plan(single_gen(Msg("wait_for", None, [self._permit.wait_granted])))
-        self._start_supervisor(held_at_start=held)
+        await self._resume_objects()
+        # Ahead of the replayed messages, so the plan does not move until every
+        # condition has cleared. No pre-plans on the way back in: there is
+        # nothing here for one to reverse.
+        self._arrange_permission()
         self._release_pause()
 
     async def stop(self, *, success: bool = True, finalize: bool = True, reason: str = "") -> None:
@@ -2555,7 +2548,7 @@ class PlanExecutor:
 
         Monitors are untouched: a suspension never stopped them.
         """
-        await self._leave_rest()
+        await self._resume_objects()
 
     async def _checkpoint(self, msg: Msg) -> typing.Any:
         """Instruct the RunEngine to create a checkpoint so that we can rewind
@@ -2787,7 +2780,7 @@ class PlanExecutor:
         pre_plan, post_plan, justification, fut = msg.args
         for current_run in self._run_bundlers.values():
             current_run.record_interruption(justification if justification is not None else "suspended")
-        await self._enter_rest()
+        await self._stop_and_pause_objects()
         # rewind to the last checkpoint
         rewind_plan = self._rewind()
         was_rewindable = self.rewindable
