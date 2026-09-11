@@ -525,7 +525,7 @@ class PlanSession:
     ``md_normalizer``, ``run_bundler_cls``, ``identity``,
     ``record_interruptions``, ``strict_pre_declare``, and ``rewindable`` --
     the last being only the *default*, since a running plan owns its own live
-    value in `PlanExecutor.rewindable_flag`.
+    value in `PlanExecutor.rewindable`.
     """
 
     def __init__(
@@ -755,7 +755,7 @@ class PlanSession:
             # session's. The chain is what makes those one mechanism.
             Dispatcher(parent=self.dispatcher),
             preprocessors=self.preprocessors,
-            rewindable=self.rewindable,
+            initially_rewindable=self.rewindable,
             metadata=metadata,
             subs=subs,
             identity=self.identity,
@@ -860,11 +860,11 @@ class PlanExecutor:
         that ``[f, g]`` is applied as ``f(g(plan))``. Consumed here rather
         than kept: once the plan is wrapped there is nothing left to preprocess
         which is why this is an argument and not part of `PlanEnvironment`.
-    rewindable : bool, optional
-        The *starting* value of :attr:`rewindable_flag`, which the plan then
-        owns and changes constantly -- see `bluesky.preprocessors`. An
-        argument for the same reason: the default is read once, at
-        construction, and the live value lives on this executor.
+    initially_rewindable : bool, optional
+        What :attr:`rewindable` starts at. The plan then owns it and changes it
+        constantly -- see `bluesky.preprocessors` -- so this is an argument
+        rather than part of the environment: the session's default is read once,
+        at construction, and the live value lives on this executor.
     """
 
     _state = LoggingPropertyMachine(RunEngineStateMachine)
@@ -883,7 +883,7 @@ class PlanExecutor:
         commands: typing.Mapping[str, Callable] | None = None,
         without_commands: typing.Collection[str] = (),
         preprocessors: typing.Sequence[Callable] = (),
-        rewindable: bool = True,
+        initially_rewindable: bool = True,
     ):
         self._env = env
         self._hooks = hooks
@@ -926,7 +926,7 @@ class PlanExecutor:
         # session's default, then owned outright: plans toggle this constantly
         # -- every trigger_and_read on a non-rewind-safe device does -- so the
         # live value is plan state and must not outlive the plan.
-        self._rewindable_flag: bool = rewindable
+        self._rewindable_flag: bool = initially_rewindable
 
         # Materialise this executor's state machine while this is still the
         # only thread with a reference, so that no later read from another
@@ -1269,7 +1269,7 @@ class PlanExecutor:
         return self._msg_cache is not None
 
     @property
-    def rewindable_flag(self) -> bool:
+    def rewindable(self) -> bool:
         """Whether messages may be replayed on a rewind.
 
         Owned by this executor and seeded from the session's default, because
@@ -1279,8 +1279,8 @@ class PlanExecutor:
         """
         return self._rewindable_flag
 
-    @rewindable_flag.setter
-    def rewindable_flag(self, value: bool) -> None:
+    @rewindable.setter
+    def rewindable(self, value: bool) -> None:
         # Changing this invalidates the message cache, because the point of
         # turning it off is that what follows must not be replayed. Both
         # writers -- Msg('rewindable') and RunEngine.rewindable -- come through
@@ -1668,11 +1668,7 @@ class PlanExecutor:
                     self._objs_seen.add(msg.obj)
 
                     # if this message can be cached for rewinding, cache it
-                    if (
-                        self._msg_cache is not None
-                        and self.rewindable_flag
-                        and msg.command not in UNCACHEABLE_COMMANDS
-                    ):
+                    if self._msg_cache is not None and self.rewindable and msg.command not in UNCACHEABLE_COMMANDS:
                         # We have a checkpoint.
                         self._msg_cache.append(msg)
 
@@ -2526,9 +2522,9 @@ class PlanExecutor:
 
         (rw_flag,) = msg.args
         if rw_flag is not None:
-            self.rewindable_flag = rw_flag
+            self.rewindable = rw_flag
 
-        return self.rewindable_flag
+        return self.rewindable
 
     async def _configure(self, msg):
         """Configure an object
@@ -2767,7 +2763,7 @@ class PlanExecutor:
                     self._reset_checkpoint_state_meth()
         # rewind to the last checkpoint
         rewind_plan = self._rewind()
-        was_rewindable = self.rewindable_flag
+        was_rewindable = self.rewindable
 
         if callable(pre_plan):
             pre_plan = pre_plan()

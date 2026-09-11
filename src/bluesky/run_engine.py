@@ -617,7 +617,7 @@ class RunEngine:
         # last plan's parting value, which a plan aborted mid
         # rewindable_wrapper can leave False.
         if not self._executor.state.is_idle:
-            return self._executor.rewindable_flag
+            return self._executor.rewindable
         return self._session.rewindable
 
     @rewindable.setter
@@ -633,7 +633,7 @@ class RunEngine:
         # second thread is not supported, and while a plan is running the
         # main thread is blocked inside __call__ and cannot get here anyway.
         self._session.rewindable = bool(v)
-        self._executor.rewindable_flag = bool(v)
+        self._executor.rewindable = bool(v)
 
     @property
     def loop(self):
@@ -1270,7 +1270,7 @@ _FORWARDS_WITHOUT_KNOWN_CALLERS = {
     # property, which is read-only: these forwards are read/write, and a shim
     # for compatibility should not be where an assignment starts raising.
     "_deferred_pause_requested": "_deferred_pause_requested",
-    "_rewindable_flag": "rewindable_flag",
+    "_rewindable_flag": "rewindable",
     "_metadata_per_call": "_metadata_per_call",
     "_run_tracing_spans": "_run_tracing_spans",
     "_staged": "_staged",

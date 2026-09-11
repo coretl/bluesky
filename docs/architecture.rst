@@ -163,7 +163,7 @@ once, and the ``rewindable`` default, which seeds a flag the plan then owns.
 Reading either back from the environment would be reading a stale value.
 
 .. autoclass:: bluesky.plan_executor.PlanExecutor
-    :members: run, state, resumable, rewindable_flag, suspenders, clear_suspenders,
+    :members: run, state, resumable, rewindable, suspenders, clear_suspenders,
               pause, resume, stop, abort, halt, emit, deferred_pause_requested
 
 ``run_start_uids`` lists every run the plan has opened, and ``interrupted`` says
