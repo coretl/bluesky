@@ -1730,7 +1730,7 @@ class PlanExecutor:
                         "An unknown external library has improperly raised "
                         "KeyboardInterrupt. Intercepting and triggering a HALT."
                     )
-                    await self.halt()
+                    await self.stop(success=False, finalize=False)
                 except asyncio.CancelledError as e:
                     if self.state == "pausing":
                         # if we got a CancelledError and we are in the
@@ -2870,52 +2870,77 @@ class PlanExecutor:
         self._start_supervisor(held_at_start=held)
         self._release_pause()
 
-    async def abort(self, reason=""):
+    async def stop(self, *, success: bool = True, finalize: bool = True, reason: str = "") -> None:
+        """End the running plan. The three public verbs are the three modes.
+
+        ``success`` says whether what the plan was doing counts as having
+        worked, the way it does for `bluesky.protocols.Stoppable`: it decides
+        whether the runs close as ``'success'`` or ``'abort'``.
+
+        ``finalize`` says whether the plan may run its own cleanup -- the
+        ``finally`` of a `bluesky.preprocessors.finalize_wrapper`, say. It does
+        not gate this executor's teardown, which always runs: stopping movables,
+        clearing monitors, unstaging, closing runs. The plan is stopped from
+        cleaning up by *what is thrown into it*: `PlanHalt` is a `GeneratorExit`,
+        so the plan cannot yield again once it arrives.
+
+        ================  ==========  ==========
+        verb              ``success`` ``finalize``
+        ================  ==========  ==========
+        `RunEngine.stop`  True        True
+        `RunEngine.abort` False       True
+        `RunEngine.halt`  False       False
+        ================  ==========  ==========
+
+        Parameters
+        ----------
+        success : bool, optional
+            Whether the runs close as ``'success'`` rather than ``'abort'``.
+        finalize : bool, optional
+            Whether the plan may run its own cleanup on the way out.
+        reason : str, optional
+            Recorded on the RunStop of every run still open.
+        """
+        if success and not finalize:
+            raise RuntimeError(
+                "success=True with finalize=False has no meaning: skipping the plan's "
+                "own cleanup is how giving up on a plan differs from ending it, so a "
+                "run cannot then be closed as a success. Use stop() to end the plan "
+                "tidily, or halt() to give up on it."
+            )
         if self.state.is_idle:
             raise TransitionError("RunEngine is already idle.")
-        self._announce("Aborting: running cleanup and marking exit_status as 'abort'...")
+
+        if success:
+            verb, state, exception = "Stopping", "stopping", RequestStop
+        elif finalize:
+            verb, state, exception = "Aborting", "aborting", RequestAbort
+        else:
+            verb, state, exception = "Halting", "halting", PlanHalt
+        cleanup = "running cleanup" if finalize else "skipping cleanup"
+        exit_status = "success" if success else "abort"
+        self._announce(f"{verb}: {cleanup} and marking exit_status as {exit_status!r}...")
+
         self.interrupted = True
         self._reason = reason
-
-        self._exit_status = "abort"
-        self._destroy_open_run_tracing_spans()
-
-        was_paused = self.state == "paused"
-        self.state = "aborting"
-        if was_paused:
-            self._exception = RequestAbort()
-            # A paused plan is parked at the gate, so raising the exception
-            # into it is not enough on its own: it has to be let go before it
-            # can run its cleanup.
-            self._release_pause()
-        else:
-            self._task.cancel()
-
-    async def stop(self):
-        if self.state.is_idle:
-            raise TransitionError("RunEngine is already idle.")
-        self._announce("Stopping: running cleanup and marking exit_status as 'success'...")
-
-        self.interrupted = True
-        was_paused = self.state == "paused"
-        self.state = "stopping"
-        if was_paused:
-            self._exception = RequestStop
-            self._release_pause()
-        else:
-            self._task.cancel()
-
-    async def halt(self):
-        if self.state.is_idle:
-            raise TransitionError("RunEngine is already idle.")
-        self._announce("Halting: skipping cleanup and marking exit_status as 'abort'...")
-        self._destroy_open_run_tracing_spans()
-        self.interrupted = True
-        was_paused = self.state == "paused"
-        self.state = "halting"
-        if was_paused:
-            self._exception = PlanHalt
+        if not success:
+            # Set here and not left to the `except` clauses in `run`, which see
+            # only what reaches them: a plan that catches what is thrown into it,
+            # runs its cleanup and returns normally ends in `StopIteration`,
+            # where those clauses would call the run a success. Saying it now
+            # means the verb decides, not the plan's manners.
             self._exit_status = "abort"
+            # Likewise only when the plan is being given up on. A stop is an
+            # orderly end and closes its spans the ordinary way.
+            self._destroy_open_run_tracing_spans()
+
+        was_paused = self.state == "paused"
+        self.state = state
+        if was_paused:
+            # A paused plan is parked at the gate, so raising the exception into
+            # it is not enough on its own: it has to be let go before it can run
+            # whatever cleanup it is being allowed.
+            self._exception = exception
             self._release_pause()
         else:
             self._task.cancel()

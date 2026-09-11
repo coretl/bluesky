@@ -1095,7 +1095,7 @@ class RunEngine:
         :meth:`RunEngine.halt`
         :meth:`RunEngine.stop`
         """
-        return self.__interrupter_helper(self._executor.abort(reason))
+        return self.__interrupter_helper(self._executor.stop(success=False, reason=reason))
 
     def stop(self):
         """
@@ -1133,7 +1133,7 @@ class RunEngine:
         :meth:`RunEngine.abort`
         :meth:`RunEngine.stop`
         """
-        return self.__interrupter_helper(self._executor.halt())
+        return self.__interrupter_helper(self._executor.stop(success=False, finalize=False))
 
     def __on_loop(self, work, *, timeout=None):
         """Run ``work`` on this engine's loop, and wait for what it returns.
