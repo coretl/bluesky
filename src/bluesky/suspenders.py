@@ -74,6 +74,19 @@ class SuspenderBase(metaclass=ABCMeta):
             self._tripped_message,
         )
 
+    def _require_loop(self, permit, method):
+        """Neither `install` nor `remove` crosses; both are already loop-side.
+
+        `RunEngine.install_suspender` and `remove_suspender` are the routes that
+        cross, and are what a user should reach for.
+        """
+        if not running_on(permit.loop):
+            raise RuntimeError(
+                f"{type(self).__name__}.{method} must be called on the permit's event loop, and "
+                f"this is not it. Use RunEngine.{method}_suspender(suspender), which crosses "
+                "for you."
+            )
+
     def install(self, permit, *, event_type=None):
         """Subscribe to the signal, and withhold ``permit`` while it reads as bad.
 
@@ -122,11 +135,7 @@ class SuspenderBase(metaclass=ABCMeta):
                 "so a second install would leave the first withheld with nothing able to grant "
                 "it. Call remove() first."
             )
-        if not running_on(permit.loop):
-            raise RuntimeError(
-                f"{type(self).__name__}.install must be called on the permit's event loop, and "
-                "this is not it. Use RunEngine.install_suspender(suspender), which crosses for you."
-            )
+        self._require_loop(permit, "install")
         if not self._implements_protocol and not callable(getattr(self._sig, "subscribe", None)):
             raise RuntimeError(
                 "%s does not implement Subscribable protocol or adhere to ophyd subscription pattern." % self._sig
@@ -148,18 +157,12 @@ class SuspenderBase(metaclass=ABCMeta):
         """
         permit = self._permit
         if permit is None:
-            # Never installed: nothing to grant back, nothing to cross for, and
-            # nothing tripped. An ophyd signal is still told to drop a
-            # subscription it never had, which it tolerates; a Subscribable one
-            # would not.
-            if not self._implements_protocol:
-                self._sig.clear_sub(self)
+            # `_permit` is what "installed" means, so there is nothing
+            # subscribed to drop, nothing withheld to grant back, and no loop to
+            # be on. Removing something never installed is allowed and does
+            # nothing, as on main.
             return
-        if not running_on(permit.loop):
-            raise RuntimeError(
-                f"{type(self).__name__}.remove must be called on the permit's event loop, and "
-                "this is not it. Use RunEngine.remove_suspender(suspender), which crosses for you."
-            )
+        self._require_loop(permit, "remove")
         self._sig.clear_sub(self)
         self._permit = None
         self._tripped = False
