@@ -997,15 +997,7 @@ class PlanExecutor:
         self._reason: str = ""  # reason for an abort
         self._deferred_pause_requested: bool = False  # pause at next 'checkpoint'
 
-        # The vocabulary this plan understands, composed once. A plan's
-        # meaning must not change under it, and nothing can change it from
-        # inside: no Msg touches the registry, so registering a command takes
-        # effect for the next plan.
-        registry = self._default_commands()
-        registry.update(commands or {})
-        for name in without_commands:
-            registry.pop(name, None)
-        self._command_registry: dict[str, typing.Callable] = registry
+        self._command_registry = self._build_command_registry(commands, without_commands)
 
         # Load the plan last, so that a preprocessor seeing a half-built
         # executor is not a thing that can happen.
@@ -2879,9 +2871,26 @@ class PlanExecutor:
         "remove_suspender": _remove_suspender,
     }
 
-    def _default_commands(self) -> dict[str, Callable[[Msg], Awaitable[typing.Any]]]:
-        """The vocabulary this executor understands out of the box, bound to it."""
-        return {name: fn.__get__(self) for name, fn in self._DEFAULT_COMMANDS.items()}
+    def _build_command_registry(
+        self,
+        commands: MutableMapping[str, Callable] | None,
+        without_commands: typing.Collection[str],
+    ) -> dict[str, Callable[[Msg], Awaitable[typing.Any]]]:
+        """The vocabulary this plan understands, composed once.
+
+        The built-ins bound to this executor, then whatever was registered on
+        top, less whatever was unregistered. Composed here and never again: a
+        plan's meaning must not change under it, and nothing can change it from
+        inside, since no `Msg` reaches the registry. Registering a command
+        therefore takes effect for the next plan.
+        """
+        registry: dict[str, Callable[[Msg], Awaitable[typing.Any]]] = {
+            name: fn.__get__(self) for name, fn in self._DEFAULT_COMMANDS.items()
+        }
+        registry.update(commands or {})
+        for name in without_commands:
+            registry.pop(name, None)
+        return registry
 
 
 class Dispatcher:
