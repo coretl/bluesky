@@ -220,7 +220,7 @@ def test_event_type_is_rejected_for_a_subscribable_signal(RE):
     # The rejected install recorded nothing, so a valid one still goes through.
     # Asserted through the public route rather than an attribute, because what
     # a half-installed suspender would be holding differs between the RunEngine
-    # this test was written against and the permit it holds now.
+    # this test was written against and the suspension it holds now.
     RE.install_suspender(susp)
     RE.remove_suspender(susp)
 
@@ -505,7 +505,7 @@ def test_suspender_plans(RE, hw):
     putter(0)
 
     # Do the messages work? A suspender a plan installs is that plan's: it
-    # withholds that plan's permit and is unsubscribed when the plan ends,
+    # trips that plan's suspension and is unsubscribed when the plan ends,
     # so it is gone by the time RE(...) returns.
     seen = []
 
@@ -556,7 +556,7 @@ def test_suspender_plans(RE, hw):
 def test_two_conditions_make_one_suspension(RE):
     """Two conditions going bad at once suspend the plan once, not once each.
 
-    The reasons accumulate on one permit, so the plan rewinds once while each
+    The reasons accumulate on one suspension, so the plan rewinds once while each
     condition's pre-plan runs as it fires -- which is why pre- and post-plans
     must be idempotent.
     """
@@ -668,7 +668,7 @@ def test_suspender_installed_by_a_plan_ends_with_it(RE, hw):
     """A suspender a plan installs for itself is visible while that plan runs
     and gone once it ends.
 
-    It withholds the plan's own permit and is released with the plan.
+    It trips the plan's own suspension and is released with the plan.
     ``RE.suspenders`` reports it meanwhile, being the union of the durable
     suspenders and the running plan's.
     """

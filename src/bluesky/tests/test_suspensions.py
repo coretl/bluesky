@@ -1,8 +1,8 @@
-"""The four suspension sequences, and what permits change about them.
+"""The four suspension sequences, and what suspensions change about them.
 
-Tests 1-4 characterise behaviour that predates permits: they pass on ``main``
+Tests 1-4 characterise behaviour that predates suspensions: they pass on ``main``
 unchanged, so they measure the rewrite against pinned behaviour rather than
-against memory. The rest are the bugs permits exist to fix, and fail on ``main``.
+against memory. The rest are the bugs suspensions exist to fix, and fail on ``main``.
 """
 
 import asyncio
@@ -15,8 +15,8 @@ import pytest
 from ophyd.signal import Signal
 
 from bluesky import Msg
-from bluesky.permits import Permit, join_justifications
 from bluesky.suspenders import SuspendBoolHigh
+from bluesky.suspensions import Suspension, join_justifications
 from bluesky.tests import ophyd_async, requires_ophyd_async
 from bluesky.utils import FailedPause, RunEngineInterrupted
 
@@ -51,7 +51,7 @@ def _at_message(RE, commands, **at):
     hook sees the replayed messages too.
 
     Setting a signal from here reaches the suspender on this loop: the set is a
-    task, the withhold is applied when it runs, and two sets made in one call are
+    task, the trip is applied when it runs, and two sets made in one call are
     two tasks queued before the supervisor is woken by the first -- which is what
     makes "both conditions went bad in the same turn" a fact rather than a hope
     about two timers.
@@ -72,9 +72,9 @@ def _settle(RE):
     """Wait for the loop to apply what a signal callback just scheduled.
 
     A suspender trips on whatever thread its signal called back on and schedules
-    the withhold onto the loop rather than applying it there, so a test that
+    the trip onto the loop rather than applying it there, so a test that
     puts a value and looks straight away is racing it. Everything reaches the
-    loop in order, so one round trip behind the withhold is enough.
+    loop in order, so one round trip behind the trip is enough.
     """
     done = concurrent.futures.Future()
     RE.loop.call_soon_threadsafe(lambda: done.set_result(None))
@@ -163,7 +163,7 @@ def test_releases_while_no_plan_is_running(RE, hw):
 
 
 # --------------------------------------------------------------------------
-# What permits change. These fail on main.
+# What suspensions change. These fail on main.
 
 
 @requires_ophyd_async
@@ -195,7 +195,7 @@ def test_two_conditions_are_one_suspension(RE):
     assert commands.count("_start_suspender") == 1
 
 
-def test_a_retrip_within_the_settle_time_stays_withheld(RE, hw):
+def test_a_retrip_within_the_settle_time_stays_tripped(RE, hw):
     """The release scheduled by one recovery must not drop a newer reason."""
     sig = hw.bool_sig
     sig.put(0)
@@ -311,17 +311,17 @@ def test_removing_a_suspender_settles_before_it_returns(RE, hw):
     suspender = SuspendBoolHigh(sig)
 
     RE.install_suspender(suspender)
-    permit = RE._session._permit
+    suspension = RE._session._suspension
     # Installed on a bad signal, so it is holding.
-    assert permit.tripped
+    assert suspension.tripped
 
     RE.remove_suspender(suspender)
     # And it has let go by the time remove returns.
-    assert not permit.tripped
+    assert not suspension.tripped
 
 
 def test_installing_a_suspender_twice_is_an_error(RE, hw):
-    """One suspender, one permit: a second install would orphan the first."""
+    """One suspender, one suspension: a second install would orphan the first."""
     suspender = SuspendBoolHigh(hw.bool_sig)
     RE.install_suspender(suspender)
 
@@ -442,7 +442,7 @@ def test_a_suspension_reaches_both_hooks(RE):
 
 
 # --------------------------------------------------------------------------
-# The permit itself
+# The suspension itself
 
 
 def test_a_permit_is_read_from_any_thread():
@@ -452,18 +452,18 @@ def test_a_permit_is_read_from_any_thread():
     one snapshot or the next -- never a mapping being merged as it is unpacked.
     """
     loop = asyncio.new_event_loop()
-    permit = Permit("test", loop=loop)
+    suspension = Suspension("test", loop=loop)
 
-    async def withhold():
-        permit.trip("beam", "beam is down")
+    async def trip():
+        suspension.trip("beam", "beam is down")
 
-    loop.run_until_complete(withhold())
+    loop.run_until_complete(trip())
 
     seen = {}
 
     def read():
-        seen["tripped"] = permit.tripped
-        seen["why"] = join_justifications(permit.reasons)
+        seen["tripped"] = suspension.tripped
+        seen["why"] = join_justifications(suspension.reasons)
 
     reader = threading.Thread(target=read)
     reader.start()
@@ -473,13 +473,13 @@ def test_a_permit_is_read_from_any_thread():
     assert seen == {"tripped": True, "why": "beam is down"}
 
 
-def test_a_child_permit_is_withheld_whenever_its_parent_is():
+def test_a_child_suspension_is_tripped_whenever_its_parent_is():
     """The chain, which is what makes durable and plan-local one mechanism."""
 
     async def check():
         loop = asyncio.get_running_loop()
-        parent = Permit("session", loop=loop)
-        child = Permit("plan", loop=loop, parent=parent)
+        parent = Suspension("session", loop=loop)
+        child = Suspension("plan", loop=loop, parent=parent)
 
         parent.trip("beam", "beam is down")
         # Held up by its parent.
@@ -546,7 +546,7 @@ def test_two_conditions_tripping_in_one_turn_each_run_their_plans(RE):
     """Both conditions are in the opening snapshot, rather than one joining.
 
     Two signals going bad in the same turn of the loop -- one interlock dropping
-    two readings -- have both withholds applied before the supervisor is
+    two readings -- have both trips applied before the supervisor is
     scheduled again, so neither arrives through the joining path. Each must
     still run its own pre-plan, and the post-plans still unwind in reverse.
 
@@ -587,7 +587,7 @@ def test_two_conditions_tripping_in_one_turn_each_run_their_plans(RE):
 def test_a_trip_between_building_the_plan_and_running_it_still_holds():
     """The window between `make_executor` and the plan's first message.
 
-    Whether the permit is withheld is read when the plan starts, not when the
+    Whether the suspension is tripped is read when the plan starts, not when the
     executor is built. It used to be read at both, and the two could disagree:
     a condition going bad in between left the plan with nothing holding it and
     a supervisor that believed it was already being held, so the plan ran to
@@ -609,21 +609,21 @@ def test_a_trip_between_building_the_plan_and_running_it_still_holds():
     async def main():
         session = PlanSession()
         executor = session.make_executor(plan())
-        # Nothing was withholding when this was built.
-        assert not executor._permit.tripped
+        # Nothing had tripped when this was built.
+        assert not executor._suspension.tripped
 
-        session._permit.trip("beam", "beam is down")
+        session._suspension.trip("beam", "beam is down")
         task = asyncio.ensure_future(executor.run())
         await asyncio.sleep(0.3)
         held = list(steps)
 
-        session._permit.clear("beam")
+        session._suspension.clear("beam")
         await asyncio.wait_for(task, timeout=10)
         return held
 
-    ran_while_withheld = asyncio.run(main())
+    ran_while_tripped = asyncio.run(main())
 
-    assert ran_while_withheld == []
+    assert ran_while_tripped == []
     assert steps == ["step"] * 3
 
 
@@ -642,7 +642,7 @@ def test_a_trip_just_after_the_plan_starts_still_suspends(RE, hw):
 
     def trip_as_the_plan_starts(new_state, old_state):
         if (old_state, new_state) == ("idle", "running"):
-            # The plan has started, so __call__ has read the permit already,
+            # The plan has started, so __call__ has read the suspension already,
             # and the supervisor has been created but has not had a turn.
             sig.put(1)
 
@@ -665,7 +665,7 @@ def test_installing_a_suspender_on_the_run_engine_still_works(RE, hw):
     sig.put(0)
     susp = SuspendBoolHigh(sig)
 
-    with pytest.warns(DeprecationWarning, match="takes the permit"):
+    with pytest.warns(DeprecationWarning, match="takes the suspension"):
         susp.install(RE)
 
     # The deprecated call installs on the engine.

@@ -28,7 +28,6 @@ from bluesky._vendor.super_state_machine.machines import StateMachine
 
 from .bundlers import RunBundler, maybe_await
 from .log import ComposableLogAdapter, logger, msg_logger, state_logger
-from .permits import Permit, Suspension, join_justifications
 from .protocols import (
     Flyable,
     Locatable,
@@ -44,6 +43,7 @@ from .protocols import (
     check_supports,
 )
 from .suspenders import SuspenderBase
+from .suspensions import Suspension, SuspensionReason, join_justifications
 from .tracing import tracer
 from .utils import (
     AsyncInput,
@@ -487,7 +487,7 @@ class PlanSession:
 
     An argument here means a setting nothing changes once the session exists.
     ``md``, ``loop`` and ``log`` are consumed while it is being built -- ``md``
-    is stamped with the library versions, ``loop`` is what the durable permit is
+    is stamped with the library versions, ``loop`` is what the durable suspension is
     created on, and ``log`` is written to while those versions are collected --
     and ``run_bundler_cls`` and ``identity`` are decided once by whoever
     constructs the session and never revised.
@@ -619,9 +619,9 @@ class PlanSession:
 
         self._suspenders: set[SuspenderBase] = set()
         # The durable half of the suspension state. Suspenders installed here
-        # write to this permit, and every executor this session builds waits
+        # write to this suspension, and every executor this session builds waits
         # on it as well as on its own -- the same shape as the two dispatchers.
-        self._permit = Permit("session", loop)
+        self._suspension = Suspension("session", loop)
 
         # Commands the user has added or removed. Composed into each executor's
         # vocabulary as it is built, so that registrations survive the plan
@@ -655,7 +655,7 @@ class PlanSession:
         return tuple(self._suspenders)
 
     @property
-    def suspensions(self) -> typing.Mapping[typing.Hashable, Suspension]:
+    def suspensions(self) -> typing.Mapping[typing.Hashable, SuspensionReason]:
         """What is holding up every plan this session runs, by who raised it.
 
         Empty when nothing is: the plans this session runs are suspended
@@ -663,7 +663,7 @@ class PlanSession:
         is the order their pre-plans ran and the reverse of the order their
         post-plans will.
         """
-        return self._permit.reasons
+        return self._suspension.reasons
 
     def register_command(self, name, func):
         """Register a new Message command.
@@ -739,12 +739,12 @@ class PlanSession:
             :meth:`RunEngine.__call__` accepts.
 
         """
-        # This plan's own permit, under the session's. A suspender the plan
+        # This plan's own suspension, under the session's. A suspender the plan
         # installs holds up this plan; one installed on the session holds up
         # every plan it runs, and the chain is what makes those one mechanism.
-        # An already-withheld permit holds the plan at its first message; the
+        # An already-tripped suspension holds the plan at its first message; the
         # executor arranges that for itself.
-        permit = Permit("plan", self._loop, parent=self._permit)
+        suspension = Suspension("plan", self._loop, parent=self._suspension)
 
         return PlanExecutor(
             plan,
@@ -767,7 +767,7 @@ class PlanSession:
                 record_interruptions=self.record_interruptions,
                 strict_pre_declare=self.strict_pre_declare,
             ),
-            permit,
+            suspension,
             self.hooks,
             # A dispatcher of this plan's own, under the session's, so that a
             # plan's subscribers end with it and its documents still reach the
@@ -790,12 +790,12 @@ class PlanSession:
         when a plan started could not report that it was *already* tripped, and
         waiting for beam that is already down is what suspenders are for.
 
-        It has no plan to suspend, and needs none: tripping withholds this
-        session's permit, and whichever executors are running are waiting on
-        that permit already. A suspender never learns what it is suspending.
+        It has no plan to suspend, and needs none: tripping holds up this
+        session's suspension, and whichever executors are running are waiting on
+        that suspension already. A suspender never learns what it is suspending.
         """
         self._suspenders.add(suspender)
-        suspender.install(self._permit)
+        suspender.install(self._suspension)
 
     def remove_suspender(self, suspender: SuspenderBase) -> None:
         """Uninstall a durable suspender."""
@@ -844,9 +844,9 @@ class PlanExecutor:
     env : PlanEnvironment
         Where the plan is being run: the loop, the logger, the metadata and the
         settings that compose each run.
-    permit : Permit
-        The permit this plan waits on. Normally built with the session's
-        durable permit as its parent, so that a suspender installed on the
+    suspension : Suspension
+        The suspension this plan waits on. Normally built with the session's
+        durable suspension as its parent, so that a suspender installed on the
         session holds up every plan it is running.
     hooks : PlanHooks
         The observation points. Shared by reference with the session rather
@@ -892,7 +892,7 @@ class PlanExecutor:
         self,
         plan,
         env: PlanEnvironment,
-        permit: Permit,
+        suspension: Suspension,
         hooks: PlanHooks,
         dispatcher: "Dispatcher",
         *,
@@ -910,7 +910,7 @@ class PlanExecutor:
 
         # Set when the plan comes to rest paused; see the pause block in `run`.
         self._cleared_when_paused = True
-        # The task watching this plan's permit, replaced whenever the plan
+        # The task watching this plan's suspension, replaced whenever the plan
         # enters from a state where the user had control. None until `run`.
         self._supervisor: asyncio.Task | None = None
         # When cleared, run() will pause until it is set again.
@@ -968,16 +968,16 @@ class PlanExecutor:
         self._run_tracing_spans: list[Span] = []  # open tracing spans
 
         # The suspenders this plan installs for itself, which this executor
-        # owns outright and which write to the permit just below. The durable
-        # ones are the session's: they hold this plan up through the permit
+        # owns outright and which write to the suspension just below. The durable
+        # ones are the session's: they hold this plan up through the suspension
         # chain, so there is nothing to keep a copy of here -- and a copy would
         # go stale the moment one was installed while this plan was running.
         self._plan_suspenders: set[SuspenderBase] = set()
 
-        # This plan's own permit, the counterpart of its own dispatcher: a
+        # This plan's own suspension, the counterpart of its own dispatcher: a
         # suspender a plan installs holds up that plan alone. The session's is
         # shared with every plan it is running.
-        self._permit = permit
+        self._suspension = suspension
 
         self._staged: set[typing.Any] = set()  # staged, not yet unstaged
         self._objs_seen: set[typing.Any] = set()  # every object seen in a Msg
@@ -1040,7 +1040,7 @@ class PlanExecutor:
     def suspenders(self) -> tuple[SuspenderBase, ...]:
         """The suspenders this plan installed for itself, which end with it.
 
-        Not the session's. Those hold this plan up through the permit chain,
+        Not the session's. Those hold this plan up through the suspension chain,
         and whoever wants both asks both -- which is what `RunEngine` does.
         """
         return tuple(self._plan_suspenders)
@@ -1048,7 +1048,7 @@ class PlanExecutor:
     def _drop_plan_suspender(self, suspender: SuspenderBase) -> None:
         """Uninstall a suspender this plan installed for itself."""
         self._plan_suspenders.discard(suspender)
-        # `remove` drops the suspender's reason itself, on this permit and under
+        # `remove` drops the suspender's reason itself, on this suspension and under
         # this key. Granting again here would be the same write a second time --
         # and a bare one, made on whatever thread called in, which is how
         # `RunEngine.clear_suspenders` came to raise when reached from the
@@ -1078,11 +1078,11 @@ class PlanExecutor:
             await self._command_registry[msg.command](msg)
 
     def _arrange_permission(self) -> None:
-        """Hold the plan if it may not run yet, and watch the permit from here.
+        """Hold the plan if it may not run yet, and watch the suspension from here.
 
         Called at the start of a plan and again when one resumes, because both
         are entries into a running plan from a state where the user had control
-        and the permit may have moved without anything watching it.
+        and the suspension may have moved without anything watching it.
 
         One read decides both halves. They used to be decided separately -- the
         hold when the executor was built, the supervisor when the plan started
@@ -1090,22 +1090,22 @@ class PlanExecutor:
         with nothing holding it and a supervisor that thought it was already
         being held, so the plan ran straight through a tripped suspender.
 
-        A withheld permit is waited for **in band**, ahead of the plan's first
+        A tripped suspension is waited for **in band**, ahead of the plan's first
         message. A suspension proper cannot do that job: there is no checkpoint
         yet to rewind to, so requesting one would abort the plan rather than
         hold it. The exception is a plan that was already parked in that wait
         when it paused -- the run loop re-sends the message on the way out, so
         a second one would hold for the same thing twice.
         """
-        tripped = self._permit.tripped
+        tripped = self._suspension.tripped
         if tripped and self._cleared_when_paused:
-            self._push_plan(single_gen(Msg("wait_for", None, [self._permit.wait_cleared])))
+            self._push_plan(single_gen(Msg("wait_for", None, [self._suspension.wait_cleared])))
         if self._supervisor is not None:
             self._supervisor.cancel()
-        self._supervisor = self._loop.create_task(self._supervise_permit(tripped_at_start=tripped))
+        self._supervisor = self._loop.create_task(self._supervise_suspension(tripped_at_start=tripped))
 
-    async def _supervise_permit(self, tripped_at_start=False):
-        """Suspend the plan whenever permission to run is withheld.
+    async def _supervise_suspension(self, tripped_at_start=False):
+        """Suspend the plan whenever its suspension is tripped.
 
         One suspension per episode, however many conditions are standing: a
         condition tripping while one is open joins it rather than starting a
@@ -1114,31 +1114,31 @@ class PlanExecutor:
         if tripped_at_start:
             # Already held in band by `_arrange_permission`, and there is no
             # checkpoint yet to rewind to, so this must not suspend for it.
-            await self._permit.wait_cleared()
+            await self._suspension.wait_cleared()
         while True:
             opening = await self._wait_for_a_reason_to_suspend()
-            joined: list[Suspension] = []
+            joined: list[SuspensionReason] = []
             self._hooks.suspend(join_justifications(opening))
-            if not self._begin_suspension(opening, joined, self._permit.wait_cleared):
+            if not self._begin_suspension(opening, joined, self._suspension.wait_cleared):
                 return
             await self._gather_joiners(opening, joined)
 
-    async def _wait_for_a_reason_to_suspend(self) -> dict[typing.Hashable, Suspension]:
-        """Park until something is withholding the plan and it is running."""
+    async def _wait_for_a_reason_to_suspend(self) -> dict[typing.Hashable, SuspensionReason]:
+        """Park until the suspension is tripped and the plan is running."""
         while True:
             # The read that decides is the read that reports, so this cannot be
             # told to suspend and then find nothing to suspend for.
-            withheld = self._permit.reasons
+            reasons = self._suspension.reasons
             # Nothing is arranged while the plan is at rest or coming to rest:
             # control has gone back to the user, and `resume` replaces this task.
-            if withheld and self.state not in ("paused", "pausing"):
-                return dict(withheld)
-            await self._permit.wait_changed()
+            if reasons and self.state not in ("paused", "pausing"):
+                return dict(reasons)
+            await self._suspension.wait_changed()
 
     def _begin_suspension(
         self,
-        opening: dict[typing.Hashable, Suspension],
-        joined: list[Suspension],
+        opening: dict[typing.Hashable, SuspensionReason],
+        joined: list[SuspensionReason],
         fut,
     ) -> bool:
         """Put a suspension in front of the plan. False if it cannot be held.
@@ -1198,7 +1198,9 @@ class PlanExecutor:
         self._task.cancel()
         return True
 
-    async def _gather_joiners(self, opening: dict[typing.Hashable, Suspension], joined: list[Suspension]) -> None:
+    async def _gather_joiners(
+        self, opening: dict[typing.Hashable, SuspensionReason], joined: list[SuspensionReason]
+    ) -> None:
         """Run the pre-plan of every condition that joins an open suspension.
 
         Each runs out of band, because the plan is parked in the suspension's
@@ -1206,9 +1208,9 @@ class PlanExecutor:
         post-plans wait for the unwind, so that they cannot race the plan
         resuming.
         """
-        while self._permit.tripped:
-            await self._permit.wait_changed()
-            for key, suspension in self._permit.reasons.items():
+        while self._suspension.tripped:
+            await self._suspension.wait_changed()
+            for key, suspension in self._suspension.reasons.items():
                 if key in opening:
                     continue
                 opening[key] = suspension
@@ -1217,13 +1219,13 @@ class PlanExecutor:
                     await self._run_out_of_band(suspension.pre_plan)
 
     @property
-    def suspensions(self) -> typing.Mapping[typing.Hashable, Suspension]:
+    def suspensions(self) -> typing.Mapping[typing.Hashable, SuspensionReason]:
         """What is holding this plan up, by who raised it.
 
         The whole chain: conditions raised on the session as well as ones this
         plan installed for itself. Empty when nothing is holding it.
         """
-        return self._permit.reasons
+        return self._suspension.reasons
 
     @property
     def resumable(self) -> bool:
@@ -1426,12 +1428,12 @@ class PlanExecutor:
                     for current_run in self._run_bundlers.values():
                         await current_run.suspend_monitors()
                     await self._stop_and_pause_objects()
-                    # Whether the plan was already waiting on its permit when
+                    # Whether the plan was already waiting on its suspension when
                     # it came to rest. If it was, the run loop re-sends that
                     # message on the way out and the plan holds itself; if it
-                    # was not, anything withholding by then arrived during the
+                    # was not, anything tripped by then arrived during the
                     # pause, and `resume` has to arrange the wait.
-                    self._cleared_when_paused = not self._permit.tripped
+                    self._cleared_when_paused = not self._suspension.tripped
                     self.state = "paused"
                     # Let RunEngine.__call__ return...
                     self._hooks.pause()
@@ -1601,7 +1603,7 @@ class PlanExecutor:
                 except asyncio.CancelledError as e:
                     if self.state == "pausing":
                         # if we got a CancelledError and we are in the
-                        # 'pausing' state clear the run permit and
+                        # 'pausing' state clear the run suspension and
                         # bounce to the top
                         self._run_permit.clear()
                         continue
@@ -2730,17 +2732,17 @@ class PlanExecutor:
         """
         suspender = msg.args[0]
         self._plan_suspenders.add(suspender)
-        suspender.install(self._permit)
+        suspender.install(self._suspension)
 
     async def _remove_suspender(self, msg: Msg) -> typing.Any:
         """Remove a suspender from this plan. Msg('remove_suspender', None, suspender)
 
         Only a suspender this plan installed. One installed on the session
         outlives every plan and is not this one's to unsubscribe, and its reason
-        stands on the session's permit rather than this plan's.
+        stands on the session's suspension rather than this plan's.
         """
         suspender = msg.args[0]
-        if not suspender.installed_on(self._permit):
+        if not suspender.installed_on(self._suspension):
             warn(
                 f"{suspender!r} is not installed on this plan, so "
                 "Msg('remove_suspender') ignored it. A plan can only remove a "
@@ -2866,7 +2868,7 @@ class PlanExecutor:
 class Dispatcher:
     """Dispatch documents to user-defined consumers on the main thread.
 
-    Dispatchers chain, the way permits do. A plan's subscribers go in one of
+    Dispatchers chain, the way suspensions do. A plan's subscribers go in one of
     these with the session's as its ``parent``, so that a document reaches the
     subscribers outliving the plan before the ones that arrived with it -- the
     order a single shared registry gave by construction -- and so that dropping

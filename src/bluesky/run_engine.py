@@ -15,7 +15,6 @@ from bluesky._vendor.super_state_machine.extras import ProxyString
 
 from .bundlers import RunBundler
 from .log import ComposableLogAdapter, logger
-from .permits import join_justifications, running_on
 
 # Re-exported, and deliberately left out of the __all__ below, so that
 # `from bluesky.run_engine import Dispatcher` and its like keep working.
@@ -37,6 +36,7 @@ from .plan_executor import (  # noqa: F401
 )
 from .protocols import SyncOrAsync, T
 from .suspenders import SUBSCRIPTION_TIMEOUT
+from .suspensions import join_justifications, running_on
 from .utils import (
     DefaultDuringTask,
     DuringTask,
@@ -856,7 +856,7 @@ class RunEngine:
         if not self._executor.state.is_idle:
             raise RuntimeError(f"The RunEngine is in a {self._executor.state} state")
 
-        # An already-tripped suspender is holding the session's permit, and
+        # An already-tripped suspender is holding the session's suspension, and
         # `make_executor` puts the wait for it in front of the plan. All this
         # adds is the heads-up, which only makes sense at a prompt.
         self._announce_tripped(self._session.suspensions, "begin")
@@ -1041,8 +1041,8 @@ class RunEngine:
         """
         self._raise_if_panicked()
         # Reaches a plan already in progress without anything having to be
-        # told: that plan's permit is a child of the session's, so it is
-        # withheld whenever this one is.
+        # told: that plan's suspension is a child of the session's, so it is
+        # tripped whenever this one is.
         self.__on_loop(partial(self._session.install_suspender, suspender), timeout=SUBSCRIPTION_TIMEOUT)
 
     def remove_suspender(self, suspender):
@@ -1152,13 +1152,13 @@ class RunEngine:
         own thread crosses onto the loop -- all of it, whether the caller had a
         coroutine to await or a function to call. Nothing the facade calls
         crosses for itself: `SuspenderBase.install` and `remove` are loop-side
-        methods, and a permit is written by whoever crossed to reach it. The
+        methods, and a suspension is written by whoever crossed to reach it. The
         other direction, a signal or a status calling back on a thread bluesky
         did not choose, is crossed where that callback is defined.
 
         Waiting is the point. It is what lets `install_suspender` promise that
-        a suspender installed on an already-bad signal is withholding the
-        permit by the time the call returns, so that starting a plan straight
+        a suspender installed on an already-bad signal is tripping the
+        suspension by the time the call returns, so that starting a plan straight
         afterwards cannot race its own trip.
 
         There is one crossing that deliberately does not wait here, in
@@ -1214,7 +1214,7 @@ class RunEngine:
     def _announce_suspension(self, justification: str) -> None:
         """Say a suspension has begun, and how to get back to a prompt."""
         print("Suspending....To get prompt hit Ctrl-C twice to pause.")
-        print(f"Suspension occurred at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}.")
+        print(f"SuspensionReason occurred at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}.")
         if justification:
             print(f"Justification for this suspension:\n{justification}")
 

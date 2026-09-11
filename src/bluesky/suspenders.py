@@ -4,7 +4,7 @@ from warnings import warn
 
 from bluesky.protocols import Subscribable
 
-from .permits import Permit, running_on
+from .suspensions import Suspension, running_on
 
 # How long `RunEngine.install_suspender`, `remove_suspender` and
 # `clear_suspenders` wait for the event loop to run the work they hand it,
@@ -45,16 +45,16 @@ class SuspenderBase(metaclass=ABCMeta):
 
     def __init__(self, signal, *, sleep=0, pre_plan=None, post_plan=None, tripped_message=""):
         """ """
-        # The permit to withhold while this reads as bad. A suspender does not
+        # The suspension to trip while this reads as bad. A suspender does not
         # know what is running, or whether anything is: everything that must be
-        # held up by this condition is waiting on that permit already.
-        # Every piece of mutable state below -- the permit, whether this is
-        # tripped, the last value it saw -- is written and read on the permit's
+        # held up by this condition is waiting on that suspension already.
+        # Every piece of mutable state below -- the suspension, whether this is
+        # tripped, the last value it saw -- is written and read on the suspension's
         # event loop and nowhere else. `install` and `remove` are called there,
         # and a reading arriving on a signal's own thread is handed over rather
         # than acted on. One sequence, on one thread: no lock, and no write
         # that a later one has to be able to supersede.
-        self._permit = None
+        self._suspension = None
         self._tripped = False
         self._tripped_message = tripped_message
         self._sleep = sleep
@@ -74,30 +74,30 @@ class SuspenderBase(metaclass=ABCMeta):
             self._tripped_message,
         )
 
-    def _require_loop(self, permit, method):
+    def _require_loop(self, suspension, method):
         """Neither `install` nor `remove` crosses; both are already loop-side.
 
         `RunEngine.install_suspender` and `remove_suspender` are the routes that
         cross, and are what a user should reach for.
         """
-        if not running_on(permit.loop):
+        if not running_on(suspension.loop):
             raise RuntimeError(
-                f"{type(self).__name__}.{method} must be called on the permit's event loop, and "
+                f"{type(self).__name__}.{method} must be called on the suspension's event loop, and "
                 f"this is not it. Use RunEngine.{method}_suspender(suspender), which crosses "
                 "for you."
             )
 
-    def install(self, permit, *, event_type=None):
-        """Subscribe to the signal, and withhold ``permit`` while it reads as bad.
+    def install(self, suspension, *, event_type=None):
+        """Subscribe to the signal, and trip ``suspension`` while it reads as bad.
 
         Parameters
         ----------
 
-        permit : `bluesky.permits.Permit`
-            Withheld while this suspender is tripped, and what decides how far
-            the suspension reaches: a session's holds up every plan it runs, a
-            plan's holds up that plan alone. Nothing hands one out, so this is
-            reached through `RunEngine.install_suspender`,
+        suspension : `bluesky.suspensions.Suspension`
+            What this suspender trips, and what decides how far the suspension
+            reaches: a session's holds up every plan it runs, a plan's holds up
+            that plan alone. Nothing hands one out, so this is reached through
+            `RunEngine.install_suspender`,
             `bluesky.plan_executor.PlanSession.install_suspender`, or
             ``Msg('install_suspender')`` rather than called directly.
 
@@ -109,7 +109,7 @@ class SuspenderBase(metaclass=ABCMeta):
 
         Notes
         -----
-        Call this on the permit's event loop. `RunEngine.install_suspender`
+        Call this on the suspension's event loop. `RunEngine.install_suspender`
         crosses onto it for you, and is what a user should reach for; nothing
         here crosses on its own.
         """
@@ -118,57 +118,57 @@ class SuspenderBase(metaclass=ABCMeta):
             # route below, which drops `event_type` on its way to
             # `install_suspender` and would otherwise ignore it silently.
             raise RuntimeError(f"Can not specify non-None event_type {event_type=} with Subscribable protocol")
-        if not isinstance(permit, Permit):
+        if not isinstance(suspension, Suspension):
             # Given a RunEngine, install durably on it.
             warn(
                 f"Passing a RunEngine to {type(self).__name__}.install is deprecated; "
-                "it now takes the permit to withhold, which is not something a "
+                "it now takes the suspension to trip, which is not something a "
                 "RunEngine hands out. Use RE.install_suspender(suspender).",
                 DeprecationWarning,
                 stacklevel=2,
             )
-            permit.install_suspender(self)
+            suspension.install_suspender(self)
             return
-        if self._permit is not None:
+        if self._suspension is not None:
             raise RuntimeError(
-                f"This {type(self).__name__} is already installed. A suspender holds one permit, "
-                "so a second install would leave the first withheld with nothing able to grant "
+                f"This {type(self).__name__} is already installed. A suspender holds one suspension, "
+                "so a second install would leave the first tripped with nothing able to clear "
                 "it. Call remove() first."
             )
-        self._require_loop(permit, "install")
+        self._require_loop(suspension, "install")
         if not self._implements_protocol and not callable(getattr(self._sig, "subscribe", None)):
             raise RuntimeError(
                 "%s does not implement Subscribable protocol or adhere to ophyd subscription pattern." % self._sig
             )
-        self._permit = permit
+        self._suspension = suspension
         # Both subscription styles call back with the current reading before
         # they return, and this is the loop, so an already-bad signal has
-        # withheld the permit by the time this returns.
+        # tripped the suspension by the time this returns.
         if self._implements_protocol:
             self._sig.subscribe_reading(self)
         else:
             self._sig.subscribe(self, event_type=event_type, run=True)
 
     def remove(self):
-        """Stop watching the signal, and drop whatever this was withholding.
+        """Stop watching the signal, and clear whatever this had tripped.
 
-        Call this on the permit's event loop, as with `install`.
+        Call this on the suspension's event loop, as with `install`.
         `RunEngine.remove_suspender` crosses onto it for you.
         """
-        permit = self._permit
-        if permit is None:
-            # `_permit` is what "installed" means, so there is nothing
-            # subscribed to drop, nothing withheld to grant back, and no loop to
+        suspension = self._suspension
+        if suspension is None:
+            # `_suspension` is what "installed" means, so there is nothing
+            # subscribed to drop, nothing tripped to clear, and no loop to
             # be on. Removing something never installed is allowed and does
             # nothing, as on main.
             return
-        self._require_loop(permit, "remove")
+        self._require_loop(suspension, "remove")
         self._sig.clear_sub(self)
-        self._permit = None
+        self._suspension = None
         self._tripped = False
         # Nothing else drops the reason once this has stopped watching, and
         # every reading raised earlier has already been applied.
-        permit.clear(self)
+        suspension.clear(self)
 
     @abstractmethod
     def _should_suspend(self, value):
@@ -219,34 +219,34 @@ class SuspenderBase(metaclass=ABCMeta):
         because this is where the callback is defined; the reading is carried
         across and decided there, not here.
         """
-        permit = self._permit
-        if permit is None:
+        suspension = self._suspension
+        if suspension is None:
             return
         if self._implements_protocol:
             # Subscribable calls back with {name: Reading}
             value = value[self._sig.name]["value"]
-        loop = permit.loop
+        loop = suspension.loop
         if running_on(loop):
             self.__decide(value)
         else:
             loop.call_soon_threadsafe(self.__decide, value)
 
     def __decide(self, value):
-        """Work out what ``value`` means for the permit. On the loop.
+        """Work out what ``value`` means for the suspension. On the loop.
 
         The reading is the one the signal called back with, carried over rather
         than read again here, so a justification reports the value that
         actually tripped this rather than whatever the signal has since become.
         """
-        permit = self._permit
-        if permit is None:
+        suspension = self._suspension
+        if suspension is None:
             # Uninstalled between the callback and this running.
             return
         self._last_value = value
         if self._should_suspend(value):
             if not self._tripped:
                 self._tripped = True
-                permit.trip(
+                suspension.trip(
                     self,
                     self._get_justification(),
                     pre_plan=self._pre_plan,
@@ -257,20 +257,20 @@ class SuspenderBase(metaclass=ABCMeta):
             # release, which would come due `sleep` seconds later and drop a
             # reason raised by a trip in between.
             self._tripped = False
-            permit.clear(self, after=self._sleep)
+            suspension.clear(self, after=self._sleep)
 
     @property
     def tripped(self):
         return self._tripped
 
-    def installed_on(self, permit) -> bool:
-        """Whether this suspender is installed on ``permit``.
+    def installed_on(self, suspension) -> bool:
+        """Whether this suspender is installed on ``suspension``.
 
         A method rather than a property so that the suspender answers the
-        question without handing out the permit it is holding: what a caller
+        question without handing out the suspension it is holding: what a caller
         wants to know is whether this is theirs to remove.
         """
-        return self._permit is permit
+        return self._suspension is suspension
 
     def _get_justification(self):
         template = "Suspender of type {} stopped by signal {!r}"

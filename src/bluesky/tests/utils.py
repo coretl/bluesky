@@ -83,7 +83,7 @@ def suspend_until(RE, fut=None, *, pre_plan=None, post_plan=None, justification=
     """Raise a suspension on ``RE``'s plan without going through a suspender.
 
     Not a supported route, and deliberately not a method on `RunEngine`: it
-    reaches past the permit straight into the executor, so a suspension raised
+    reaches past the suspension straight into the executor, so a suspension raised
     this way is not in ``RE.suspensions`` and does not merge with a suspender's.
     That is what ``RunEngine.request_suspend`` did, and why it was deleted.
 
@@ -94,9 +94,9 @@ def suspend_until(RE, fut=None, *, pre_plan=None, post_plan=None, justification=
 
     Callable from any thread, including a ``threading.Timer``.
     """
-    from bluesky.permits import Suspension
+    from bluesky.suspensions import SuspensionReason
 
-    reason = Suspension(justification or "", pre_plan, post_plan)
+    reason = SuspensionReason(justification or "", pre_plan, post_plan)
 
     async def begin():
         RE._executor._begin_suspension({object(): reason}, [], fut)

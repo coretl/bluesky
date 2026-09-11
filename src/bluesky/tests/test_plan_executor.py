@@ -123,7 +123,7 @@ def test_every_hop_onto_the_loop_is_one_of_the_few_we_mean():
     A caller's own thread reaches the loop only through the `RunEngine`. It is
     the thread-safe facade, so it may hop wherever it likes -- and nothing it
     calls hops for itself. `SuspenderBase.install` and `remove` are ordinary
-    loop-side methods, and a permit is written on the loop by whoever crossed
+    loop-side methods, and a suspension is written on the loop by whoever crossed
     to get there.
 
     A thread bluesky did not choose reaches the loop where the callback it
@@ -136,8 +136,8 @@ def test_every_hop_onto_the_loop_is_one_of_the_few_we_mean():
     a reason, or a hop has been hidden inside something that should have left
     the crossing to its caller.
     """
-    # A permit is written on the loop; its caller crosses.
-    assert _crossings("permits.py") == set()
+    # A suspension is written on the loop; its caller crosses.
+    assert _crossings("suspensions.py") == set()
     # Only the ophyd status callback.
     assert _crossings("plan_executor.py") == {"done_callback"}
     # Only the signal's own callback.
@@ -374,9 +374,9 @@ def test_a_plan_installs_a_suspender_for_itself_only():
 
     session, executor = asyncio.run(main())
 
-    # Installed on the executor, so it withholds that plan's permit and no
+    # Installed on the executor, so it trips that plan's suspension and no
     # other. A session-installed one would hold up every plan.
-    assert susp.installed_on is executor._permit
+    assert susp.installed_on is executor._suspension
     assert susp.removed
     assert susp not in session.suspenders
     assert susp not in executor.suspenders
@@ -411,7 +411,7 @@ def test_a_durable_suspender_outlives_the_plan_it_held():
         await executor.run()
         # Trips after that plan ended. The session is still watching, so the
         # reason stands and the *next* plan is the one held for it.
-        session._permit.trip(susp, "beam is down")
+        session._suspension.trip(susp, "beam is down")
 
         # Held before its first message rather than running and suspending:
         # there is no checkpoint yet to rewind to. Arranged when the plan
@@ -421,13 +421,13 @@ def test_a_durable_suspender_outlives_the_plan_it_held():
         task = asyncio.ensure_future(nxt.run())
         await asyncio.sleep(0.2)
         held = not started
-        session._permit.clear(susp)
+        session._suspension.clear(susp)
         await asyncio.wait_for(task, timeout=10)
         return session, executor, held
 
     session, executor, next_plan_was_held = asyncio.run(main())
 
-    assert susp.installed_on is session._permit
+    assert susp.installed_on is session._suspension
     # Never unsubscribed by the plan: it goes on watching its signal between
     # plans, which is what lets it report that it is *already* tripped.
     assert not susp.removed
@@ -446,11 +446,11 @@ def test_one_durable_suspender_covers_every_running_plan():
         first = session.make_executor([Msg("null")])
         second = session.make_executor([Msg("null")])
         # Nothing points a suspender at a plan any more: both are waiting on
-        # the one permit, so one reason covers both by construction.
-        assert first._permit.tripped or not session._permit.tripped
-        assert first._permit is not second._permit
+        # the one suspension, so one reason covers both by construction.
+        assert first._suspension.tripped or not session._suspension.tripped
+        assert first._suspension is not second._suspension
         # ...and each has its own for the suspenders its own plan installs.
-        assert first._permit is not second._permit
+        assert first._suspension is not second._suspension
         await asyncio.gather(first.run(), second.run())
 
     asyncio.run(main())

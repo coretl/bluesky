@@ -112,7 +112,7 @@ so two plans running at once are never handed the same one.
 Suspending
 ----------
 
-Suspension is a suspender's job, headless or not. Install one on the session and
+SuspensionReason is a suspender's job, headless or not. Install one on the session and
 it holds up every plan the session runs, for as long as its condition is bad::
 
     session.install_suspender(suspender)

@@ -1,4 +1,4 @@
-"""Permission to run, and the reasons it may be withheld."""
+"""A plan's suspension, and the reasons that trip it."""
 
 from __future__ import annotations
 
@@ -13,8 +13,8 @@ PlanLike = Iterable[Msg] | Callable[[], Iterable[Msg]]
 
 
 @dataclass(frozen=True)
-class Suspension:
-    """Why a permit is withheld, and the plans to run around the wait.
+class SuspensionReason:
+    """One reason a suspension is tripped, and the plans to run around it.
 
     One per condition. They are not merged: each condition runs its own
     pre-plan as it fires, so whatever is supervising needs them apart.
@@ -25,7 +25,7 @@ class Suspension:
     post_plan: PlanLike | None = None
 
 
-def join_justifications(reasons: Mapping[Hashable, Suspension]) -> str:
+def join_justifications(reasons: Mapping[Hashable, SuspensionReason]) -> str:
     """Every standing reason's justification, one per line, outermost first."""
     return "\n".join(reason.justification for reason in reasons.values() if reason.justification)
 
@@ -45,18 +45,18 @@ def running_on(loop: asyncio.AbstractEventLoop) -> bool:
         return False
 
 
-class Permit:
-    """Permission to run, withheld while anything has a reason to withhold it.
+class Suspension:
+    """What holds a plan up, tripped while anything has a reason to trip it.
 
     Reasons are keyed, normally by the suspender that raised them, and the
     nothing is tripped exactly when none stands. Two conditions tripping at once
     are two reasons and one suspension, rather than two suspensions.
 
-    Permits chain. A permit with a ``parent`` is withheld whenever its parent
+    Suspensions chain. One with a ``parent`` is tripped whenever its parent
     is, which is how a suspender installed somewhere long-lived holds up every
     plan run under it while one installed by a plan holds up only that plan.
 
-    Written only on the loop, and read from anywhere. `withhold` and `grant`
+    Written only on the loop, and read from anywhere. `trip` and `clear`
     do not check that: this class is internal, and its callers are the two
     boundaries that own their crossings -- a suspender tripping on its signal's
     thread, and the `RunEngine` methods called from the prompt.
@@ -67,7 +67,7 @@ class Permit:
     rather than decide, so eventual consistency is what they need.
     """
 
-    def __init__(self, name: str, loop: asyncio.AbstractEventLoop, parent: Permit | None = None) -> None:
+    def __init__(self, name: str, loop: asyncio.AbstractEventLoop, parent: Suspension | None = None) -> None:
         self.name = name
         self._loop = loop
         self._parent = parent
@@ -76,14 +76,14 @@ class Permit:
         # `PlanSession.suspensions` are read from whatever thread asks -- then
         # sees one snapshot or the next and never a mapping mid-change. It also
         # costs nothing: reasons change when a suspender trips, not per message.
-        self._reasons: Mapping[Hashable, Suspension] = MappingProxyType({})
-        # Pending delayed grants, so that a key withholding again cancels the
+        self._reasons: Mapping[Hashable, SuspensionReason] = MappingProxyType({})
+        # Pending delayed clears, so that a key tripping again cancels the
         # release its own recovery scheduled. Without this a signal that
         # recovers and trips again inside the settle-down time has the older
         # release come due and drop the newer reason.
         self._releases: dict[Hashable, asyncio.TimerHandle] = {}
         # Set-and-cleared on every change anywhere in the chain. Shared with
-        # the parent rather than owned, because this permit is withheld by its
+        # the parent rather than owned, because this suspension is tripped by its
         # own reasons *or* its parent's, so a waiter here has to be woken by a
         # change up there. Sharing gets that without the parent holding any
         # reference to its children: a child reaches up, as it already does for
@@ -92,7 +92,7 @@ class Permit:
 
     @property
     def loop(self) -> asyncio.AbstractEventLoop:
-        """The loop this permit's state lives on.
+        """The loop this suspension's state lives on.
 
         Public because crossing onto it is the caller's job: a suspender trips
         on whatever thread its signal calls back on and owns that hop.
@@ -112,10 +112,10 @@ class Permit:
         return bool(self.reasons)
 
     @property
-    def reasons(self) -> Mapping[Hashable, Suspension]:
-        """Everything withholding this permit, keyed by whoever withheld it.
+    def reasons(self) -> Mapping[Hashable, SuspensionReason]:
+        """Every reason this suspension is tripped, keyed by whoever tripped it.
 
-        Includes the chain above, outermost permit first, because that is the
+        Includes the chain above, outermost suspension first, because that is the
         order a suspension runs pre-plans in and the reverse of the order it
         runs post-plans in. Empty exactly when nothing is tripped.
         """
@@ -135,7 +135,9 @@ class Permit:
         release = self._releases.pop(key, None)
         if release is not None:
             release.cancel()
-        self._reasons = MappingProxyType({**self._reasons, key: Suspension(justification, pre_plan, post_plan)})
+        self._reasons = MappingProxyType(
+            {**self._reasons, key: SuspensionReason(justification, pre_plan, post_plan)}
+        )
         self._notify_changed()
 
     def clear(self, key: Hashable, *, after: float = 0) -> None:

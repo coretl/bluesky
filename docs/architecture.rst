@@ -1,6 +1,6 @@
 .. _architecture:
 
-Architecture: session, executor, permit
+Architecture: session, executor, suspension
 =======================================
 
 This page describes what the objects behind the `RunEngine` are, and which of
@@ -18,11 +18,11 @@ them::
 
     RunEngine
       └── PlanSession          what outlives any one plan
-            ├── Permit         permission to run
+            ├── Suspension         permission to run
             ├── Dispatcher     subscribers that outlive any plan
             ├── PlanHooks      where progress is watched from
             └── make_executor(plan) -> PlanExecutor
-                                       ├── Permit      child of the session's
+                                       ├── Suspension      child of the session's
                                        ├── Dispatcher  child of the session's
                                        └── PlanEnvironment (frozen)
 
@@ -34,7 +34,7 @@ directly.
 
 Two rules explain most of the design.
 
-**Things chain upward, never downward.** A plan's permit holds its parent; a
+**Things chain upward, never downward.** A plan's suspension holds its parent; a
 plan's dispatcher holds its parent. Nothing holds a reference to the plan below
 it, so a finished plan's state is not kept alive by the session, and a suspender
 installed on the session holds up every plan without being told about any of
@@ -46,15 +46,15 @@ reads is settled when it is launched.
 Permission to run
 -----------------
 
-.. autoclass:: bluesky.permits.Permit
+.. autoclass:: bluesky.suspensions.Suspension
     :members:
     :undoc-members:
 
-A permit is granted exactly when no reason stands, here or anywhere above it. The
+A suspension is granted exactly when no reason stands, here or anywhere above it. The
 reasons are the state, and they are kept apart rather than merged, because each
 condition runs its own pre-plan as it fires.
 
-``withhold`` and ``grant`` run on the event loop and raise anywhere else, while
+``trip`` and ``clear`` run on the event loop and raise anywhere else, while
 ``granted`` and the standing reasons can be read from any thread. See
 :ref:`which-thread` for why the writes are pinned and the reads are not.
 
@@ -64,7 +64,7 @@ Which thread
 ------------
 
 The `RunEngine` is the thread-safe object. Everything it drives -- the session,
-the executor, the permit, the dispatchers -- runs on the event loop, and calling
+the executor, the suspension, the dispatchers -- runs on the event loop, and calling
 into them from another thread is a bug rather than a slow path. That is why
 `test_executor_holds_no_threading_primitives` and `test_source_takes_no_locks`
 pass: single-threaded by construction needs no locks.
@@ -77,8 +77,8 @@ Three boundaries are real, because something outside bluesky picks the thread:
 * a signal calls a suspender back on whichever thread it likes.
 
 At each one, the object that owns the boundary owns the hop, and does it with
-``call_soon_threadsafe``. A permit does not, which is the difference from how
-this started: a permit used to hop internally, so every one of its methods hid
+``call_soon_threadsafe``. A suspension does not, which is the difference from how
+this started: a suspension used to hop internally, so every one of its methods hid
 a thread boundary and the one object that knew which thread it was standing on
 -- the suspender -- was not the one deciding. ``__on_loop`` waits for the loop
 and must never be called holding the suspender's lock; ``__tell_loop`` does not
@@ -87,7 +87,7 @@ wait and is what a trip uses.
 `test_every_hop_onto_the_loop_is_one_of_the_few_we_mean` pins that list, so a
 fourth crossing cannot appear without saying so.
 
-What the writes being loop-only costs: a trip is applied where the permit's
+What the writes being loop-only costs: a trip is applied where the suspension's
 state lives rather than where the signal fired, so code that trips a signal and
 inspects the engine in the next statement can see the old answer. Starting a
 plan after a trip is unaffected, because everything reaches the loop in order.
@@ -104,15 +104,15 @@ and that cannot be scheduled onto the loop. So it takes a lock, and snapshots
 its subscribers before calling them rather than holding that lock across
 arbitrary user code.
 
-.. autoclass:: bluesky.permits.Suspension
+.. autoclass:: bluesky.suspensions.SuspensionReason
     :members:
     :undoc-members:
 
 The chain is what makes durable and plan-local suspension one mechanism. A
-suspender installed on the session withholds the session's permit and holds up
+suspender installed on the session trips the session's suspension and holds up
 every plan run under it. One installed by a plan, through
-``Msg('install_suspender')``, withholds that plan's permit and holds up that plan
-alone. A suspender's only collaborator is the permit it was installed on: it never
+``Msg('install_suspender')``, trips that plan's suspension and holds up that plan
+alone. A suspender's only collaborator is the suspension it was installed on: it never
 learns what, or whether, anything is running.
 
 .. autoclass:: bluesky.suspenders.SuspenderBase
