@@ -1007,16 +1007,14 @@ class PlanExecutor:
         gen = ensure_generator(plan)
         for wrapper_func in preprocessors:
             gen = wrapper_func(gen)
-        self._plan_stack.append(gen)
-        self._response_stack.append(None)
+        self._push_plan(gen)
         if not self._permit.granted:
             # Something is already withholding this plan's permit -- a
             # suspender tripped before the plan was built. Wait for it in band,
             # ahead of the plan's first message. A suspension proper cannot do
             # this job: there is no checkpoint yet to rewind to, so requesting
             # one would abort the plan rather than hold it.
-            self._plan_stack.append(single_gen(Msg("wait_for", None, [self._permit.wait_granted])))
-            self._response_stack.append(None)
+            self._push_plan(single_gen(Msg("wait_for", None, [self._permit.wait_granted])))
 
     # The hooks are the session's; firing one, and checking whether it is set
     # at all, belongs to whoever has something to report -- which for all three
@@ -1230,6 +1228,16 @@ class PlanExecutor:
         """Whether a deferred pause is waiting for the next checkpoint."""
         return self._deferred_pause_requested
 
+    def _push_plan(self, plan) -> None:
+        """Put a plan on the stack, with nothing answered for it yet.
+
+        The two stacks are the same length by construction -- `run` asserts it
+        every turn -- because a response is what the plan's last message got
+        back, and a plan just pushed has not sent one.
+        """
+        self._plan_stack.append(plan)
+        self._response_stack.append(None)
+
     def _release_pause(self) -> None:
         """Let a paused plan move again. On the loop.
 
@@ -1328,8 +1336,7 @@ class PlanExecutor:
             return
 
         # add starting the suspender logic to the stack
-        self._plan_stack.append(single_gen(Msg("_start_suspender", None, pre_plan, post_plan, justification, fut)))
-        self._response_stack.append(None)
+        self._push_plan(single_gen(Msg("_start_suspender", None, pre_plan, post_plan, justification, fut)))
 
         # The event loop is still running. The pre_plan will be processed,
         # and then the executor will be hung up on processing the
@@ -1859,8 +1866,7 @@ class PlanExecutor:
         self.interrupted = False
         for current_run in self._run_bundlers.values():
             current_run.record_interruption("resume")
-        self._plan_stack.append(self._rewind())
-        self._response_stack.append(None)
+        self._push_plan(self._rewind())
         await self._leave_rest()
         # One synchronous read decides both the wait and the supervisor, as
         # `run` does at the start of a plan: a condition going bad after this
@@ -1875,8 +1881,7 @@ class PlanExecutor:
             # something was, the plan was parked in a wait for it and the run
             # loop re-sends that message now, so a second one would hold for
             # the same thing twice.
-            self._plan_stack.append(single_gen(Msg("wait_for", None, [self._permit.wait_granted])))
-            self._response_stack.append(None)
+            self._push_plan(single_gen(Msg("wait_for", None, [self._permit.wait_granted])))
         self._start_supervisor(held_at_start=held)
         self._release_pause()
 
@@ -2819,8 +2824,7 @@ class PlanExecutor:
             yield from rewind_plan
 
         # add the above helper to the plan stack
-        self._plan_stack.append(suspender_helper_inner_plan())
-        self._response_stack.append(None)
+        self._push_plan(suspender_helper_inner_plan())
 
     # The built-in vocabulary, as command name -> the method that handles it.
     # The methods themselves, so that following one is a click rather than a
