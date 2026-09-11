@@ -11,7 +11,7 @@ import json
 import sys
 import typing
 from collections import ChainMap, defaultdict, deque
-from collections.abc import Callable, MutableMapping
+from collections.abc import Awaitable, Callable, MutableMapping
 from dataclasses import dataclass
 from enum import Enum
 from itertools import count
@@ -688,9 +688,7 @@ class PlanSession:
 
     def _command_docs(self) -> dict[str, str | None]:
         """Docstring per command name, for `RunEngine.print_command_registry`."""
-        registry: dict[str, typing.Callable] = {
-            name: getattr(PlanExecutor, attr) for name, attr in PlanExecutor._DEFAULT_COMMANDS.items()
-        }
+        registry: dict[str, typing.Callable] = dict(PlanExecutor._DEFAULT_COMMANDS)
         registry.update(self._registered_commands)
         return {name: registry[name].__doc__ for name in self.commands}
 
@@ -1278,53 +1276,6 @@ class PlanExecutor:
     @state.setter
     def state(self, value):
         self._state = value
-
-    # The built-in vocabulary, as command name -> the method that handles it.
-    # Named rather than bound so that the table can be read without an
-    # executor to bind to: `PlanSession.commands` reports what the next plan
-    # will understand, and it holds no executor to ask.
-    _DEFAULT_COMMANDS: typing.ClassVar[dict[str, str]] = {
-        "declare_stream": "_declare_stream",
-        "create": "_create",
-        "save": "_save",
-        "drop": "_drop",
-        "read": "_read",
-        "locate": "_locate",
-        "monitor": "_monitor",
-        "unmonitor": "_unmonitor",
-        "null": "_null",
-        "RE_class": "_RE_class",
-        "stop": "_stop",
-        "set": "_set",
-        "trigger": "_trigger",
-        "sleep": "_sleep",
-        "wait": "_wait",
-        "checkpoint": "_checkpoint",
-        "clear_checkpoint": "_clear_checkpoint",
-        "rewindable": "_rewindable",
-        "pause": "_pause",
-        "_resume_from_suspender": "_resume_from_suspender",
-        "_start_suspender": "_start_suspender",
-        "prepare": "_prepare",
-        "collect": "_collect",
-        "kickoff": "_kickoff",
-        "complete": "_complete",
-        "configure": "_configure",
-        "stage": "_stage",
-        "unstage": "_unstage",
-        "subscribe": "_subscribe",
-        "unsubscribe": "_unsubscribe",
-        "open_run": "_open_run",
-        "close_run": "_close_run",
-        "wait_for": "_wait_for",
-        "input": "_input",
-        "install_suspender": "_install_suspender",
-        "remove_suspender": "_remove_suspender",
-    }
-
-    def _default_commands(self) -> dict[str, typing.Callable]:
-        """The vocabulary this executor understands out of the box."""
-        return {name: getattr(self, attr) for name, attr in self._DEFAULT_COMMANDS.items()}
 
     async def _enter_rest(self) -> None:
         """Bring the plan to rest: stop what is moving, tell the devices.
@@ -2890,6 +2841,55 @@ class PlanExecutor:
         # add the above helper to the plan stack
         self._plan_stack.append(suspender_helper_inner_plan())
         self._response_stack.append(None)
+
+    # The built-in vocabulary, as command name -> the method that handles it.
+    # The methods themselves, so that following one is a click rather than a
+    # search, and unbound so that the table can be read without an executor to
+    # bind to: `PlanSession.commands` reports what the next plan will
+    # understand, and it holds no executor to ask. Defined below the handlers
+    # because a class body cannot name a method it has not reached yet.
+    _DEFAULT_COMMANDS: typing.ClassVar[dict[str, Callable[["PlanExecutor", Msg], Awaitable[typing.Any]]]] = {
+        "declare_stream": _declare_stream,
+        "create": _create,
+        "save": _save,
+        "drop": _drop,
+        "read": _read,
+        "locate": _locate,
+        "monitor": _monitor,
+        "unmonitor": _unmonitor,
+        "null": _null,
+        "RE_class": _RE_class,
+        "stop": _stop,
+        "set": _set,
+        "trigger": _trigger,
+        "sleep": _sleep,
+        "wait": _wait,
+        "checkpoint": _checkpoint,
+        "clear_checkpoint": _clear_checkpoint,
+        "rewindable": _rewindable,
+        "pause": _pause,
+        "_resume_from_suspender": _resume_from_suspender,
+        "_start_suspender": _start_suspender,
+        "prepare": _prepare,
+        "collect": _collect,
+        "kickoff": _kickoff,
+        "complete": _complete,
+        "configure": _configure,
+        "stage": _stage,
+        "unstage": _unstage,
+        "subscribe": _subscribe,
+        "unsubscribe": _unsubscribe,
+        "open_run": _open_run,
+        "close_run": _close_run,
+        "wait_for": _wait_for,
+        "input": _input,
+        "install_suspender": _install_suspender,
+        "remove_suspender": _remove_suspender,
+    }
+
+    def _default_commands(self) -> dict[str, Callable[[Msg], Awaitable[typing.Any]]]:
+        """The vocabulary this executor understands out of the box, bound to it."""
+        return {name: fn.__get__(self) for name, fn in self._DEFAULT_COMMANDS.items()}
 
 
 class Dispatcher:
