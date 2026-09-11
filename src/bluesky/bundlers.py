@@ -139,7 +139,6 @@ class RunBundler:
         log: LoggerAdapter,
         *,
         strict_pre_declare: bool,
-        queue_emit: Callable,
     ):
         # if create can YOLO implicitly create a stream
         self._strict_pre_declare = strict_pre_declare
@@ -175,14 +174,11 @@ class RunBundler:
         # this is state on the RE, mirror it here rather than refer to
         # the parent
         self.record_interruptions = record_interruptions
-        # Where every document this bundler composes goes. A coroutine, awaited
-        # on the event loop, so that the loop decides the order documents reach
-        # subscribers.
+        # Where every document this bundler composes goes. Synchronous, and
+        # called from whichever thread produced the document: a plan's
+        # documents come from the event loop, and a monitored ophyd v1 signal's
+        # come from the device's own thread.
         self.emit = emit
-        # For documents produced synchronously, by a monitor callback on
-        # whatever thread the device chose. Goes on the same queue `emit`
-        # drains, so the two cannot overtake each other.
-        self.queue_emit = queue_emit
         self.log = log
         # Map of set of collect objects to list of stream names that they can be collected into
         self._declared_stream_names: dict[frozenset, list[str]] = {}
@@ -205,7 +201,7 @@ class RunBundler:
 
         self._describe_collect_cache.clear()
 
-        await self.emit(DocumentNames.start, doc)
+        self.emit(DocumentNames.start, doc)
         doc_logger.debug(
             "[start] document is emitted (run_uid=%r)",
             self._run_start_uid,
@@ -225,7 +221,7 @@ class RunBundler:
             )
             self._interruptions_desc = descriptor_bundle.descriptor_doc
             self._interruptions_compose_event = descriptor_bundle.compose_event
-            await self.emit(DocumentNames.descriptor, self._interruptions_desc)
+            self.emit(DocumentNames.descriptor, self._interruptions_desc)
 
         return self._run_start_uid
 
@@ -259,7 +255,7 @@ class RunBundler:
             exit_status=exit_status,
             reason=reason,
         )
-        await self.emit(DocumentNames.stop, doc)
+        self.emit(DocumentNames.stop, doc)
         doc_logger.debug(
             "[stop] document is emitted (run_uid=%r)",
             self._run_start_uid,
@@ -308,7 +304,7 @@ class RunBundler:
             object_keys=object_keys,
             object_classes=object_classes,
         )
-        await self.emit(DocumentNames.descriptor, self._descriptors[desc_key].descriptor_doc)
+        self.emit(DocumentNames.descriptor, self._descriptors[desc_key].descriptor_doc)
         doc_logger.debug(
             "[descriptor] document emitted with name %r containing data keys %r (run_uid=%r)",
             desc_key,
@@ -493,7 +489,7 @@ class RunBundler:
                 data=data,
                 timestamps=timestamps,
             )
-            self.queue_emit(DocumentNames.event, doc)
+            self.emit(DocumentNames.event, doc)
 
         def emit_event_for_subscribe(*args, **kwargs):
             # Ignore the inputs. Use this call as a signal to call read on the
@@ -519,7 +515,7 @@ class RunBundler:
                 "%s does not implement Subscribable protocol or adhere to ophyd subscription pattern." % obj
             )
 
-    async def record_interruption(self, content):
+    def record_interruption(self, content):
         """
         Emit an event in the 'interruptions' event stream.
 
@@ -533,7 +529,7 @@ class RunBundler:
                 timestamps={"interruption": ttime.time()},
             )
             self._interruptions_counter += 1
-            await self.emit(DocumentNames.event, doc)
+            self.emit(DocumentNames.event, doc)
 
     def rewind(self):
         self._sequence_counters.clear()
@@ -653,7 +649,7 @@ class RunBundler:
             timestamps=timestamps,
             filled=filled,
         )
-        await self.emit(DocumentNames.event, event_doc)
+        self.emit(DocumentNames.event, event_doc)
         doc_logger.debug(
             "[event] document emitted with data keys %r (run_uid=%r)",
             data.keys(),
@@ -948,7 +944,7 @@ class RunBundler:
                     "`resource`, `stream_resource`, `datum`, or `stream_datum`"
                 )
 
-            await self.emit(DocumentNames(name), doc)
+            self.emit(DocumentNames(name), doc)
 
             doc_logger.debug(
                 "[%s] document emitted %r",
@@ -1011,7 +1007,7 @@ class RunBundler:
             pages[objs_read].append(event)
 
         for event_list in pages.values():
-            await self.emit(DocumentNames.event_page, pack_event_page(*event_list))
+            self.emit(DocumentNames.event_page, pack_event_page(*event_list))
             doc_logger.debug(
                 "[event_page] document is emitted for descriptors (run_uid=%r)",
                 self._run_start_uid,
@@ -1056,7 +1052,7 @@ class RunBundler:
                 },
             )
 
-            await self.emit(DocumentNames.event_page, ev_page)
+            self.emit(DocumentNames.event_page, ev_page)
         return payload
 
     async def collect(self, msg: Msg):

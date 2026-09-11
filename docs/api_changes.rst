@@ -173,22 +173,10 @@ Changed
 - ``RunEngine.commands`` returns a sorted tuple of command names rather than a
   list in registration order.  It always reported names; it now says so in its
   type, and the names cannot be reordered by rebinding what they resolve to.
-- Documents produced by a monitor callback are queued onto the event loop
-  rather than dispatched where the callback runs.  A monitor callback is
-  synchronous, and a sync ophyd signal fires one on the device's own thread, so
-  subscribers used to be called on whichever thread happened to produce the
-  document.  Both kinds of monitor now queue, including one already running on
-  the loop, so that the loop decides the order documents reach subscribers and
-  none can overtake one already waiting.
-- ``RunBundler`` takes two emitters: ``emit``, a coroutine function awaited for
-  a document produced in band, and ``queue_emit``, a synchronous one for a
-  document produced by a monitor callback on whatever thread the device chose.
-  Both ends of the pair reach subscribers through one queue on the executor, so
-  neither can overtake the other; a custom ``run_bundler_cls`` has to take both.
-  ``RunBundler.record_interruption`` is a coroutine for the same reason.
-  ``RunEngine.emit`` is a coroutine and ``RunEngine.emit_sync`` the synchronous
-  one, as before -- an earlier commit on this branch collapsed the pair the
-  other way round, keeping the synchronous ``emit``, and that is reversed here.
+- ``RunEngine.emit`` is synchronous.  There was a synchronous ``emit_sync`` and
+  a coroutine ``emit`` doing the same work; awaiting the latter never
+  suspended.  ``RunBundler`` therefore takes one ``emit`` argument rather than
+  the pair, which matters to anyone passing a custom ``run_bundler_cls``.
 
 Removed
 -------
@@ -204,6 +192,10 @@ Removed
   permit exists to prevent.  Any condition worth suspending on can be written as
   a suspender, which composes; to stop a plan yourself and decide yourself when
   it goes on, use ``RunEngine.pause``.
+
+Deprecated
+----------
+- ``RunEngine.emit_sync``.  There is one ``emit`` now, and it is synchronous.
 
 v1.15.1 (2026-05-05)
 ====================

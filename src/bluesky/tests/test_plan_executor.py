@@ -129,9 +129,8 @@ def test_every_hop_onto_the_loop_is_one_of_the_few_we_mean():
 
     A thread bluesky did not choose reaches the loop where the callback it
     calls is defined. ophyd completes a status on whichever thread finished the
-    move, calls a suspender back on whichever thread it likes, and calls a
-    monitor callback on the device's own thread, so `done_callback`,
-    `SuspenderBase.__call__` and `_queue_emit` each own that crossing and do
+    move, and calls a suspender back on whichever thread it likes, so
+    `done_callback` and `SuspenderBase.__call__` each own that crossing and do
     nothing else on that thread but hand the value over.
 
     If this fails, either a new boundary is real and belongs in this list with
@@ -140,8 +139,8 @@ def test_every_hop_onto_the_loop_is_one_of_the_few_we_mean():
     """
     # A permit is written on the loop; its caller crosses.
     assert _crossings("permits.py") == set()
-    # The ophyd status callback, and a monitor callback queueing its document.
-    assert _crossings("plan_executor.py") == {"done_callback", "_queue_emit"}
+    # Only the ophyd status callback.
+    assert _crossings("plan_executor.py") == {"done_callback"}
     # Only the signal's own callback.
     assert _crossings("suspenders.py") == {"__call__"}
     # The facade crosses for everyone, which is why it may cross at all -- but

@@ -890,12 +890,6 @@ class PlanExecutor:
         self._hooks = hooks
         self._identity = identity if identity is not None else self
 
-        # Documents waiting to reach subscribers, oldest first, and whether
-        # something is already working through them. One queue for every
-        # producer, in band or from a device's thread, because that is what
-        # makes the order documents are produced in the order they arrive in.
-        self._pending_docs: deque[tuple[typing.Any, typing.Any]] = deque()
-        self._draining = False
         # Set when the plan comes to rest paused; see the pause block in `run`.
         self._permit_granted_when_paused = True
         # The task watching this plan's permit, replaced whenever the plan
@@ -1043,53 +1037,6 @@ class PlanExecutor:
     def _on_state_change(self, value, old_value) -> None:
         """Say that this plan changed state, in the name of whoever drives it."""
         announce_state_change(self._identity, self._hooks, old_value, value)
-
-    async def _emit_async(self, name, doc) -> None:
-        """`emit`, in the form `RunBundler` is given it.
-
-        Goes on the same queue a monitor callback uses, and then drains it, so
-        that a document produced in band cannot overtake one a monitor produced
-        earlier. Without that, a monitor event fired mid-plan reaches
-        subscribers *after* the RunStop of the run it belongs to, because the
-        stop is emitted in band and the event is still waiting for a turn.
-        """
-        self._pending_docs.append((name, doc))
-        self._drain_docs()
-
-    def _queue_emit(self, name, doc) -> None:
-        """Hand a document to the loop to emit in its turn. Any thread.
-
-        For synchronous producers: a monitor callback runs wherever the device
-        chose to call it, and a sync ophyd signal calls it on its own thread.
-        Queued rather than dispatched there, so subscribers are entered from one
-        thread, in one order.
-
-        Queued even when the caller is already on the loop, so that both kinds
-        of monitor behave alike.
-        """
-        self._pending_docs.append((name, doc))
-        try:
-            self._loop.call_soon_threadsafe(self._drain_docs)
-        except RuntimeError:
-            # Loop already closed -- a monitor firing during teardown. The
-            # document has nowhere to go; drop it rather than raise into a
-            # device's callback.
-            self._pending_docs.clear()
-
-    def _drain_docs(self) -> None:
-        """Emit everything queued, oldest first. On the loop."""
-        if self._draining:
-            # A subscriber emitted from inside dispatch. Its document is on the
-            # queue and the loop below will reach it; re-entering here would
-            # emit it before the one being dispatched now.
-            return
-        self._draining = True
-        try:
-            while self._pending_docs:
-                name, doc = self._pending_docs.popleft()
-                self.emit(name, doc)
-        finally:
-            self._draining = False
 
     def emit(self, name, doc) -> None:
         """Give a document to every subscriber that should see it.
@@ -1415,7 +1362,7 @@ class PlanExecutor:
         """Rewind and notify devices, ready to be released. On the loop."""
         self.interrupted = False
         for current_run in self._run_bundlers.values():
-            await current_run.record_interruption("resume")
+            current_run.record_interruption("resume")
         self._plan_stack.append(self._rewind())
         self._response_stack.append(None)
         await self._leave_rest()
@@ -1924,10 +1871,9 @@ class PlanExecutor:
         current_run = self._run_bundlers[run_key] = self._env.run_bundler_cls(
             validated,
             self._env.record_interruptions,
-            self._emit_async,
+            self.emit,
             self._env.log,
             strict_pre_declare=self._env.strict_pre_declare,
-            queue_emit=self._queue_emit,
         )
 
         new_uid = await current_run.open_run(msg)
@@ -2768,7 +2714,7 @@ class PlanExecutor:
         """
         pre_plan, post_plan, justification, fut = msg.args
         for current_run in self._run_bundlers.values():
-            await current_run.record_interruption(justification if justification is not None else "suspended")
+            current_run.record_interruption(justification if justification is not None else "suspended")
         await self._enter_rest()
         # rewind to the last checkpoint
         rewind_plan = self._rewind()
@@ -2832,7 +2778,7 @@ class PlanExecutor:
         self.interrupted = True
         self.state = "pausing"
         for current_run in self._run_bundlers.values():
-            await current_run.record_interruption("pause")
+            current_run.record_interruption("pause")
 
         self._task.cancel()
 
