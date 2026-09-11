@@ -263,6 +263,15 @@ class SuspenderBase(metaclass=ABCMeta):
     def tripped(self):
         return self._tripped
 
+    def installed_on(self, permit) -> bool:
+        """Whether this suspender is installed on ``permit``.
+
+        A method rather than a property so that the suspender answers the
+        question without handing out the permit it is holding: what a caller
+        wants to know is whether this is theirs to remove.
+        """
+        return self._permit is permit
+
     def _get_justification(self):
         template = "Suspender of type {} stopped by signal {!r}"
         just = template.format(self.__class__.__name__, self._sig)

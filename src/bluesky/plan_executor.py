@@ -1119,42 +1119,20 @@ class PlanExecutor:
         """
         return tuple(self._plan_suspenders)
 
-    def _install_suspender_now(self, suspender) -> None:
-        """Install a suspender for the duration of this plan only.
-
-        This is what ``Msg('install_suspender', None, suspender)`` does. The
-        executor owns it: when the plan ends it is removed and unsubscribed,
-        unlike a suspender installed on the session, which outlives every plan.
-        """
-        self._plan_suspenders.add(suspender)
-        suspender.install(self._permit)
-
-    def _remove_suspender_now(self, suspender) -> None:
-        """Uninstall a suspender this plan installed for itself.
-
-        A durable suspender is the session's, and naming one here does
-        nothing: it is not ours to unsubscribe, and its reason stands on the
-        session's permit rather than this plan's.
-        """
-        if suspender in self._plan_suspenders:
-            # `remove` drops the suspender's reason itself, on this permit and
-            # under this key, and crosses onto the loop to do it. Granting
-            # again here would be the same write a second time -- and a bare
-            # one, made on whatever thread called in, which is how
-            # `RunEngine.clear_suspenders` came to raise when reached from the
-            # prompt. A durable suspender named here holds the session's
-            # permit, not this one, so there is nothing to grant for it either.
-            suspender.remove()
+    def _drop_plan_suspender(self, suspender) -> None:
+        """Uninstall a suspender this plan installed for itself."""
         self._plan_suspenders.discard(suspender)
+        # `remove` drops the suspender's reason itself, on this permit and under
+        # this key. Granting again here would be the same write a second time --
+        # and a bare one, made on whatever thread called in, which is how
+        # `RunEngine.clear_suspenders` came to raise when reached from the
+        # prompt.
+        suspender.remove()
 
     def clear_suspenders(self) -> None:
         """Uninstall every suspender this plan installed for itself."""
         for suspender in list(self._plan_suspenders):
-            self._remove_suspender_now(suspender)
-
-    def _release_suspenders(self) -> None:
-        """Let go of every suspender this plan installed. Once, as it ends."""
-        self.clear_suspenders()
+            self._drop_plan_suspender(suspender)
 
     async def _run_out_of_band(self, plan):
         """Work off a short message sequence outside the plan stack.
@@ -1832,7 +1810,7 @@ class PlanExecutor:
                 except RuntimeError:
                     self._announce(f"The plan {p!r} tried to yield a value on close.  Please fix your plan.")
 
-            self._release_suspenders()
+            self.clear_suspenders()
             if self._supervisor is not None:
                 self._supervisor.cancel()
 
@@ -2748,11 +2726,27 @@ class PlanExecutor:
         plan ends. `RunEngine.install_suspender` installs a persistent one,
         which holds up every plan the engine runs until it is removed.
         """
-        self._install_suspender_now(msg.args[0])
+        suspender = msg.args[0]
+        self._plan_suspenders.add(suspender)
+        suspender.install(self._permit)
 
     async def _remove_suspender(self, msg):
-        """Remove a suspender from this plan. Msg('remove_suspender', None, suspender)"""
-        self._remove_suspender_now(msg.args[0])
+        """Remove a suspender from this plan. Msg('remove_suspender', None, suspender)
+
+        Only a suspender this plan installed. One installed on the session
+        outlives every plan and is not this one's to unsubscribe, and its reason
+        stands on the session's permit rather than this plan's.
+        """
+        suspender = msg.args[0]
+        if not suspender.installed_on(self._permit):
+            warn(
+                f"{suspender!r} is not installed on this plan, so "
+                "Msg('remove_suspender') ignored it. A plan can only remove a "
+                "suspender it installed itself.",
+                stacklevel=2,
+            )
+            return
+        self._drop_plan_suspender(suspender)
 
     async def _start_suspender(self, msg):
         """
