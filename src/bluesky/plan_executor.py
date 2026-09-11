@@ -1784,6 +1784,246 @@ class PlanExecutor:
             raise stashed_exception
         return plan_return
 
+    def _close_run_trace(self, msg: Msg):
+        exit_status = msg.kwargs.get("exit_status", self._exit_status)
+        reason = msg.kwargs.get("reason", self._reason)
+        try:
+            _span: Span = self._run_tracing_spans.pop()
+            _span.set_attribute("exit_status", exit_status if exit_status is not None else "None")
+            _span.set_attribute("reason", reason if reason is not None else "None")
+            _span.end()
+        except IndexError:
+            logger.warning("No open traces left to close!")
+
+    def _status_object_completed(self, ret, fut: asyncio.Future, pardon_failures, obj=None, action=None):
+        """
+        Task to run when a status object is finished.
+
+        Always called on the event loop, via the trampoline that
+        :meth:`_add_status_to_group` hands to the status object.
+
+        Parameters
+        ----------
+        ret : status object
+        p_event : asyncio.Future
+            held in the RunEngine's self._groups cache for waiting
+        pardon_failuers : asyncio.Event
+            tells us whether the __call__ this status object is over
+        obj : object, optional
+            the device the status object came from, for logging
+        action : str, optional
+            what the device was asked to do, for logging
+        """
+        self._env.log.debug("The object %r reports %r is done with status %r.", obj, action, ret.success)
+        if not ret.success and not pardon_failures.is_set():
+            # TODO: need a better channel to move this information back
+            # to the run task.
+            try:
+                exc = ret.exception(timeout=0)
+                raise FailedStatus(ret) from exc
+            except Exception as e:
+                self._exception = e
+                fut.set_exception(e)
+                # We have set the exception, but we don't mind if
+                # no-one collects it from the future, so fetch it ourselves to
+                # squash "Future exception was never retrieved" at teardown.
+                fut.exception()
+        else:
+            fut.set_result(None)
+
+    def _reset_checkpoint_state(self):
+        self._reset_checkpoint_state_meth()
+
+    def _reset_checkpoint_state_meth(self):
+        if self._msg_cache is None:
+            return
+
+        self._msg_cache = deque()
+        for current_run in self._run_bundlers.values():
+            current_run.reset_checkpoint_state()
+
+    async def _reset_checkpoint_state_coro(self):
+        self._reset_checkpoint_state()
+
+    def _add_status_to_group(self, obj: typing.Any, status_object: Status, group: str, action: str) -> None:
+        loop = self._env.loop
+        fut = loop.create_future()
+        pardon_failures = self._pardon_failures
+        settle = functools.partial(self._status_object_completed, status_object, fut, pardon_failures, obj, action)
+
+        # A sync ophyd Status runs its callbacks on whichever thread completed
+        # it, so this may be called from a thread that is not the loop's. It
+        # does nothing but hop back onto the loop, which keeps
+        # _status_object_completed, and so all of the state it touches, on the
+        # loop thread. Any arguments the device passes are dropped: settle has
+        # closed over what it needs. An ophyd-async status already calls back
+        # on the loop, where call_soon_threadsafe remains correct.
+        def done_callback(*args: typing.Any, **kwargs: typing.Any) -> None:
+            loop.call_soon_threadsafe(settle)
+
+        try:
+            status_object.add_callback(done_callback)
+        except AttributeError:
+            # for ophyd < v0.8.0
+            status_object.finished_cb = done_callback  # type: ignore
+
+        self._groups[group].add(lambda: fut)
+        self._status_objs[group].add(status_object)
+
+    def _rewind(self):
+        """Clean up in preparation for resuming from a pause or suspension.
+
+        Returns
+        -------
+        new_plan : generator
+             A new plan made from the messages in the message cache
+
+        """
+        len_msg_cache = len(self._msg_cache)
+        new_plan = ensure_generator(list(self._msg_cache))
+        self._msg_cache = deque()
+        if len_msg_cache:
+            for current_run in self._run_bundlers.values():
+                current_run.rewind()
+
+        return new_plan
+
+    async def pause(self, defer=False):
+        """Bring the plan to rest at a resting point. Must be called on the loop.
+
+        The gate this closes is not touched here: the run loop closes it itself
+        when the cancellation below reaches it, having seen the 'pausing'
+        state. All this does is say which kind of interruption it is, and bump
+        the loop out of whatever it is awaiting so it notices.
+        """
+        # We are pausing. Cancel any deferred pause previously requested.
+        if not self.state.can_pause:
+            raise TransitionError(f"Run Engine is in '{self.state}' state and can not be paused.")
+
+        if defer:
+            self._deferred_pause_requested = True
+            self._announce("Deferred pause acknowledged. Continuing to checkpoint.")
+            return
+
+        self._announce("Pausing...")
+
+        self._deferred_pause_requested = False
+        self.interrupted = True
+        self.state = "pausing"
+        for current_run in self._run_bundlers.values():
+            current_run.record_interruption("pause")
+
+        self._task.cancel()
+
+    async def resume(self):
+        """Continue a paused plan from its last checkpoint. On the loop.
+
+        Rewinds, tells devices, then releases the plan -- one call, because a
+        caller that has to release the gate itself afterwards is a caller that
+        can forget to.
+
+        A condition that went bad while the plan was paused is waited for here
+        rather than suspended around: returning from a pause is returning from
+        the user having control, so the plan waits for permission the way one
+        starting from idle does, and runs no pre-plans on the way back in.
+
+        A `RunEngine` must still call this from inside its context managers, so
+        that SIGINT handling is reinstalled before the plan moves again.
+        """
+        await self._prepare_resume()
+        # One synchronous read decides both the wait and the supervisor, as
+        # `run` does at the start of a plan: a condition going bad after this
+        # is a real trip to be suspended for, not one this wait is holding.
+        held = not self._permit.granted
+        if held and self._permit_granted_when_paused:
+            # Ahead of the replayed messages, so the plan does not move until
+            # every condition has cleared. No rewind and no plans: there is
+            # nothing here for a pre-plan to reverse.
+            #
+            # Only when nothing was withholding as the plan came to rest. If
+            # something was, the plan was parked in a wait for it and the run
+            # loop re-sends that message now, so a second one would hold for
+            # the same thing twice.
+            self._plan_stack.append(single_gen(Msg("wait_for", None, [self._permit.wait_granted])))
+            self._response_stack.append(None)
+        self._start_supervisor(held_at_start=held)
+        self._release_pause()
+
+    async def stop(self, *, success: bool = True, finalize: bool = True, reason: str = "") -> None:
+        """End the running plan. The three public verbs are the three modes.
+
+        ``success`` says whether what the plan was doing counts as having
+        worked, the way it does for `bluesky.protocols.Stoppable`: it decides
+        whether the runs close as ``'success'`` or ``'abort'``.
+
+        ``finalize`` says whether the plan may run its own cleanup -- the
+        ``finally`` of a `bluesky.preprocessors.finalize_wrapper`, say. It does
+        not gate this executor's teardown, which always runs: stopping movables,
+        clearing monitors, unstaging, closing runs. The plan is stopped from
+        cleaning up by *what is thrown into it*: `PlanHalt` is a `GeneratorExit`,
+        so the plan cannot yield again once it arrives.
+
+        ================  ==========  ==========
+        verb              ``success`` ``finalize``
+        ================  ==========  ==========
+        `RunEngine.stop`  True        True
+        `RunEngine.abort` False       True
+        `RunEngine.halt`  False       False
+        ================  ==========  ==========
+
+        Parameters
+        ----------
+        success : bool, optional
+            Whether the runs close as ``'success'`` rather than ``'abort'``.
+        finalize : bool, optional
+            Whether the plan may run its own cleanup on the way out.
+        reason : str, optional
+            Recorded on the RunStop of every run still open.
+        """
+        if success and not finalize:
+            raise RuntimeError(
+                "success=True with finalize=False has no meaning: skipping the plan's "
+                "own cleanup is how giving up on a plan differs from ending it, so a "
+                "run cannot then be closed as a success. Use stop() to end the plan "
+                "tidily, or halt() to give up on it."
+            )
+        if self.state.is_idle:
+            raise TransitionError("RunEngine is already idle.")
+
+        if success:
+            verb, state, exception = "Stopping", "stopping", RequestStop
+        elif finalize:
+            verb, state, exception = "Aborting", "aborting", RequestAbort
+        else:
+            verb, state, exception = "Halting", "halting", PlanHalt
+        cleanup = "running cleanup" if finalize else "skipping cleanup"
+        exit_status = "success" if success else "abort"
+        self._announce(f"{verb}: {cleanup} and marking exit_status as {exit_status!r}...")
+
+        self.interrupted = True
+        self._reason = reason
+        if not success:
+            # Set here and not left to the `except` clauses in `run`, which see
+            # only what reaches them: a plan that catches what is thrown into it,
+            # runs its cleanup and returns normally ends in `StopIteration`,
+            # where those clauses would call the run a success. Saying it now
+            # means the verb decides, not the plan's manners.
+            self._exit_status = "abort"
+            # Likewise only when the plan is being given up on. A stop is an
+            # orderly end and closes its spans the ordinary way.
+            self._destroy_open_run_tracing_spans()
+
+        was_paused = self.state == "paused"
+        self.state = state
+        if was_paused:
+            # A paused plan is parked at the gate, so raising the exception into
+            # it is not enough on its own: it has to be let go before it can run
+            # whatever cleanup it is being allowed.
+            self._exception = exception
+            self._release_pause()
+        else:
+            self._task.cancel()
+
     async def _wait_for(self, msg: Msg) -> typing.Any:
         """Instruct the RunEngine to wait for futures and return the resulting tasks.
 
@@ -1901,17 +2141,6 @@ class PlanExecutor:
         del self._run_bundlers[run_key]
         self._close_run_trace(msg)
         return ret
-
-    def _close_run_trace(self, msg: Msg):
-        exit_status = msg.kwargs.get("exit_status", self._exit_status)
-        reason = msg.kwargs.get("reason", self._reason)
-        try:
-            _span: Span = self._run_tracing_spans.pop()
-            _span.set_attribute("exit_status", exit_status if exit_status is not None else "None")
-            _span.set_attribute("reason", reason if reason is not None else "None")
-            _span.end()
-        except IndexError:
-            logger.warning("No open traces left to close!")
 
     async def _create(self, msg: Msg) -> typing.Any:
         """Trigger the run engine to start bundling future obj.read() calls for
@@ -2352,42 +2581,6 @@ class PlanExecutor:
             done = True
         return done
 
-    def _status_object_completed(self, ret, fut: asyncio.Future, pardon_failures, obj=None, action=None):
-        """
-        Task to run when a status object is finished.
-
-        Always called on the event loop, via the trampoline that
-        :meth:`_add_status_to_group` hands to the status object.
-
-        Parameters
-        ----------
-        ret : status object
-        p_event : asyncio.Future
-            held in the RunEngine's self._groups cache for waiting
-        pardon_failuers : asyncio.Event
-            tells us whether the __call__ this status object is over
-        obj : object, optional
-            the device the status object came from, for logging
-        action : str, optional
-            what the device was asked to do, for logging
-        """
-        self._env.log.debug("The object %r reports %r is done with status %r.", obj, action, ret.success)
-        if not ret.success and not pardon_failures.is_set():
-            # TODO: need a better channel to move this information back
-            # to the run task.
-            try:
-                exc = ret.exception(timeout=0)
-                raise FailedStatus(ret) from exc
-            except Exception as e:
-                self._exception = e
-                fut.set_exception(e)
-                # We have set the exception, but we don't mind if
-                # no-one collects it from the future, so fetch it ourselves to
-                # squash "Future exception was never retrieved" at teardown.
-                fut.exception()
-        else:
-            fut.set_result(None)
-
     async def _sleep(self, msg: Msg) -> typing.Any:
         """
         Sleep the event loop.
@@ -2449,20 +2642,6 @@ class PlanExecutor:
             await asyncio.sleep(0.5)
             await self.pause(defer=False)
 
-    def _reset_checkpoint_state(self):
-        self._reset_checkpoint_state_meth()
-
-    def _reset_checkpoint_state_meth(self):
-        if self._msg_cache is None:
-            return
-
-        self._msg_cache = deque()
-        for current_run in self._run_bundlers.values():
-            current_run.reset_checkpoint_state()
-
-    async def _reset_checkpoint_state_coro(self):
-        self._reset_checkpoint_state()
-
     async def _clear_checkpoint(self, msg: Msg) -> typing.Any:
         """Clear a set checkpoint
 
@@ -2515,31 +2694,6 @@ class PlanExecutor:
         if current_run:
             await current_run.configure(msg)
         return old, new
-
-    def _add_status_to_group(self, obj: typing.Any, status_object: Status, group: str, action: str) -> None:
-        loop = self._env.loop
-        fut = loop.create_future()
-        pardon_failures = self._pardon_failures
-        settle = functools.partial(self._status_object_completed, status_object, fut, pardon_failures, obj, action)
-
-        # A sync ophyd Status runs its callbacks on whichever thread completed
-        # it, so this may be called from a thread that is not the loop's. It
-        # does nothing but hop back onto the loop, which keeps
-        # _status_object_completed, and so all of the state it touches, on the
-        # loop thread. Any arguments the device passes are dropped: settle has
-        # closed over what it needs. An ophyd-async status already calls back
-        # on the loop, where call_soon_threadsafe remains correct.
-        def done_callback(*args: typing.Any, **kwargs: typing.Any) -> None:
-            loop.call_soon_threadsafe(settle)
-
-        try:
-            status_object.add_callback(done_callback)
-        except AttributeError:
-            # for ophyd < v0.8.0
-            status_object.finished_cb = done_callback  # type: ignore
-
-        self._groups[group].add(lambda: fut)
-        self._status_objs[group].add(status_object)
 
     async def _stage(self, msg: Msg) -> typing.Any:
         """Instruct the RunEngine to stage the object
@@ -2661,24 +2815,6 @@ class PlanExecutor:
         async_input = functools.partial(async_input, end="", flush=True)
         return await async_input(prompt)
 
-    def _rewind(self):
-        """Clean up in preparation for resuming from a pause or suspension.
-
-        Returns
-        -------
-        new_plan : generator
-             A new plan made from the messages in the message cache
-
-        """
-        len_msg_cache = len(self._msg_cache)
-        new_plan = ensure_generator(list(self._msg_cache))
-        self._msg_cache = deque()
-        if len_msg_cache:
-            for current_run in self._run_bundlers.values():
-                current_run.rewind()
-
-        return new_plan
-
     async def _install_suspender(self, msg: Msg) -> typing.Any:
         """Install an ephemeral suspender. Msg('install_suspender', None, suspender)
 
@@ -2754,142 +2890,6 @@ class PlanExecutor:
         # add the above helper to the plan stack
         self._plan_stack.append(suspender_helper_inner_plan())
         self._response_stack.append(None)
-
-    async def pause(self, defer=False):
-        """Bring the plan to rest at a resting point. Must be called on the loop.
-
-        The gate this closes is not touched here: the run loop closes it itself
-        when the cancellation below reaches it, having seen the 'pausing'
-        state. All this does is say which kind of interruption it is, and bump
-        the loop out of whatever it is awaiting so it notices.
-        """
-        # We are pausing. Cancel any deferred pause previously requested.
-        if not self.state.can_pause:
-            raise TransitionError(f"Run Engine is in '{self.state}' state and can not be paused.")
-
-        if defer:
-            self._deferred_pause_requested = True
-            self._announce("Deferred pause acknowledged. Continuing to checkpoint.")
-            return
-
-        self._announce("Pausing...")
-
-        self._deferred_pause_requested = False
-        self.interrupted = True
-        self.state = "pausing"
-        for current_run in self._run_bundlers.values():
-            current_run.record_interruption("pause")
-
-        self._task.cancel()
-
-    async def resume(self):
-        """Continue a paused plan from its last checkpoint. On the loop.
-
-        Rewinds, tells devices, then releases the plan -- one call, because a
-        caller that has to release the gate itself afterwards is a caller that
-        can forget to.
-
-        A condition that went bad while the plan was paused is waited for here
-        rather than suspended around: returning from a pause is returning from
-        the user having control, so the plan waits for permission the way one
-        starting from idle does, and runs no pre-plans on the way back in.
-
-        A `RunEngine` must still call this from inside its context managers, so
-        that SIGINT handling is reinstalled before the plan moves again.
-        """
-        await self._prepare_resume()
-        # One synchronous read decides both the wait and the supervisor, as
-        # `run` does at the start of a plan: a condition going bad after this
-        # is a real trip to be suspended for, not one this wait is holding.
-        held = not self._permit.granted
-        if held and self._permit_granted_when_paused:
-            # Ahead of the replayed messages, so the plan does not move until
-            # every condition has cleared. No rewind and no plans: there is
-            # nothing here for a pre-plan to reverse.
-            #
-            # Only when nothing was withholding as the plan came to rest. If
-            # something was, the plan was parked in a wait for it and the run
-            # loop re-sends that message now, so a second one would hold for
-            # the same thing twice.
-            self._plan_stack.append(single_gen(Msg("wait_for", None, [self._permit.wait_granted])))
-            self._response_stack.append(None)
-        self._start_supervisor(held_at_start=held)
-        self._release_pause()
-
-    async def stop(self, *, success: bool = True, finalize: bool = True, reason: str = "") -> None:
-        """End the running plan. The three public verbs are the three modes.
-
-        ``success`` says whether what the plan was doing counts as having
-        worked, the way it does for `bluesky.protocols.Stoppable`: it decides
-        whether the runs close as ``'success'`` or ``'abort'``.
-
-        ``finalize`` says whether the plan may run its own cleanup -- the
-        ``finally`` of a `bluesky.preprocessors.finalize_wrapper`, say. It does
-        not gate this executor's teardown, which always runs: stopping movables,
-        clearing monitors, unstaging, closing runs. The plan is stopped from
-        cleaning up by *what is thrown into it*: `PlanHalt` is a `GeneratorExit`,
-        so the plan cannot yield again once it arrives.
-
-        ================  ==========  ==========
-        verb              ``success`` ``finalize``
-        ================  ==========  ==========
-        `RunEngine.stop`  True        True
-        `RunEngine.abort` False       True
-        `RunEngine.halt`  False       False
-        ================  ==========  ==========
-
-        Parameters
-        ----------
-        success : bool, optional
-            Whether the runs close as ``'success'`` rather than ``'abort'``.
-        finalize : bool, optional
-            Whether the plan may run its own cleanup on the way out.
-        reason : str, optional
-            Recorded on the RunStop of every run still open.
-        """
-        if success and not finalize:
-            raise RuntimeError(
-                "success=True with finalize=False has no meaning: skipping the plan's "
-                "own cleanup is how giving up on a plan differs from ending it, so a "
-                "run cannot then be closed as a success. Use stop() to end the plan "
-                "tidily, or halt() to give up on it."
-            )
-        if self.state.is_idle:
-            raise TransitionError("RunEngine is already idle.")
-
-        if success:
-            verb, state, exception = "Stopping", "stopping", RequestStop
-        elif finalize:
-            verb, state, exception = "Aborting", "aborting", RequestAbort
-        else:
-            verb, state, exception = "Halting", "halting", PlanHalt
-        cleanup = "running cleanup" if finalize else "skipping cleanup"
-        exit_status = "success" if success else "abort"
-        self._announce(f"{verb}: {cleanup} and marking exit_status as {exit_status!r}...")
-
-        self.interrupted = True
-        self._reason = reason
-        if not success:
-            # Set here and not left to the `except` clauses in `run`, which see
-            # only what reaches them: a plan that catches what is thrown into it,
-            # runs its cleanup and returns normally ends in `StopIteration`,
-            # where those clauses would call the run a success. Saying it now
-            # means the verb decides, not the plan's manners.
-            self._exit_status = "abort"
-            # Likewise only when the plan is being given up on. A stop is an
-            # orderly end and closes its spans the ordinary way.
-            self._destroy_open_run_tracing_spans()
-
-        was_paused = self.state == "paused"
-        self.state = state
-        if was_paused:
-            # A paused plan is parked at the gate, so raising the exception into
-            # it is not enough on its own: it has to be let go before it can run
-            # whatever cleanup it is being allowed.
-            self._exception = exception
-            self._release_pause()
-        else:
-            self._task.cancel()
 
 
 class Dispatcher:
