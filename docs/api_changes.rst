@@ -22,6 +22,18 @@ Added
 Fixed
 -----
 
+- A suspension no longer duplicates the documents from a monitored signal.
+  Resuming from one re-subscribed every monitor, having never unsubscribed
+  them: monitors run throughout a suspension, and only a *pause* stops them.
+  One suspension therefore left each monitored signal subscribed twice, and
+  every Event it produced afterwards was emitted twice, compounding with each
+  further suspension.
+- A device is told a suspension has started only if it satisfies
+  `bluesky.protocols.Pausable`.  A suspension used to call ``pause()`` on
+  anything that had the attribute, where ``RunEngine.pause`` has always required
+  the protocol -- and ``Pausable`` requires ``resume`` as well, so a device with
+  only ``pause`` was told a suspension had begun and never told it had ended.
+  Both paths now ask the same question.
 - A suspender that trips while the plan is paused now holds it when it
   resumes.  Previously the trip was dropped, and no later trip could suspend
   that plan either.

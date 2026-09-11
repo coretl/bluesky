@@ -1378,6 +1378,38 @@ class PlanExecutor:
         """The vocabulary this executor understands out of the box."""
         return {name: getattr(self, attr) for name, attr in self._DEFAULT_COMMANDS.items()}
 
+    async def _enter_rest(self) -> None:
+        """Bring the plan to rest: stop what is moving, tell the devices.
+
+        Shared by the two kinds of rest a plan can come to, a pause and a
+        suspension, which agree about devices and differ about everything else.
+
+        Monitors are deliberately not here. A pause quietens them, because
+        control goes back to the user and a callback arriving mid-prompt
+        surprises everyone; a suspension leaves them running, because it holds
+        the plan automatically and clears itself, and a monitored signal is
+        often exactly what someone is watching while it does. Only the pause
+        path mentions monitors at all, which is that rule made structural.
+        """
+        await self._stop_movable_objects(success=True)
+        for obj in self._objs_seen:
+            if isinstance(obj, Pausable):
+                try:
+                    await maybe_await(obj.pause())
+                except NoReplayAllowed:
+                    self._reset_checkpoint_state_meth()
+
+    async def _leave_rest(self) -> None:
+        """The plan is moving again: tell the devices, so they can prepare.
+
+        Only the ways back *in* call this. Abort, stop and halt let a paused
+        plan go so that it can unwind, which is not resuming, and the devices
+        are told nothing.
+        """
+        for obj in self._objs_seen:
+            if isinstance(obj, Pausable):
+                await maybe_await(obj.resume())
+
     async def _prepare_resume(self):
         """Rewind and notify devices, ready to be released. On the loop."""
         self.interrupted = False
@@ -1385,10 +1417,7 @@ class PlanExecutor:
             await current_run.record_interruption("resume")
         self._plan_stack.append(self._rewind())
         self._response_stack.append(None)
-        # Notify Devices of the resume in case they want to clean up.
-        for obj in self._objs_seen:
-            if isinstance(obj, Pausable):
-                await maybe_await(obj.resume())
+        await self._leave_rest()
 
     async def _request_suspend(self, fut, *, pre_plan=None, post_plan=None, justification=None):
         """Suspend until ``fut`` is finished. Must be called on the loop."""
@@ -1528,17 +1557,7 @@ class PlanExecutor:
                     # self._monitor_params to re-instate them later.
                     for current_run in self._run_bundlers.values():
                         await current_run.suspend_monitors()
-                    # During pause, all motors should be stopped. Call stop()
-                    # on every object we ever set().
-                    await self._stop_movable_objects(success=True)
-                    # Notify Devices of the pause in case they want to
-                    # clean up.
-                    for obj in self._objs_seen:
-                        if isinstance(obj, Pausable):
-                            try:
-                                await maybe_await(obj.pause())
-                            except NoReplayAllowed:
-                                self._reset_checkpoint_state_meth()
+                    await self._enter_rest()
                     # Whether the plan was already waiting on its permit when
                     # it came to rest. If it was, the run loop re-sends that
                     # message on the way out and the plan holds itself; if it
@@ -2447,22 +2466,20 @@ class PlanExecutor:
         await self.pause(*msg.args, **msg.kwargs)
 
     async def _resume_from_suspender(self, msg):
-        """Request the run engine to resume
+        """The suspension is over: tell the devices. Msg('_resume_from_suspender')
 
-        Expected message object is:
+        Sent by the helper plan `_start_suspender` pushes, between the wait on
+        the suspender's future and the post-plan, which is why this is a message
+        at all: the work has to be sequenced among the plans the suspension
+        runs, and only the plan stack can do that.
 
-            Msg('resume', defer=False, name=None, callback=None)
+        Nothing to do with `RunEngine.resume`, despite what this said until
+        2026-09-11. There is no ``Msg('resume')``, this takes no keyword
+        arguments, and a paused plan comes back by a different road entirely.
 
-        See RunEngine.resume() docstring for explanation of the three
-        keyword arguments in the `Msg` signature
+        Monitors are untouched: a suspension never stopped them.
         """
-        # Re-instate monitoring callbacks.
-        for current_run in self._run_bundlers.values():
-            await current_run.restore_monitors()
-        # Notify Devices of the resume in case they want to clean up.
-        for obj in self._objs_seen:
-            if isinstance(obj, Pausable):
-                await maybe_await(obj.resume())
+        await self._leave_rest()
 
     async def _checkpoint(self, msg):
         """Instruct the RunEngine to create a checkpoint so that we can rewind
@@ -2751,16 +2768,7 @@ class PlanExecutor:
         pre_plan, post_plan, justification, fut = msg.args
         for current_run in self._run_bundlers.values():
             await current_run.record_interruption(justification if justification is not None else "suspended")
-        # During suspend, all motors should be stopped. Call stop() on
-        # every object we ever set().
-        await self._stop_movable_objects(success=True)
-        # Notify Devices of the pause in case they want to clean up.
-        for obj in self._objs_seen:
-            if hasattr(obj, "pause"):
-                try:
-                    await maybe_await(obj.pause())
-                except NoReplayAllowed:
-                    self._reset_checkpoint_state_meth()
+        await self._enter_rest()
         # rewind to the last checkpoint
         rewind_plan = self._rewind()
         was_rewindable = self.rewindable
