@@ -20,6 +20,8 @@ from bluesky.suspenders import SuspendBoolHigh
 from bluesky.tests import ophyd_async, requires_ophyd_async
 from bluesky.utils import FailedPause, RunEngineInterrupted
 
+from .utils import suspend_until
+
 if ophyd_async:
     from ophyd_async.core import soft_signal_rw
 
@@ -401,10 +403,9 @@ def test_a_condition_joining_a_suspension_runs_its_pre_plan(RE):
 def test_a_suspension_arriving_after_the_plan_ends_does_nothing(RE):
     """The supervisor's task can outlive the plan that created it.
 
-    `_request_suspend` is created fire-and-forget, so it can be run after the
-    executor has gone idle. Neither transition it would attempt is legal from
-    'idle', and an exception raised in a task nobody awaits is reported at
-    collection against an unrelated test.
+    A suspension raised through the test back door can reach an executor that
+    has already gone idle. Neither transition it would attempt is legal from
+    'idle'.
     """
     RE([Msg("null")])
     executor = RE._executor
@@ -413,10 +414,7 @@ def test_a_suspension_arriving_after_the_plan_ends_does_nothing(RE):
     async def nothing():
         return None
 
-    future = asyncio.run_coroutine_threadsafe(
-        executor._request_suspend(nothing, justification="too late"), RE.loop
-    )
-    future.result(timeout=10)
+    suspend_until(RE, nothing, justification="too late").result(timeout=10)
 
     # And it left the state alone.
     assert executor.state.is_idle

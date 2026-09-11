@@ -8,7 +8,6 @@ import asyncio
 import copy
 import functools
 import json
-import sys
 import typing
 from collections import ChainMap, defaultdict, deque
 from collections.abc import Awaitable, Callable, MutableMapping
@@ -1106,91 +1105,113 @@ class PlanExecutor:
         self._supervisor = self._loop.create_task(self._supervise_permit(held_at_start=held))
 
     async def _supervise_permit(self, held_at_start=False):
-        """Suspend this plan whenever permission to run is withheld.
+        """Suspend the plan whenever permission to run is withheld.
 
-        One suspension per episode, however many conditions are standing: that
-        is not a rule enforced by a flag, it is where this loop is sitting. A
-        condition tripping while the loop is inside an episode joins the wait
-        rather than starting a second rewind, though it still runs its own
-        pre-plan when it fires.
-
-        ``held_at_start`` keeps this out of the way of the wait
-        `_arrange_permission` puts in front of the plan: a permit already
-        withheld when the plan starts is being held there, and must not also be
-        suspended here, where there is no checkpoint to rewind to. It is passed
-        in rather than tested here because this task starts a turn of the loop
-        later, and a condition going bad in that window is a real trip.
+        One suspension per episode, however many conditions are standing: a
+        condition tripping while one is open joins it rather than starting a
+        second rewind.
         """
         if held_at_start:
+            # Already held in band by `_arrange_permission`, and there is no
+            # checkpoint yet to rewind to, so this must not suspend for it.
             await self._permit.wait_granted()
         while True:
-            # The read that decides is the read that reports, so there is no
-            # window in which this task is told to suspend and then finds
-            # nothing to suspend for: whatever `withheld_by` hands back is both
-            # the verdict and the reasons behind it.
-            while not (withheld := self._permit.withheld_by) or self.state in ("paused", "pausing"):
-                # Nothing is arranged while the plan is coming to rest or at
-                # rest: control has gone back to the user, and the executor runs
-                # nothing unprompted there. Returning from a pause is like
-                # returning from idle -- the plan waits for its permit rather
-                # than suspending -- and `resume` replaces this task to set that
-                # up, so parking here until then loses nothing.
-                await self._permit.wait_changed()
-            seen = dict(withheld)
-            # Everything already standing when the episode opens, in the order
-            # the conditions fired. More than one lands here whenever two
-            # signals go bad in the same turn of the loop -- one interlock
-            # dropping two readings does it -- because both withholds are
-            # applied before this task is scheduled again.
-            opening = list(seen.values())
+            opening = await self._wait_for_a_reason_to_suspend()
             joined: list[Suspension] = []
+            self._hooks.suspend(join_justifications(opening))
+            if not self._begin_suspension(opening, joined, self._permit.wait_granted):
+                return
+            await self._gather_joiners(opening, joined)
 
-            def preamble(opening=opening):
-                # In band, inside the suspension, so these land after the
-                # rewind and after movable objects have been stopped, which is
-                # where a lone condition's pre-plan has always run.
-                for reason in opening:
-                    if reason.pre_plan is not None:
-                        yield from ensure_generator(_called(reason.pre_plan))
+    async def _wait_for_a_reason_to_suspend(self) -> dict[typing.Hashable, Suspension]:
+        """Park until something is withholding the plan and it is running."""
+        while True:
+            # The read that decides is the read that reports, so this cannot be
+            # told to suspend and then find nothing to suspend for.
+            withheld = self._permit.withheld_by
+            # Nothing is arranged while the plan is at rest or coming to rest:
+            # control has gone back to the user, and `resume` replaces this task.
+            if withheld and self.state not in ("paused", "pausing"):
+                return dict(withheld)
+            await self._permit.wait_changed()
 
-            def unwind(joined=joined, opening=opening):
-                # A generator function, so its body runs when the suspension
-                # unwinds rather than when it starts -- by then `joined` holds
-                # every condition that turned up while the plan was held, and
-                # everything is undone in the reverse of the order it arrived.
-                for reason in reversed(joined):
-                    if reason.post_plan is not None:
-                        yield from ensure_generator(_called(reason.post_plan))
-                for reason in reversed(opening):
-                    if reason.post_plan is not None:
-                        yield from ensure_generator(_called(reason.post_plan))
+    def _begin_suspension(
+        self,
+        opening: dict[typing.Hashable, Suspension],
+        joined: list[Suspension],
+        fut,
+    ) -> bool:
+        """Put a suspension in front of the plan. False if it cannot be held.
 
-            self._hooks.suspend(join_justifications(seen))
-            self._loop.create_task(  # noqa: RUF006
-                self._request_suspend(
-                    self._permit.wait_granted,
-                    pre_plan=preamble,
-                    post_plan=unwind,
-                    justification=join_justifications(seen),
+        ``joined`` is read when the suspension unwinds rather than now, so
+        conditions arriving while the plan is held take part in it.
+        """
+        if self.state.is_idle:
+            # The plan ended before this was reached. Nothing to suspend, and
+            # neither transition below is legal from 'idle'.
+            return False
+        if not self.resumable:
+            # Nothing to rewind to. The plan stack is being torn down, so a
+            # suspension queued onto it would never be reached.
+            self._hooks.announce("No checkpoint; cannot suspend.")
+            self._hooks.announce("Aborting: running cleanup and marking exit_status as 'abort'...")
+            self.interrupted = True
+            self._exception = FailedPause()
+            was_paused = self.state == "paused"
+            self.state = "aborting"
+            if not was_paused:
+                self._task.cancel()
+            return False
+
+        reasons = list(opening.values())
+
+        def preamble():
+            # In band, inside the suspension, so these land after the rewind and
+            # after movable objects have stopped.
+            for reason in reasons:
+                if reason.pre_plan is not None:
+                    yield from ensure_generator(_called(reason.pre_plan))
+
+        def unwind():
+            for reason in reversed(joined):
+                if reason.post_plan is not None:
+                    yield from ensure_generator(_called(reason.post_plan))
+            for reason in reversed(reasons):
+                if reason.post_plan is not None:
+                    yield from ensure_generator(_called(reason.post_plan))
+
+        self._push_plan(
+            single_gen(
+                Msg(
+                    "_start_suspender",
+                    None,
+                    preamble,
+                    unwind,
+                    join_justifications(opening),
+                    fut,
                 )
             )
-            await self._join_episode(seen, joined)
+        )
+        self.state = "suspending"
+        # Bump the run task out of whatever it is awaiting, so that it reaches
+        # the message just pushed.
+        self._task.cancel()
+        return True
 
-    async def _join_episode(self, seen, joined):
-        """Run the pre-plan of every condition that joins a suspension.
+    async def _gather_joiners(self, opening: dict[typing.Hashable, Suspension], joined: list[Suspension]) -> None:
+        """Run the pre-plan of every condition that joins an open suspension.
 
-        Each runs when its condition fires, out of band, because the plan is
-        parked in the suspension's ``wait_for`` and will not reach anything
-        pushed onto its stack. Their post-plans are not run here: they belong
-        to the suspension's unwind, in band and in reverse, so that they
-        cannot race the plan resuming.
+        Each runs out of band, because the plan is parked in the suspension's
+        ``wait_for`` and will not reach anything pushed onto its stack. Their
+        post-plans wait for the unwind, so that they cannot race the plan
+        resuming.
         """
         while not self._permit.granted:
             await self._permit.wait_changed()
             for key, suspension in self._permit.withheld_by.items():
-                if key in seen:
+                if key in opening:
                     continue
-                seen[key] = suspension
+                opening[key] = suspension
                 joined.append(suspension)
                 if suspension.pre_plan is not None:
                     await self._run_out_of_band(suspension.pre_plan)
@@ -1313,49 +1334,6 @@ class PlanExecutor:
         for obj in self._objs_seen:
             if isinstance(obj, Pausable):
                 await maybe_await(obj.resume())
-
-    async def _request_suspend(self, fut, *, pre_plan=None, post_plan=None, justification=None):
-        """Suspend until ``fut`` is finished. Must be called on the loop."""
-        if self.state.is_idle:
-            # The plan ended between the supervisor creating this task and the
-            # task being run. There is nothing left to suspend, and neither
-            # 'idle' -> 'suspending' below nor 'idle' -> 'aborting' just after
-            # is a legal transition, so falling through would raise inside a
-            # fire-and-forget task -- surfacing at collection as "Task exception
-            # was never retrieved", against whichever test happened to be next.
-            return
-        unresumable = not self.resumable
-        if unresumable:
-            self._hooks.announce("No checkpoint; cannot suspend.")
-            self._hooks.announce("Aborting: running cleanup and marking exit_status as 'abort'...")
-            self.interrupted = True
-            self._exception = FailedPause()
-            was_paused = self.state == "paused"
-            self.state = "aborting"
-            if not was_paused:
-                self._task.cancel()
-        if unresumable:
-            # Nothing to rewind to, so there is no suspension to arrange. The
-            # plan stack is being torn down, and a suspension queued onto it
-            # would never be reached; worse, 'aborting' -> 'suspending' below
-            # is not a legal transition, so falling through raises into this
-            # fire-and-forget task and is reported at collection as "Task
-            # exception was never retrieved", against an unrelated test.
-            return
-
-        # add starting the suspender logic to the stack
-        self._push_plan(single_gen(Msg("_start_suspender", None, pre_plan, post_plan, justification, fut)))
-
-        # The event loop is still running. The pre_plan will be processed,
-        # and then the executor will be hung up on processing the
-        # 'wait_for' message until `fut` is set.
-        #
-        # No paused case to consider: the supervisor does not arrange a
-        # suspension while the plan is paused or pausing, so the only way here
-        # is from a plan that is actually running.
-        self.state = "suspending"
-        # bump the run task out of what ever it is awaiting
-        self._task.cancel()
 
     async def _stop_movable_objects(self, *, success=True):
         "Call obj.stop() for all objects we have moved. Log any exceptions."
@@ -1697,7 +1675,6 @@ class PlanExecutor:
                     self._env.log.exception("Failed to unstage %r.", obj)
                 self._staged.remove(obj)
 
-            sys.stdout.flush()
             # Emit RunStop if necessary.
             for key, current_run in self._run_bundlers.items():
                 if current_run.run_is_open:
