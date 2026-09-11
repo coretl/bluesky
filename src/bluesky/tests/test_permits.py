@@ -423,11 +423,11 @@ def test_a_suspension_arriving_after_the_plan_ends_does_nothing(RE):
 
 
 def test_a_suspension_reaches_both_hooks(RE):
-    """The event goes to `suspend_hook`; everything else to `announce_hook`."""
+    """The event goes to the suspend hook; everything else to the announce hook."""
     said: list[str] = []
     suspensions: list[str] = []
-    RE._session.hooks.announce_hook = said.append
-    RE._session.hooks.suspend_hook = suspensions.append
+    RE._session.hooks.announce = said.append
+    RE._session.hooks.suspend = suspensions.append
 
     sig = Signal(value=0, name="s")
     sig.put(0)

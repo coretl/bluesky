@@ -173,7 +173,7 @@ def test_a_suspender_holds_no_threading_primitives():
 def test_the_executor_never_says_what_to_press():
     """It cannot know that a keyboard is attached.
 
-    `announce_hook` may be wired to a websocket, where telling someone to hit
+    the announce hook may be wired to a websocket, where telling someone to hit
     Ctrl-C is wrong. Saying what to press belongs to the `RunEngine` and to
     `SigintHandler`, which exist only where a terminal does.
     """

@@ -380,9 +380,9 @@ class RunEngine:
         # unset.
         # The executor says what happened; this is the half that knows a
         # terminal is watching, and so the only half that may say what to press.
-        self._session.hooks.announce_hook = print
-        self._session.hooks.suspend_hook = self._announce_suspension
-        self._session.hooks.pause_hook = self._blocking_event.set
+        self._session.hooks.announce = print
+        self._session.hooks.suspend = self._announce_suspension
+        self._session.hooks.pause = self._blocking_event.set
 
         if context_managers is None:
             context_managers = [SigintHandler]
@@ -475,27 +475,27 @@ class RunEngine:
 
     @property
     def msg_hook(self):
-        return _hook_or_none(self._session.hooks.msg_hook)
+        return _hook_or_none(self._session.hooks.msg)
 
     @msg_hook.setter
     def msg_hook(self, value):
-        self._session.hooks.msg_hook = value if value is not None else do_nothing
+        self._session.hooks.msg = value
 
     @property
     def state_hook(self):
-        return _hook_or_none(self._session.hooks.state_hook)
+        return _hook_or_none(self._session.hooks.state)
 
     @state_hook.setter
     def state_hook(self, value):
-        self._session.hooks.state_hook = value if value is not None else do_nothing
+        self._session.hooks.state = value
 
     @property
     def waiting_hook(self):
-        return _hook_or_none(self._session.hooks.waiting_hook)
+        return _hook_or_none(self._session.hooks.waiting)
 
     @waiting_hook.setter
     def waiting_hook(self, value):
-        self._session.hooks.waiting_hook = value if value is not None else do_nothing
+        self._session.hooks.waiting = value
 
     @property
     def record_interruptions(self):

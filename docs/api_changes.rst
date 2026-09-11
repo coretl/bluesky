@@ -162,8 +162,8 @@ Changed
   mapping ``RE.md`` is -- a ``PersistentDict``, say -- stays where it is; only
   its contents are copied.
 - The executor no longer prints.  Two new hooks carry what it used to say:
-  ``announce_hook``, called with a line about what happened, and
-  ``suspend_hook``, called with the joined justifications as a suspension
+  ``hooks.announce``, called with a line about what happened, and
+  ``hooks.suspend``, called with the joined justifications as a suspension
   begins.  A ``RunEngine`` wires the first to ``print`` and renders the second
   itself, so nothing changes at a prompt.  A headless ``PlanSession`` leaves
   both unset and is silent unless it sets them, which is what lets a service
