@@ -94,11 +94,14 @@ def suspend_until(RE, fut=None, *, pre_plan=None, post_plan=None, justification=
 
     Callable from any thread, including a ``threading.Timer``.
     """
-    from bluesky.suspensions import SuspensionReason
+    from bluesky.suspensions import SuspensionEpisode, SuspensionReason
 
-    reason = SuspensionReason(justification or "", pre_plan, post_plan)
+    episode = SuspensionEpisode(
+        {object(): SuspensionReason(justification or "", pre_plan, post_plan)},
+        fut=fut,
+    )
 
     async def begin():
-        RE._executor._begin_suspension({object(): reason}, [], fut)
+        RE._executor._begin_suspension(episode)
 
     return asyncio.run_coroutine_threadsafe(begin(), RE.loop)

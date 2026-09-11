@@ -4,12 +4,56 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Hashable, Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import MappingProxyType
 
 from .utils import Msg
 
 PlanLike = Iterable[Msg] | Callable[[], Iterable[Msg]]
+
+
+@dataclass
+class SuspensionEpisode:
+    """One suspension of one plan, and the reasons taking part in it.
+
+    ``opening`` are the reasons standing when the suspension began; ``joined``
+    are those that tripped while the plan was already held. The split decides
+    how each one's pre-plan runs -- in band for the openers, out of band for the
+    joiners, which cannot reach a plan stack the plan is parked away from -- and
+    ``undo_order`` puts every post-plan in the reverse of arrival.
+
+    ``joined`` is filled after the episode is handed on, so read it late.
+    """
+
+    opening: dict[Hashable, SuspensionReason]
+    fut: Callable
+    joined: list[SuspensionReason] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        # Snapshotted, so that joining cannot quietly enlarge the opening set.
+        self._opening_order = list(self.opening.values())
+        self._seen = set(self.opening)
+
+    def sees(self, key: Hashable) -> bool:
+        """Whether ``key`` is already taking part."""
+        return key in self._seen
+
+    def add_joiner(self, key: Hashable, reason: SuspensionReason) -> None:
+        """Take ``key`` into an episode that has already begun."""
+        self._seen.add(key)
+        self.joined.append(reason)
+
+    @property
+    def justification(self) -> str:
+        return join_justifications(self.opening)
+
+    def pre_plans(self) -> Iterable[SuspensionReason]:
+        """The openers, in the order they fired."""
+        return self._opening_order
+
+    def undo_order(self) -> list[SuspensionReason]:
+        """Every reason, in the reverse of the order it arrived."""
+        return [*reversed(self.joined), *reversed(self._opening_order)]
 
 
 @dataclass(frozen=True)
