@@ -1298,15 +1298,6 @@ class PlanExecutor:
             if isinstance(obj, Pausable):
                 await maybe_await(obj.resume())
 
-    async def _prepare_resume(self):
-        """Rewind and notify devices, ready to be released. On the loop."""
-        self.interrupted = False
-        for current_run in self._run_bundlers.values():
-            current_run.record_interruption("resume")
-        self._plan_stack.append(self._rewind())
-        self._response_stack.append(None)
-        await self._leave_rest()
-
     async def _request_suspend(self, fut, *, pre_plan=None, post_plan=None, justification=None):
         """Suspend until ``fut`` is finished. Must be called on the loop."""
         if self.state.is_idle:
@@ -1865,7 +1856,12 @@ class PlanExecutor:
         A `RunEngine` must still call this from inside its context managers, so
         that SIGINT handling is reinstalled before the plan moves again.
         """
-        await self._prepare_resume()
+        self.interrupted = False
+        for current_run in self._run_bundlers.values():
+            current_run.record_interruption("resume")
+        self._plan_stack.append(self._rewind())
+        self._response_stack.append(None)
+        await self._leave_rest()
         # One synchronous read decides both the wait and the supervisor, as
         # `run` does at the start of a plan: a condition going bad after this
         # is a real trip to be suspended for, not one this wait is holding.
