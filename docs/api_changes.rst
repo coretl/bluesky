@@ -23,7 +23,7 @@ Fixed
 -----
 
 - A plan is held when a condition goes bad between the executor being built and
-  the plan starting.  Whether the permit was withheld was read twice, once when
+  the plan starting.  Whether the suspension was tripped was read twice, once when
   the executor was built and once when the plan started, and the two readings
   could disagree: a condition tripping in between left the plan with nothing
   holding it and a supervisor that believed it was already being held, so the
@@ -67,9 +67,9 @@ Fixed
   unrelated later moment.  A ``wait`` that times out still leaves them alone, so
   waiting on the same group again finds them in flight.
 - Installing a suspender that is already installed raises ``RuntimeError``
-  rather than silently reassigning it.  A suspender holds one permit, so the
-  second install orphaned the first -- leaving it withheld with nothing able to
-  grant it -- and when the second scope ended the suspender was cleared
+  rather than silently reassigning it.  A suspender trips one suspension, so the
+  second install orphaned the first -- leaving it tripped with nothing able to
+  clear it -- and when the second scope ended the suspender was cleared
   outright, so a durable suspender that a plan re-installed was still listed by
   ``RunEngine.suspenders`` and could never suspend anything again.  Remove it
   before installing it somewhere else.
@@ -106,22 +106,22 @@ Changed
   Devices that implemented the old ``Subscribable`` protocol should rename
   ``subscribe`` to ``subscribe_reading``; users of ophyd-async need at
   least v0.13.5.
-- Suspension now goes through a permit: permission to run, held open unless
-  something has a reason to withhold it.  Reasons are keyed by whoever raised
-  them, so two conditions going bad at once are one suspension that ends when
-  the last of them clears.  The permit itself is internal; installing a
+- A plan has one ``Suspension``, tripped while anything has a reason to trip it.
+  Reasons are keyed by whoever raised them, so two conditions going bad at once
+  are one suspension that ends when the last of them clears.  The object itself
+  is internal; installing a
   suspender is how a suspension is raised, and ``RunEngine.install_suspender``
   is unchanged.  Calling a `RunEngine` while a suspender is already tripped
   prints what is holding it up, as it did before.  ``install`` waits for the
   subscription to be in place, so a suspender installed on an already-bad
-  signal is holding the permit by the time the call returns.  Such a plan is
+  signal has tripped the suspension by the time the call returns.  Such a plan is
   *held* at its first message rather than suspended, so a condition already bad
   when it starts runs neither its pre-plan nor its post-plan.  That is what
   happened before as well, and is now deliberate: a pre-plan reverses something
   a plan did, and no plan has run yet, so there is nothing to reverse -- and
   since a post-plan undoes its pre-plan, skipping one has to skip the other, or
   the plan would begin by opening a shutter it never closed.
-- ``SuspenderBase.install`` takes the permit to withhold rather than a
+- ``SuspenderBase.install`` takes the ``Suspension`` to trip rather than a
   ``RunEngine``.  Passing a ``RunEngine`` still works, with a
   ``DeprecationWarning``, and does a durable install on it as before.
 - ``SuspenderBase.install`` and ``SuspenderBase.remove`` must be called on the
@@ -145,8 +145,8 @@ Changed
   post-plans run in the reverse order, so **pre- and post-plans should be
   idempotent**.
 - Returning from a pause is now like returning from idle.  While a plan is
-  paused the executor arranges nothing: a condition going bad withholds the
-  permit and does no more, and no pre-plan runs, because control has gone back
+  paused the executor arranges nothing: a condition going bad trips the
+  suspension and does no more, and no pre-plan runs, because control has gone back
   to the user and something else may be using the beamline.  On ``resume`` the
   plan then *waits* for every condition to clear rather than suspending around
   them, and runs no pre-plans on the way back in -- a pre-plan reverses
@@ -194,10 +194,10 @@ Removed
   on a single plan.
 - ``RunEngine.request_suspend``, with no replacement.  Suspension is raised by
   installing a suspender, and by nothing else.  ``request_suspend`` was a second
-  route to the same place that bypassed the permit, so a suspension raised
+  route to the same place that bypassed the suspension, so a suspension raised
   through it did not merge with one raised by a suspender, and two overlapping
   conditions arriving by the two routes rewound the plan twice -- the thing the
-  permit exists to prevent.  Any condition worth suspending on can be written as
+  suspension exists to prevent.  Any condition worth suspending on can be written as
   a suspender, which composes; to stop a plan yourself and decide yourself when
   it goes on, use ``RunEngine.pause``.
 
