@@ -1293,7 +1293,7 @@ class PlanExecutor:
                 try:
                     await maybe_await(obj.pause())
                 except NoReplayAllowed:
-                    self._reset_checkpoint_state_meth()
+                    self._reset_checkpoint_state()
 
     async def _leave_rest(self) -> None:
         """The plan is moving again: tell the devices, so they can prepare.
@@ -1779,19 +1779,14 @@ class PlanExecutor:
         else:
             fut.set_result(None)
 
-    def _reset_checkpoint_state(self):
-        self._reset_checkpoint_state_meth()
-
-    def _reset_checkpoint_state_meth(self):
+    def _reset_checkpoint_state(self) -> None:
+        """Forget the messages cached for a rewind, here and in every run."""
         if self._msg_cache is None:
             return
 
         self._msg_cache = deque()
         for current_run in self._run_bundlers.values():
             current_run.reset_checkpoint_state()
-
-    async def _reset_checkpoint_state_coro(self):
-        self._reset_checkpoint_state()
 
     def _add_status_to_group(self, obj: typing.Any, status_object: Status, group: str, action: str) -> None:
         loop = self._env.loop
@@ -2214,7 +2209,7 @@ class PlanExecutor:
             raise IllegalMessageSequence(ims_msg)
         else:
             await current_run.monitor(msg)
-        await self._reset_checkpoint_state_coro()
+        self._reset_checkpoint_state()
 
     async def _unmonitor(self, msg: Msg) -> typing.Any:
         """
@@ -2232,7 +2227,7 @@ class PlanExecutor:
             raise IllegalMessageSequence(ims_msg)
         else:
             await current_run.unmonitor(msg)
-        await self._reset_checkpoint_state_coro()
+        self._reset_checkpoint_state()
 
     async def _save(self, msg: Msg) -> typing.Any:
         """Save the event that is currently being bundled
@@ -2581,7 +2576,7 @@ class PlanExecutor:
             if current_run.bundling:
                 raise IllegalMessageSequence("Cannot 'checkpoint' after 'create' and before 'save'. Aborting!")
 
-        await self._reset_checkpoint_state_coro()
+        self._reset_checkpoint_state()
 
         if self._deferred_pause_requested:
             # We are at a checkpoint; we are done deferring the pause.
@@ -2657,7 +2652,7 @@ class PlanExecutor:
         group = kwargs.pop("group", None)
         ret = obj.stage()
         self._staged.add(obj)  # add first in case of failure below
-        await self._reset_checkpoint_state_coro()
+        self._reset_checkpoint_state()
 
         if not isinstance(ret, Status):
             return ret
@@ -2681,7 +2676,7 @@ class PlanExecutor:
         ret = obj.unstage()
         # use `discard()` to ignore objects that are not in the staged set.
         self._staged.discard(obj)
-        await self._reset_checkpoint_state_coro()
+        self._reset_checkpoint_state()
 
         if not isinstance(ret, Status):
             return ret
@@ -2729,7 +2724,7 @@ class PlanExecutor:
         self._env.log.debug("Adding subscription %r", msg)
         _, obj, args, kwargs, _ = msg
         token = self._dispatcher.subscribe(*args, **kwargs)
-        await self._reset_checkpoint_state_coro()
+        self._reset_checkpoint_state()
         return token
 
     async def _unsubscribe(self, msg: Msg) -> typing.Any:
@@ -2749,7 +2744,7 @@ class PlanExecutor:
         if (token := kwargs.get("token", key_absence_sentinel := object())) is key_absence_sentinel:
             (token,) = arg
         self._dispatcher.unsubscribe(token)
-        await self._reset_checkpoint_state_coro()
+        self._reset_checkpoint_state()
 
     async def _input(self, msg: Msg) -> typing.Any:
         """
