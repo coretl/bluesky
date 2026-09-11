@@ -44,6 +44,7 @@ from .protocols import (
     Triggerable,
     check_supports,
 )
+from .suspenders import SuspenderBase
 from .tracing import tracer
 from .utils import (
     AsyncInput,
@@ -596,7 +597,7 @@ class PlanSession:
         self.strict_pre_declare = False
         self.rewindable = True
 
-        self._suspenders: set[typing.Any] = set()
+        self._suspenders: set[SuspenderBase] = set()
         # The durable half of the suspension state. Suspenders installed here
         # write to this permit, and every executor this session builds waits
         # on it as well as on its own -- the same shape as the two dispatchers.
@@ -629,7 +630,7 @@ class PlanSession:
             return scan_id
 
     @property
-    def suspenders(self):
+    def suspenders(self) -> tuple[SuspenderBase, ...]:
         """Read-only collection of installed suspenders."""
         return tuple(self._suspenders)
 
@@ -763,7 +764,7 @@ class PlanSession:
             without_commands=self._unregistered_commands,
         )
 
-    def install_suspender(self, suspender):
+    def install_suspender(self, suspender: SuspenderBase) -> None:
         """Install a durable suspender, given to every executor built after it.
 
         Installing subscribes the suspender to its signal here and now, and it
@@ -778,13 +779,13 @@ class PlanSession:
         self._suspenders.add(suspender)
         suspender.install(self._permit)
 
-    def remove_suspender(self, suspender):
+    def remove_suspender(self, suspender: SuspenderBase) -> None:
         """Uninstall a durable suspender."""
         if suspender in self._suspenders:
             suspender.remove()
         self._suspenders.discard(suspender)
 
-    def clear_suspenders(self):
+    def clear_suspenders(self) -> None:
         """Uninstall all suspenders."""
         for suspender in self.suspenders:
             self.remove_suspender(suspender)
@@ -959,7 +960,7 @@ class PlanExecutor:
         # ones are the session's: they hold this plan up through the permit
         # chain, so there is nothing to keep a copy of here -- and a copy would
         # go stale the moment one was installed while this plan was running.
-        self._plan_suspenders: set[typing.Any] = set()
+        self._plan_suspenders: set[SuspenderBase] = set()
 
         # This plan's own permit, the counterpart of its own dispatcher: a
         # suspender a plan installs holds up that plan alone. The session's is
@@ -1111,7 +1112,7 @@ class PlanExecutor:
         return self._env.loop
 
     @property
-    def suspenders(self) -> tuple[typing.Any, ...]:
+    def suspenders(self) -> tuple[SuspenderBase, ...]:
         """The suspenders this plan installed for itself, which end with it.
 
         Not the session's. Those hold this plan up through the permit chain,
@@ -1119,7 +1120,7 @@ class PlanExecutor:
         """
         return tuple(self._plan_suspenders)
 
-    def _drop_plan_suspender(self, suspender) -> None:
+    def _drop_plan_suspender(self, suspender: SuspenderBase) -> None:
         """Uninstall a suspender this plan installed for itself."""
         self._plan_suspenders.discard(suspender)
         # `remove` drops the suspender's reason itself, on this permit and under
@@ -1836,7 +1837,7 @@ class PlanExecutor:
             raise stashed_exception
         return plan_return
 
-    async def _wait_for(self, msg):
+    async def _wait_for(self, msg: Msg) -> typing.Any:
         """Instruct the RunEngine to wait for futures and return the resulting tasks.
 
         Expected message object is:
@@ -1874,7 +1875,7 @@ class PlanExecutor:
             raise WaitForTimeoutError("Plan failed to complete in the specified time")
         return futs
 
-    async def _open_run(self, msg):
+    async def _open_run(self, msg: Msg) -> typing.Any:
         """Instruct the RunEngine to start a new "run"
 
         Expected message object is:
@@ -1933,7 +1934,7 @@ class PlanExecutor:
         self.run_start_uids.append(new_uid)
         return new_uid
 
-    async def _close_run(self, msg):
+    async def _close_run(self, msg: Msg) -> typing.Any:
         """Instruct the RunEngine to write the RunStop document
 
         Expected message object is:
@@ -1966,7 +1967,7 @@ class PlanExecutor:
         except IndexError:
             logger.warning("No open traces left to close!")
 
-    async def _create(self, msg):
+    async def _create(self, msg: Msg) -> typing.Any:
         """Trigger the run engine to start bundling future obj.read() calls for
          an Event document
 
@@ -1991,7 +1992,7 @@ class PlanExecutor:
             raise IllegalMessageSequence(ims_msg)
         return await current_run.create(msg)
 
-    async def _declare_stream(self, msg):
+    async def _declare_stream(self, msg: Msg) -> typing.Any:
         """Trigger the run engine to start bundling future obj.describe() calls for
          an Event document
 
@@ -2017,7 +2018,7 @@ class PlanExecutor:
             raise IllegalMessageSequence(ims_msg)
         return await current_run.declare_stream(msg)
 
-    async def _read(self, msg):
+    async def _read(self, msg: Msg) -> typing.Any:
         """
         Add a reading to the open event bundle.
 
@@ -2044,7 +2045,7 @@ class PlanExecutor:
 
         return ret
 
-    async def _locate(self, msg: Msg):
+    async def _locate(self, msg: Msg) -> typing.Any:
         """
         Locate some Movables and return their locations.
 
@@ -2065,7 +2066,7 @@ class PlanExecutor:
         else:
             return list(await asyncio.gather(*coros))
 
-    async def _monitor(self, msg):
+    async def _monitor(self, msg: Msg) -> typing.Any:
         """
         Monitor a signal. Emit event documents asynchronously.
 
@@ -2092,7 +2093,7 @@ class PlanExecutor:
             await current_run.monitor(msg)
         await self._reset_checkpoint_state_coro()
 
-    async def _unmonitor(self, msg):
+    async def _unmonitor(self, msg: Msg) -> typing.Any:
         """
         Stop monitoring; i.e., remove the callback emitting event documents.
 
@@ -2110,7 +2111,7 @@ class PlanExecutor:
             await current_run.unmonitor(msg)
         await self._reset_checkpoint_state_coro()
 
-    async def _save(self, msg):
+    async def _save(self, msg: Msg) -> typing.Any:
         """Save the event that is currently being bundled
 
         Expected message object is:
@@ -2128,7 +2129,7 @@ class PlanExecutor:
         else:
             await current_run.save(msg)
 
-    async def _drop(self, msg):
+    async def _drop(self, msg: Msg) -> typing.Any:
         """Drop the event that is currently being bundled
 
         Expected message object is:
@@ -2144,7 +2145,7 @@ class PlanExecutor:
         else:
             await current_run.drop(msg)
 
-    async def _prepare(self, msg):
+    async def _prepare(self, msg: Msg) -> typing.Any:
         """Prepare a flyer for a flyscan
 
         Expected message object is:
@@ -2165,7 +2166,7 @@ class PlanExecutor:
 
         return ret
 
-    async def _kickoff(self, msg):
+    async def _kickoff(self, msg: Msg) -> typing.Any:
         """Start a flyscan object
 
         Special kwargs for the 'Msg' object in this function:
@@ -2205,7 +2206,7 @@ class PlanExecutor:
         return ret
 
     @tracer.start_as_current_span(f"{_SPAN_NAME_PREFIX} complete")
-    async def _complete(self, msg):
+    async def _complete(self, msg: Msg) -> typing.Any:
         """
         Tell a flyer, 'stop collecting, whenever you are ready'.
 
@@ -2233,7 +2234,7 @@ class PlanExecutor:
         return ret
 
     @tracer.start_as_current_span(f"{_SPAN_NAME_PREFIX} collect")
-    async def _collect(self, msg):
+    async def _collect(self, msg: Msg) -> typing.Any:
         """
         Collect data cached by a flyer and emit documents
 
@@ -2253,20 +2254,20 @@ class PlanExecutor:
 
         return await current_run.collect(msg)
 
-    async def _null(self, msg):
+    async def _null(self, msg: Msg) -> typing.Any:
         """
         A no-op message, mainly for debugging and testing.
         """
         pass
 
-    async def _RE_class(self, msg):
+    async def _RE_class(self, msg: Msg) -> typing.Any:
         """
         A no-op message, mainly for debugging and testing.
         """
         return type(self._identity)
 
     @tracer.start_as_current_span(f"{_SPAN_NAME_PREFIX} set")
-    async def _set(self, msg):
+    async def _set(self, msg: Msg) -> typing.Any:
         """
         Set a device and cache the returned status object.
 
@@ -2290,7 +2291,7 @@ class PlanExecutor:
 
         return ret
 
-    async def _trigger(self, msg):
+    async def _trigger(self, msg: Msg) -> typing.Any:
         """
         Trigger a device and cache the returned status object.
 
@@ -2441,7 +2442,7 @@ class PlanExecutor:
         else:
             fut.set_result(None)
 
-    async def _sleep(self, msg):
+    async def _sleep(self, msg: Msg) -> typing.Any:
         """
         Sleep the event loop.
 
@@ -2453,7 +2454,7 @@ class PlanExecutor:
         """
         await asyncio.sleep(*msg.args)
 
-    async def _pause(self, msg):
+    async def _pause(self, msg: Msg) -> typing.Any:
         """Request the run engine to pause
 
         Expected message object is:
@@ -2465,7 +2466,7 @@ class PlanExecutor:
         """
         await self.pause(*msg.args, **msg.kwargs)
 
-    async def _resume_from_suspender(self, msg):
+    async def _resume_from_suspender(self, msg: Msg) -> typing.Any:
         """The suspension is over: tell the devices. Msg('_resume_from_suspender')
 
         Sent by the helper plan `_start_suspender` pushes, between the wait on
@@ -2481,7 +2482,7 @@ class PlanExecutor:
         """
         await self._leave_rest()
 
-    async def _checkpoint(self, msg):
+    async def _checkpoint(self, msg: Msg) -> typing.Any:
         """Instruct the RunEngine to create a checkpoint so that we can rewind
         to this point if necessary
 
@@ -2516,7 +2517,7 @@ class PlanExecutor:
     async def _reset_checkpoint_state_coro(self):
         self._reset_checkpoint_state()
 
-    async def _clear_checkpoint(self, msg):
+    async def _clear_checkpoint(self, msg: Msg) -> typing.Any:
         """Clear a set checkpoint
 
         Expected message object is:
@@ -2529,7 +2530,7 @@ class PlanExecutor:
         for current_run in self._run_bundlers.values():
             await current_run.clear_checkpoint(msg)
 
-    async def _rewindable(self, msg):
+    async def _rewindable(self, msg: Msg) -> typing.Any:
         """Set rewindable state of RunEngine
 
         Expected message object is:
@@ -2543,7 +2544,7 @@ class PlanExecutor:
 
         return self.rewindable
 
-    async def _configure(self, msg):
+    async def _configure(self, msg: Msg) -> typing.Any:
         """Configure an object
 
         Expected message object is:
@@ -2594,7 +2595,7 @@ class PlanExecutor:
         self._groups[group].add(lambda: fut)
         self._status_objs[group].add(status_object)
 
-    async def _stage(self, msg):
+    async def _stage(self, msg: Msg) -> typing.Any:
         """Instruct the RunEngine to stage the object
 
         Expected message object is:
@@ -2617,7 +2618,7 @@ class PlanExecutor:
 
         return ret
 
-    async def _unstage(self, msg):
+    async def _unstage(self, msg: Msg) -> typing.Any:
         """Instruct the RunEngine to unstage the object
 
         Expected message object is:
@@ -2641,7 +2642,7 @@ class PlanExecutor:
 
         return ret
 
-    async def _stop(self, msg):
+    async def _stop(self, msg: Msg) -> typing.Any:
         """
         Stop a device.
 
@@ -2652,7 +2653,7 @@ class PlanExecutor:
         obj = check_supports(msg.obj, Stoppable)
         return await maybe_await(obj.stop())  # nominally, this returns None
 
-    async def _subscribe(self, msg):
+    async def _subscribe(self, msg: Msg) -> typing.Any:
         """
         Add a subscription after the run has started.
 
@@ -2683,7 +2684,7 @@ class PlanExecutor:
         await self._reset_checkpoint_state_coro()
         return token
 
-    async def _unsubscribe(self, msg):
+    async def _unsubscribe(self, msg: Msg) -> typing.Any:
         """
         Remove a subscription during a call -- useful for a multi-run call
         where subscriptions are wanted for some runs but not others.
@@ -2702,7 +2703,7 @@ class PlanExecutor:
         self._dispatcher.unsubscribe(token)
         await self._reset_checkpoint_state_coro()
 
-    async def _input(self, msg):
+    async def _input(self, msg: Msg) -> typing.Any:
         """
         Process a 'input' Msg. Expected Msg:
 
@@ -2732,7 +2733,7 @@ class PlanExecutor:
 
         return new_plan
 
-    async def _install_suspender(self, msg):
+    async def _install_suspender(self, msg: Msg) -> typing.Any:
         """Install an ephemeral suspender. Msg('install_suspender', None, suspender)
 
         Ephemeral because it holds up this plan alone and is removed when the
@@ -2743,7 +2744,7 @@ class PlanExecutor:
         self._plan_suspenders.add(suspender)
         suspender.install(self._permit)
 
-    async def _remove_suspender(self, msg):
+    async def _remove_suspender(self, msg: Msg) -> typing.Any:
         """Remove a suspender from this plan. Msg('remove_suspender', None, suspender)
 
         Only a suspender this plan installed. One installed on the session
@@ -2761,7 +2762,7 @@ class PlanExecutor:
             return
         self._drop_plan_suspender(suspender)
 
-    async def _start_suspender(self, msg):
+    async def _start_suspender(self, msg: Msg) -> typing.Any:
         """
         An internal message to do the initial work of starting a suspender
         """
