@@ -1267,25 +1267,15 @@ class PlanExecutor:
     def state(self, value):
         self._state = value
 
-    async def _stop_and_pause_objects(self) -> None:
-        """Bring the plan to rest: stop what is moving, pause what can be paused.
-
-        Shared by the two kinds of rest a plan can come to, a pause and a
-        suspension, which agree about devices and differ about everything else.
-
-        Monitors are deliberately not here. A pause quietens them, because
-        control goes back to the user and a callback arriving mid-prompt
-        surprises everyone; a suspension leaves them running, because it holds
-        the plan automatically and clears itself, and a monitored signal is
-        often exactly what someone is watching while it does. Only the pause
-        path mentions monitors at all, which is that rule made structural.
-        """
-        await self._stop_movable_objects(success=True)
+    async def _pause_objects(self) -> None:
+        """Tell every `Pausable` object the plan has come to rest."""
         for obj in self._objs_seen:
             if isinstance(obj, Pausable):
                 try:
                     await maybe_await(obj.pause())
                 except NoReplayAllowed:
+                    # The device will not be replayed through, so there is
+                    # nothing to rewind to any more.
                     self._reset_checkpoint_state()
 
     async def _resume_objects(self) -> None:
@@ -1389,7 +1379,8 @@ class PlanExecutor:
                     # self._monitor_params to re-instate them later.
                     for current_run in self._run_bundlers.values():
                         await current_run.suspend_monitors()
-                    await self._stop_and_pause_objects()
+                    await self._stop_movable_objects(success=True)
+                    await self._pause_objects()
                     # Whether the plan was already waiting on its suspension when
                     # it came to rest. If it was, the run loop re-sends that
                     # message on the way out and the plan holds itself; if it
@@ -2721,7 +2712,8 @@ class PlanExecutor:
         (episode,) = msg.args
         for current_run in self._run_bundlers.values():
             current_run.record_interruption(episode.justification or "suspended")
-        await self._stop_and_pause_objects()
+        await self._stop_movable_objects(success=True)
+        await self._pause_objects()
         rewind_plan = self._rewind()
         was_rewindable = self.rewindable
 
