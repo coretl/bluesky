@@ -233,8 +233,7 @@ def announce_state_change(identity, hooks: "PlanHooks", old_value, value) -> Non
     tags = {"old_state": old_value, "new_state": value, "RE": identity}
 
     state_logger.info("Change state on %r from %r -> %r", identity, old_value, value, extra=tags)
-    if hooks.state_hook is not None:
-        hooks.state_hook(value, old_value)
+    hooks.state_hook(value, old_value)
 
 
 class LoggingPropertyMachine(PropertyMachine):
@@ -376,9 +375,18 @@ class PlanEnvironment:
     strict_pre_declare: bool
 
 
+def do_nothing(*args, **kwargs) -> None:
+    """What an unset hook is. Accepts whatever its hook is called with."""
+
+
 @dataclass
 class PlanHooks:
     """The places a plan's progress can be observed from.
+
+    Every hook is callable, and an unset one is `do_nothing` rather than ``None``
+    -- so whoever has something to report just reports it. Assigning ``None``
+    would break that; `RunEngine`'s properties accept it, meaning "unset", and
+    put `do_nothing` here instead.
 
     Mutable, and shared by reference with every executor a session builds --
     the opposite guarantee to `PlanEnvironment`. Setting ``RE.msg_hook`` while
@@ -410,12 +418,12 @@ class PlanHooks:
         no thread to release and can leave it unset.
     """
 
-    msg_hook: Callable | None = None
-    waiting_hook: Callable | None = None
-    state_hook: Callable | None = None
-    announce_hook: Callable[[str], None] | None = None
-    suspend_hook: Callable[[str], None] | None = None
-    pause_hook: Callable[[], None] | None = None
+    msg_hook: Callable = do_nothing
+    waiting_hook: Callable = do_nothing
+    state_hook: Callable = do_nothing
+    announce_hook: Callable[[str], None] = do_nothing
+    suspend_hook: Callable[[str], None] = do_nothing
+    pause_hook: Callable[[], None] = do_nothing
 
 
 class PlanSession:
@@ -1009,29 +1017,6 @@ class PlanExecutor:
     # at all, belongs to whoever has something to report -- which for all three
     # of these is the executor.
 
-    def _call_msg_hook(self, msg) -> None:
-        """Show a message to the msg hook, if one is set."""
-        if self._hooks.msg_hook is not None:
-            self._hooks.msg_hook(msg)
-
-    def _call_waiting_hook(self, status_objs) -> None:
-        """Tell the waiting hook what this plan is waiting for, if one is set.
-
-        ``status_objs`` is None once there is nothing left to wait for.
-        """
-        if self._hooks.waiting_hook is not None:
-            self._hooks.waiting_hook(status_objs)
-
-    def _announce(self, message: str) -> None:
-        """Say something to whoever is watching. Never what key to press."""
-        if self._hooks.announce_hook is not None:
-            self._hooks.announce_hook(message)
-
-    def _notify_paused(self) -> None:
-        """Announce that this plan has reached a paused resting state."""
-        if self._hooks.pause_hook is not None:
-            self._hooks.pause_hook()
-
     def _on_state_change(self, value, old_value) -> None:
         """Say that this plan changed state, in the name of whoever drives it."""
         announce_state_change(self._identity, self._hooks, old_value, value)
@@ -1169,8 +1154,7 @@ class PlanExecutor:
                     if reason.post_plan is not None:
                         yield from ensure_generator(_called(reason.post_plan))
 
-            if self._hooks.suspend_hook is not None:
-                self._hooks.suspend_hook(join_justifications(seen))
+            self._hooks.suspend_hook(join_justifications(seen))
             self._loop.create_task(  # noqa: RUF006
                 self._request_suspend(
                     self._permit.wait_granted,
@@ -1330,8 +1314,8 @@ class PlanExecutor:
             return
         unresumable = not self.resumable
         if unresumable:
-            self._announce("No checkpoint; cannot suspend.")
-            self._announce("Aborting: running cleanup and marking exit_status as 'abort'...")
+            self._hooks.announce_hook("No checkpoint; cannot suspend.")
+            self._hooks.announce_hook("Aborting: running cleanup and marking exit_status as 'abort'...")
             self.interrupted = True
             self._exception = FailedPause()
             was_paused = self.state == "paused"
@@ -1465,7 +1449,7 @@ class PlanExecutor:
                     self._permit_granted_when_paused = self._permit.granted
                     self.state = "paused"
                     # Let RunEngine.__call__ return...
-                    self._notify_paused()
+                    self._hooks.pause_hook()
 
                     await self._run_permit.wait()
                     # Restore any monitors
@@ -1571,7 +1555,7 @@ class PlanExecutor:
                                 raise
 
                     # if we have a message hook, call it
-                    self._call_msg_hook(msg)
+                    self._hooks.msg_hook(msg)
                     debug(
                         "%s(%r, *%r **%r, run=%r)",
                         msg.command,
@@ -1722,7 +1706,9 @@ class PlanExecutor:
                 try:
                     p.close()
                 except RuntimeError:
-                    self._announce(f"The plan {p!r} tried to yield a value on close.  Please fix your plan.")
+                    self._hooks.announce_hook(
+                        f"The plan {p!r} tried to yield a value on close.  Please fix your plan."
+                    )
 
             self.clear_suspenders()
             if self._supervisor is not None:
@@ -1853,10 +1839,10 @@ class PlanExecutor:
 
         if defer:
             self._deferred_pause_requested = True
-            self._announce("Deferred pause acknowledged. Continuing to checkpoint.")
+            self._hooks.announce_hook("Deferred pause acknowledged. Continuing to checkpoint.")
             return
 
-        self._announce("Pausing...")
+        self._hooks.announce_hook("Pausing...")
 
         self._deferred_pause_requested = False
         self.interrupted = True
@@ -1949,7 +1935,7 @@ class PlanExecutor:
             verb, state, exception = "Halting", "halting", PlanHalt
         cleanup = "running cleanup" if finalize else "skipping cleanup"
         exit_status = "success" if success else "abort"
-        self._announce(f"{verb}: {cleanup} and marking exit_status as {exit_status!r}...")
+        self._hooks.announce_hook(f"{verb}: {cleanup} and marking exit_status as {exit_status!r}...")
 
         self.interrupted = True
         self._reason = reason
@@ -2469,13 +2455,13 @@ class PlanExecutor:
                 if not error_on_timeout:
                     if group not in self._seen_wait_and_move_on_keys:
                         self._seen_wait_and_move_on_keys.add(group)
-                        self._call_waiting_hook(status_objs)
+                        self._hooks.waiting_hook(status_objs)
                 else:  # if error_on_timeout False
                     # Notify the waiting_hook function that the RunEngine is
                     # waiting for these status_objs to complete. Users can use
                     # the information these encapsulate to create a progress
                     # bar.
-                    self._call_waiting_hook(status_objs)
+                    self._hooks.waiting_hook(status_objs)
 
                 async def wait_for_first_exception(futures: set) -> list[asyncio.Future]:
                     return await self._wait_for(
@@ -2521,12 +2507,12 @@ class PlanExecutor:
                     # sending it `None`. If all goes well, it could have
                     # inferred this from the status_obj, but there are edge
                     # cases.
-                    self._call_waiting_hook(None)
+                    self._hooks.waiting_hook(None)
                     done = True
                 else:
                     done = all(obj.done for obj in status_objs)
                     if done:
-                        self._call_waiting_hook(None)
+                        self._hooks.waiting_hook(None)
                         self._seen_wait_and_move_on_keys.remove(group)
         else:
             done = True

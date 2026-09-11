@@ -33,6 +33,7 @@ from .plan_executor import (  # noqa: F401
     WaitForTimeoutError,
     announce_state_change,
     default_scan_id_source,
+    do_nothing,
 )
 from .protocols import SyncOrAsync, T
 from .suspenders import SUBSCRIPTION_TIMEOUT
@@ -115,6 +116,11 @@ instead:
 
 http://nsls-ii.github.io/bluesky/plans_intro.html#combining-plans
 """
+
+
+def _hook_or_none(hook):
+    """What a user set, or ``None`` if they never set one."""
+    return None if hook is do_nothing else hook
 
 
 class RunEngine:
@@ -463,29 +469,33 @@ class RunEngine:
     def scan_id_source(self, value):
         self._session.scan_id_source = value
 
+    # `None` is how a user says "unset", here and on `main`, and how they read
+    # one back. A `PlanHooks` holds `do_nothing` instead, so that whoever has
+    # something to report can just report it; these three translate.
+
     @property
     def msg_hook(self):
-        return self._session.hooks.msg_hook
+        return _hook_or_none(self._session.hooks.msg_hook)
 
     @msg_hook.setter
     def msg_hook(self, value):
-        self._session.hooks.msg_hook = value
+        self._session.hooks.msg_hook = value if value is not None else do_nothing
 
     @property
     def state_hook(self):
-        return self._session.hooks.state_hook
+        return _hook_or_none(self._session.hooks.state_hook)
 
     @state_hook.setter
     def state_hook(self, value):
-        self._session.hooks.state_hook = value
+        self._session.hooks.state_hook = value if value is not None else do_nothing
 
     @property
     def waiting_hook(self):
-        return self._session.hooks.waiting_hook
+        return _hook_or_none(self._session.hooks.waiting_hook)
 
     @waiting_hook.setter
     def waiting_hook(self, value):
-        self._session.hooks.waiting_hook = value
+        self._session.hooks.waiting_hook = value if value is not None else do_nothing
 
     @property
     def record_interruptions(self):
