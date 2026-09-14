@@ -1151,9 +1151,7 @@ class PlanExecutor:
                 self._run_task.cancel()
             return False
 
-        # The list is the episode's: the reasons that join it after it opens,
-        # filled by the plan as they arrive and read back for the post-plans.
-        self._push_plan(single_gen(Msg("_start_suspender", None, opening, [])))
+        self._push_plan(single_gen(Msg("_start_suspender", None, opening)))
         # Not from 'paused': the transition is illegal, and there is nothing
         # awaiting to bump -- the plan is parked in the pause gate, and `resume`
         # replays it onto the message just pushed. Only the suite's
@@ -2664,7 +2662,7 @@ class PlanExecutor:
         """
         An internal message to do the initial work of starting a suspender
         """
-        opening, joined = msg.args
+        (opening,) = msg.args
         for current_run in self._run_bundlers.values():
             current_run.record_interruption(join_justifications(opening) or "suspended")
         await self._stop_movable_objects(success=True)
@@ -2675,6 +2673,11 @@ class PlanExecutor:
         # the plan opened with, nor the order its pre-plans ran in.
         opening_order = list(opening.values())
         seen = set(opening)
+        # Filled by the plan below as reasons join it, and read back for the
+        # post-plans. It belongs to this episode and no message carries it: an
+        # accumulator in `msg.args` would be shared with any replay of that
+        # message.
+        joined: list[SuspensionReason] = []
 
         def suspension():
             # None of this is replayed: rewinding is what happens after it.
