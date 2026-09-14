@@ -121,7 +121,7 @@ learns what, or whether, anything is running.
 What outlives a plan
 --------------------
 
-.. autoclass:: bluesky.plan_executor.PlanSession
+.. autoclass:: bluesky.plan_session.PlanSession
     :members:
     :undoc-members:
 
@@ -177,7 +177,7 @@ while a headless executor answers for itself.
 Where documents go
 ------------------
 
-.. autoclass:: bluesky.plan_executor.Dispatcher
+.. autoclass:: bluesky.dispatcher.Dispatcher
     :members: process, subscribe, unsubscribe, ignore_exceptions
 
 Ordering is the dispatcher's own business rather than the emitter's: a plan's

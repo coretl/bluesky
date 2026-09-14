@@ -8,7 +8,7 @@ machinery that drives that execution from a terminal on the main thread. Code
 that is already inside an event loop -- a data acquisition service, a queue
 consumer, a test -- wants the first without the second.
 
-Those two halves are separate objects. A :class:`~bluesky.plan_executor.PlanSession`
+Those two halves are separate objects. A :class:`~bluesky.plan_session.PlanSession`
 holds everything that outlives any one plan: the metadata, the settings, the
 document subscribers, the durable suspenders. A
 :class:`~bluesky.plan_executor.PlanExecutor` executes exactly one plan and holds
@@ -23,7 +23,7 @@ Running one plan
 
     >>> import asyncio
     >>> from bluesky import Msg
-    >>> from bluesky.plan_executor import PlanSession
+    >>> from bluesky.plan_session import PlanSession
     >>>
     >>> def plan():
     ...     yield Msg("null")

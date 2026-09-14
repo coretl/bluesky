@@ -98,7 +98,7 @@ class SuspenderBase(metaclass=ABCMeta):
             reaches: a session's holds up every plan it runs, a plan's holds up
             that plan alone. Nothing hands one out, so this is reached through
             `RunEngine.install_suspender`,
-            `bluesky.plan_executor.PlanSession.install_suspender`, or
+            `bluesky.plan_session.PlanSession.install_suspender`, or
             ``Msg('install_suspender')`` rather than called directly.
 
         event_type : str, optional
