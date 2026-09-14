@@ -1800,13 +1800,13 @@ class PlanExecutor:
         cleaning up by *what is thrown into it*: `PlanHalt` is a `GeneratorExit`,
         so the plan cannot yield again once it arrives.
 
-        ================  ==========  ==========
-        verb              ``success`` ``finalize``
-        ================  ==========  ==========
-        `RunEngine.stop`  True        True
-        `RunEngine.abort` False       True
-        `RunEngine.halt`  False       False
-        ================  ==========  ==========
+        =================  ===========  ============
+        verb               ``success``  ``finalize``
+        =================  ===========  ============
+        `RunEngine.stop`   True         True
+        `RunEngine.abort`  False        True
+        `RunEngine.halt`   False        False
+        =================  ===========  ============
 
         Parameters
         ----------

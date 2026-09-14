@@ -1,7 +1,7 @@
 .. _architecture:
 
 Architecture: session, executor, suspension
-=======================================
+===========================================
 
 This page describes what the objects behind the `RunEngine` are, and which of
 them reaches which. Every class listed here is generated from the code, so the
@@ -164,7 +164,7 @@ Reading either back from the environment would be reading a stale value.
 
 .. autoclass:: bluesky.plan_executor.PlanExecutor
     :members: run, state, resumable, rewindable, suspenders, clear_suspenders,
-              pause, resume, stop, abort, halt, emit, deferred_pause_requested
+              pause, resume, stop, emit, deferred_pause_requested
 
 ``run_start_uids`` lists every run the plan has opened, and ``interrupted`` says
 whether it was stopped before it finished.
