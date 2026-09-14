@@ -1154,10 +1154,16 @@ class PlanExecutor:
         # The list is the episode's: the reasons that join it after it opens,
         # filled by the plan as they arrive and read back for the post-plans.
         self._push_plan(single_gen(Msg("_start_suspender", None, opening, [])))
-        self.state = "suspending"
-        # Bump the run task out of whatever it is awaiting, so that it reaches
-        # the message just pushed.
-        self._run_task.cancel()
+        # Not from 'paused': the transition is illegal, and there is nothing
+        # awaiting to bump -- the plan is parked in the pause gate, and `resume`
+        # replays it onto the message just pushed. Only the suite's
+        # `force_suspension` reaches here that way, because the supervisor
+        # arranges nothing while the plan is at rest.
+        if self.state != "paused":
+            self.state = "suspending"
+            # Bump the run task out of whatever it is awaiting, so that it
+            # reaches the message just pushed.
+            self._run_task.cancel()
         return True
 
     @property
