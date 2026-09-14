@@ -43,7 +43,7 @@ from .protocols import (
     check_supports,
 )
 from .suspenders import SuspenderBase
-from .suspensions import Suspension, SuspensionEpisode, SuspensionReason
+from .suspensions import Suspension, SuspensionEpisode, SuspensionReason, join_justifications
 from .tracing import tracer
 from .utils import (
     AsyncInput,
@@ -411,9 +411,13 @@ class PlanHooks:
         happened, never what to press: a `RunEngine` prints it, a service may
         put it anywhere.
     suspend
-        Called with the joined justifications as a suspension begins. Separate
-        from `announce` because how a user interrupts a suspended plan
-        depends on what is driving it, so the wording is the caller's.
+        Called with the reasons standing as a suspension begins, keyed by
+        whoever raised them. The reasons rather than a joined string, because
+        a caller that is handed prose can only print it: one that is handed
+        the mapping can count it, pick a reason out of it, or join it the way
+        `RunEngine` does. Separate from `announce` because how a user
+        interrupts a suspended plan depends on what is driving it, so the
+        wording is the caller's.
     pause
         Called with no arguments when an executor comes to rest paused. A
         `RunEngine` uses this to release the main thread; a headless caller has
@@ -424,7 +428,7 @@ class PlanHooks:
     waiting: Callable = do_nothing
     state: Callable = do_nothing
     announce: Callable[[str], None] = do_nothing
-    suspend: Callable[[str], None] = do_nothing
+    suspend: Callable[[typing.Mapping[typing.Hashable, SuspensionReason]], None] = do_nothing
     pause: Callable[[], None] = do_nothing
 
     def __setattr__(self, name: str, value) -> None:
@@ -1110,7 +1114,7 @@ class PlanExecutor:
                 await self._wait_for_a_reason_to_suspend(),
                 fut=self._suspension.wait_cleared,
             )
-            self._hooks.suspend(episode.justification)
+            self._hooks.suspend(episode.opening)
             if not self._begin_suspension(episode):
                 return
             # The plan runs the episode from here -- taking in whatever joins it
@@ -2658,7 +2662,7 @@ class PlanExecutor:
         """
         (episode,) = msg.args
         for current_run in self._run_bundlers.values():
-            current_run.record_interruption(episode.justification or "suspended")
+            current_run.record_interruption(join_justifications(episode.opening) or "suspended")
         await self._stop_movable_objects(success=True)
         await self._pause_objects()
         rewind_plan = self._rewind()

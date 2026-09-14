@@ -23,7 +23,9 @@ class SuspensionEpisode:
     reverse of arrival. Both run in band, on the plan stack.
 
     ``fut`` is what releases the episode: the suspension clearing, for one a
-    suspender raised.
+    suspender raised. The episode does not join the justifications: whoever is
+    told about it decides how to say it, and `RunEngine` is the one that
+    prints.
 
     ``joined`` is filled after the episode is handed on, so read it late.
     """
@@ -69,10 +71,6 @@ class SuspensionEpisode:
         """Take ``key`` into an episode that has already begun."""
         self._seen.add(key)
         self.joined.append(reason)
-
-    @property
-    def justification(self) -> str:
-        return join_justifications(self.opening)
 
     def pre_plans(self) -> Iterable[SuspensionReason]:
         """The openers, in the order they fired."""

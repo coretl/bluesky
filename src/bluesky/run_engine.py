@@ -36,7 +36,7 @@ from .plan_executor import (  # noqa: F401
 )
 from .protocols import SyncOrAsync, T
 from .suspenders import SUBSCRIPTION_TIMEOUT
-from .suspensions import join_justifications, running_on
+from .suspensions import SuspensionReason, join_justifications, running_on
 from .utils import (
     DefaultDuringTask,
     DuringTask,
@@ -1211,10 +1211,15 @@ class RunEngine:
         print()
         print("Suspending... To get to the prompt, hit Ctrl-C twice to pause.")
 
-    def _announce_suspension(self, justification: str) -> None:
-        """Say a suspension has begun, and how to get back to a prompt."""
+    def _announce_suspension(self, reasons: typing.Mapping[typing.Hashable, SuspensionReason]) -> None:
+        """Say a suspension has begun, and how to get back to a prompt.
+
+        The joining happens here rather than in the executor, alongside
+        `_announce_tripped`, which does the same for the standing set.
+        """
         print("Suspending....To get prompt hit Ctrl-C twice to pause.")
         print(f"SuspensionReason occurred at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}.")
+        justification = join_justifications(reasons)
         if justification:
             print(f"Justification for this suspension:\n{justification}")
 

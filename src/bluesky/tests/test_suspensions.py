@@ -10,13 +10,14 @@ import concurrent.futures
 import gc
 import threading
 import time as ttime
+from collections.abc import Hashable, Mapping
 
 import pytest
 from ophyd.signal import Signal
 
 from bluesky import Msg
 from bluesky.suspenders import SuspendBoolHigh
-from bluesky.suspensions import Suspension, join_justifications
+from bluesky.suspensions import Suspension, SuspensionReason, join_justifications
 from bluesky.tests import ophyd_async, requires_ophyd_async
 from bluesky.utils import FailedPause, RunEngineInterrupted
 
@@ -454,15 +455,21 @@ def test_a_suspension_arriving_after_the_plan_ends_does_nothing(RE):
 
 
 def test_a_suspension_reaches_both_hooks(RE):
-    """The event goes to the suspend hook; everything else to the announce hook."""
+    """The event goes to the suspend hook; everything else to the announce hook.
+
+    The suspend hook is handed the reasons, not prose about them. A headless
+    consumer needs to know *what* tripped, which a joined string has already
+    thrown away; joining is `RunEngine`'s business, because printing is.
+    """
     said: list[str] = []
-    suspensions: list[str] = []
+    suspensions: list[Mapping[Hashable, SuspensionReason]] = []
     RE._session.hooks.announce = said.append
     RE._session.hooks.suspend = suspensions.append
 
     sig = Signal(value=0, name="s")
     sig.put(0)
-    RE.install_suspender(SuspendBoolHigh(sig))
+    susp = SuspendBoolHigh(sig)
+    RE.install_suspender(susp)
 
     _at(0.1, sig.put, 1)
     _at(0.5, sig.put, 0)
@@ -470,6 +477,12 @@ def test_a_suspension_reaches_both_hooks(RE):
 
     # The suspension was reported as an event.
     assert suspensions
+    # Keyed by whoever raised it, so a consumer can tell which condition it was
+    # rather than having to parse a sentence.
+    (reasons,) = suspensions
+    assert list(reasons) == [susp]
+    # And the justification is still reachable, by joining it here.
+    assert join_justifications(reasons) == "Signal s is high"
     # And nothing announced a key to press.
     assert "Ctrl" not in "".join(said)
 
