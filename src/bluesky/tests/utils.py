@@ -79,6 +79,34 @@ def _careful_event_set(ev):
     return inner
 
 
+def _at_message(RE, commands, **at):
+    """Drive signals from the message stream rather than from the clock.
+
+    ``msg_hook`` is called on the loop, for every message, so it is a place to
+    make a condition go bad *at* a message instead of at a wall-clock instant
+    that a loaded machine can miss. Each keyword names a command and gives a
+    function to run the first time that command is seen -- first time only,
+    because a suspension rewinds to the last checkpoint and replays, and the
+    hook sees the replayed messages too.
+
+    Setting a signal from here reaches the suspender on this loop: the set is a
+    task, the trip is applied when it runs, and two sets made in one call are
+    two tasks queued before the supervisor is woken by the first -- which is what
+    makes "both conditions went bad in the same turn" a fact rather than a hope
+    about two timers.
+    """
+    seen = set()
+
+    def hook(msg):
+        commands.append(msg.command)
+        func = at.get(msg.command)
+        if func is not None and msg.command not in seen:
+            seen.add(msg.command)
+            func()
+
+    RE.msg_hook = hook
+
+
 # `suspend_until`'s in-flight releases, kept alive. See the comment there.
 _releases: set[asyncio.Task] = set()
 

@@ -23,7 +23,7 @@ from bluesky.suspenders import (
 from bluesky.tests import ophyd_async, requires_ophyd_async
 from bluesky.tests.utils import MsgCollector
 
-from .utils import force_suspension
+from .utils import _at_message, force_suspension
 
 if ophyd_async:
     from ophyd_async.core import soft_signal_rw
@@ -650,17 +650,24 @@ def test_retrip_inside_sleep_does_not_release_early(RE, hw):
     susp = SuspendBoolHigh(sig, sleep=0.5)
     RE.install_suspender(susp)
 
-    threading.Timer(0.1, sig.put, (1,)).start()  # goes bad
-    threading.Timer(0.3, sig.put, (0,)).start()  # recovers: release due at 0.8
-    threading.Timer(0.4, sig.put, (1,)).start()  # goes bad again, inside the window
-    threading.Timer(1.0, sig.put, (0,)).start()  # recovers for good: release due at 1.5
+    def goes_bad():
+        sig.put(1)
+        # Every later instant is measured from this one rather than from the
+        # start of the plan, so the sequence cannot begin before the plan is
+        # running however coarse the machine's timers are.
+        threading.Timer(0.2, sig.put, (0,)).start()  # recovers: release due at +0.7
+        threading.Timer(0.3, sig.put, (1,)).start()  # bad again, inside the window
+        threading.Timer(0.9, sig.put, (0,)).start()  # recovers for good: due at +1.4
+
+    _at_message(RE, [], sleep=goes_bad)
 
     start = ttime.time()
     RE([Msg("checkpoint"), Msg("sleep", None, 0.1), Msg("null")])
     elapsed = ttime.time() - start
 
-    # The release scheduled by the first recovery must not free the plan.
-    assert elapsed > 1.4
+    # The release scheduled by the first recovery must not free the plan: that
+    # one comes due at +0.7, and the plan replays its 0.1s sleep after either.
+    assert elapsed > 1.3
 
 
 def test_suspender_installed_by_a_plan_ends_with_it(RE, hw):
