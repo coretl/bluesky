@@ -10,7 +10,7 @@ import functools
 import json
 import typing
 from collections import ChainMap, defaultdict, deque
-from collections.abc import Awaitable, Callable, MutableMapping
+from collections.abc import Awaitable, Callable, Mapping, MutableMapping
 from dataclasses import dataclass
 from enum import Enum
 from itertools import count
@@ -1087,6 +1087,13 @@ class PlanExecutor:
             self._supervisor.cancel()
         self._supervisor = self._loop.create_task(self._supervise_suspension(tripped_at_start=tripped))
 
+    @property
+    def _run_task(self) -> asyncio.Task:
+        """The task running the plan. Only ask while one is running."""
+        if self._task is None:
+            raise RuntimeError("No plan is running, so there is no task to interrupt.")
+        return self._task
+
     async def _supervise_suspension(self, tripped_at_start=False):
         """Suspend the plan whenever its suspension is tripped.
 
@@ -1139,14 +1146,14 @@ class PlanExecutor:
             was_paused = self.state == "paused"
             self.state = "aborting"
             if not was_paused:
-                self._task.cancel()
+                self._run_task.cancel()
             return False
 
         self._push_plan(single_gen(Msg("_start_suspender", None, episode)))
         self.state = "suspending"
         # Bump the run task out of whatever it is awaiting, so that it reaches
         # the message just pushed.
-        self._task.cancel()
+        self._run_task.cancel()
         return True
 
     @property
@@ -1751,7 +1758,7 @@ class PlanExecutor:
         for current_run in self._run_bundlers.values():
             current_run.record_interruption("pause")
 
-        self._task.cancel()
+        self._run_task.cancel()
 
     async def resume(self):
         """Continue a paused plan from its last checkpoint. On the loop.
@@ -1820,6 +1827,7 @@ class PlanExecutor:
         if self.state.is_idle:
             raise TransitionError("RunEngine is already idle.")
 
+        exception: type[BaseException]
         if success:
             verb, state, exception = "Stopping", "stopping", RequestStop
         elif finalize:
@@ -1852,7 +1860,7 @@ class PlanExecutor:
             self._exception = exception
             self._release_pause()
         else:
-            self._task.cancel()
+            self._run_task.cancel()
 
     async def _wait_for(self, msg: Msg) -> typing.Any:
         """Instruct the RunEngine to wait for futures and return the resulting tasks.
@@ -1891,6 +1899,18 @@ class PlanExecutor:
         if pending:
             raise WaitForTimeoutError("Plan failed to complete in the specified time")
         return futs
+
+    def _bundler_for(self, run_key: typing.Any, complaint: str) -> RunBundler:
+        """The bundler for ``run_key``'s open run, or `IllegalMessageSequence`.
+
+        The sentinel dance this replaces could not narrow: every caller went on
+        to use a `RunBundler` that the type said might still be the sentinel.
+        A bundler is never `None`, so absence is what `get` already reports.
+        """
+        current_run = self._run_bundlers.get(run_key)
+        if current_run is None:
+            raise IllegalMessageSequence(complaint)
+        return current_run
 
     async def _open_run(self, msg: Msg) -> typing.Any:
         """Instruct the RunEngine to start a new "run"
@@ -1962,11 +1982,8 @@ class PlanExecutor:
         """
         # TODO extract this from the Msg
         run_key = msg.run
-        if (
-            current_run := self._run_bundlers.get(run_key, key_absence_sentinel := object)
-        ) is key_absence_sentinel:
-            ims_msg = "A 'close_run' message was not received before the 'open_run' message"
-            raise IllegalMessageSequence(ims_msg)
+        ims_msg = "A 'close_run' message was not received before the 'open_run' message"
+        current_run = self._bundler_for(run_key, ims_msg)
         ret = await current_run.close_run(msg)
         del self._run_bundlers[run_key]
         self._close_run_trace(msg)
@@ -1988,13 +2005,8 @@ class PlanExecutor:
         Descriptor document.
         """
         run_key = msg.run
-        if (
-            current_run := self._run_bundlers.get(run_key, key_absence_sentinel := object())
-        ) is key_absence_sentinel:
-            ims_msg = (
-                "Cannot bundle readings without an open run. That is, 'create' must be preceded by 'open_run'."
-            )
-            raise IllegalMessageSequence(ims_msg)
+        ims_msg = "Cannot bundle readings without an open run. That is, 'create' must be preceded by 'open_run'."
+        current_run = self._bundler_for(run_key, ims_msg)
         return await current_run.create(msg)
 
     async def _declare_stream(self, msg: Msg) -> typing.Any:
@@ -2014,13 +2026,8 @@ class PlanExecutor:
         on declare_stream, rather than `describe`.
         """
         run_key = msg.run
-        if (
-            current_run := self._run_bundlers.get(run_key, key_absence_sentinel := object())
-        ) is key_absence_sentinel:
-            ims_msg = (
-                "Cannot bundle readings without an open run. That is, 'create' must be preceded by 'open_run'."
-            )
-            raise IllegalMessageSequence(ims_msg)
+        ims_msg = "Cannot bundle readings without an open run. That is, 'create' must be preceded by 'open_run'."
+        current_run = self._bundler_for(run_key, ims_msg)
         return await current_run.declare_stream(msg)
 
     async def _read(self, msg: Msg) -> typing.Any:
@@ -2042,10 +2049,8 @@ class PlanExecutor:
                 "This is a bug in your object implementation, "
                 "`read` must return a dictionary."
             )
-        run_key = msg.run
-        if (
-            current_run := self._run_bundlers.get(run_key, key_absence_sentinel := object())
-        ) is not key_absence_sentinel:
+        current_run = self._run_bundlers.get(msg.run)
+        if current_run is not None:
             await current_run.read(msg, ret)
 
         return ret
@@ -2089,13 +2094,9 @@ class PlanExecutor:
         """
 
         run_key = msg.run
-        if (
-            current_run := self._run_bundlers.get(run_key, key_absence_sentinel := object())
-        ) is key_absence_sentinel:
-            ims_msg = "A 'monitor' message was sent but no run is open."
-            raise IllegalMessageSequence(ims_msg)
-        else:
-            await current_run.monitor(msg)
+        ims_msg = "A 'monitor' message was sent but no run is open."
+        current_run = self._bundler_for(run_key, ims_msg)
+        await current_run.monitor(msg)
         self._reset_checkpoint_state()
 
     async def _unmonitor(self, msg: Msg) -> typing.Any:
@@ -2107,13 +2108,9 @@ class PlanExecutor:
             Msg('unmonitor', obj)
         """
         run_key = msg.run
-        if (
-            current_run := self._run_bundlers.get(run_key, key_absence_sentinel := object())
-        ) is key_absence_sentinel:
-            ims_msg = "An 'unmonitor' message was sent but no run is open."
-            raise IllegalMessageSequence(ims_msg)
-        else:
-            await current_run.unmonitor(msg)
+        ims_msg = "An 'unmonitor' message was sent but no run is open."
+        current_run = self._bundler_for(run_key, ims_msg)
+        await current_run.unmonitor(msg)
         self._reset_checkpoint_state()
 
     async def _save(self, msg: Msg) -> typing.Any:
@@ -2124,15 +2121,11 @@ class PlanExecutor:
             Msg('save')
         """
         run_key = msg.run
-        if (
-            current_run := self._run_bundlers.get(run_key, key_absence_sentinel := object())
-        ) is key_absence_sentinel:
-            # sanity check -- this should be caught by 'create' which makes
-            # this code path impossible
-            ims_msg = "A 'save' message was sent but no run is open."
-            raise IllegalMessageSequence(ims_msg)
-        else:
-            await current_run.save(msg)
+        # sanity check -- this should be caught by 'create' which makes this
+        # code path impossible
+        ims_msg = "A 'save' message was sent but no run is open."
+        current_run = self._bundler_for(run_key, ims_msg)
+        await current_run.save(msg)
 
     async def _drop(self, msg: Msg) -> typing.Any:
         """Drop the event that is currently being bundled
@@ -2142,13 +2135,9 @@ class PlanExecutor:
             Msg('drop')
         """
         run_key = msg.run
-        if (
-            current_run := self._run_bundlers.get(run_key, key_absence_sentinel := object())
-        ) is key_absence_sentinel:
-            ims_msg = "A 'drop' message was sent but no run is open."
-            raise IllegalMessageSequence(ims_msg)
-        else:
-            await current_run.drop(msg)
+        ims_msg = "A 'drop' message was sent but no run is open."
+        current_run = self._bundler_for(run_key, ims_msg)
+        await current_run.drop(msg)
 
     async def _prepare(self, msg: Msg) -> typing.Any:
         """Prepare a flyer for a flyscan
@@ -2192,11 +2181,8 @@ class PlanExecutor:
             Msg('kickoff', flyer_object, start, stop, step, group=<name>)
         """
         run_key = msg.run
-        if (
-            current_run := self._run_bundlers.get(run_key, key_absence_sentinel := object())
-        ) is key_absence_sentinel:
-            ims_msg = "A 'kickoff' message was sent but no run is open."
-            raise IllegalMessageSequence(ims_msg)
+        ims_msg = "A 'kickoff' message was sent but no run is open."
+        current_run = self._bundler_for(run_key, ims_msg)
 
         _, obj, args, kwargs, _ = msg
         obj = check_supports(obj, Flyable)
@@ -2250,13 +2236,9 @@ class PlanExecutor:
         """
         _set_span_msg_attributes(trace.get_current_span(), msg)
         run_key = msg.run
-        if (
-            current_run := self._run_bundlers.get(run_key, key_absence_sentinel := object())
-        ) is key_absence_sentinel:
-            # TODO add test exercising this path
-            ims_msg = "A 'collect' message was sent but no run is open."
-            raise IllegalMessageSequence(ims_msg)
-
+        # TODO add test exercising this path
+        ims_msg = "A 'collect' message was sent but no run is open."
+        current_run = self._bundler_for(run_key, ims_msg)
         return await current_run.collect(msg)
 
     async def _null(self, msg: Msg) -> typing.Any:
@@ -2510,12 +2492,8 @@ class PlanExecutor:
 
             object.configure(*args, **kwargs)
         """
-        run_key = msg.run
-        if (
-            current_run := self._run_bundlers.get(run_key, key_absence_sentinel := object())
-        ) is key_absence_sentinel:
-            current_run = None
-        elif current_run.bundling:
+        current_run = self._run_bundlers.get(msg.run)
+        if current_run is not None and current_run.bundling:
             ims_msg = "Cannot configure after 'create' but before 'save' Aborting!"
             raise IllegalMessageSequence(ims_msg)
         _, obj, args, kwargs, _ = msg
@@ -2642,8 +2620,8 @@ class PlanExecutor:
         """
         prompt = msg.kwargs.get("prompt", "")
         async_input = AsyncInput(self._env.loop)
-        async_input = functools.partial(async_input, end="", flush=True)
-        return await async_input(prompt)
+        ask = functools.partial(async_input, end="", flush=True)
+        return await ask(prompt)
 
     async def _install_suspender(self, msg: Msg) -> typing.Any:
         """Install an ephemeral suspender. Msg('install_suspender', None, suspender)
@@ -2769,7 +2747,7 @@ class PlanExecutor:
 
     def _build_command_registry(
         self,
-        commands: MutableMapping[str, Callable] | None,
+        commands: Mapping[str, Callable] | None,
         without_commands: typing.Collection[str],
     ) -> dict[str, Callable[[Msg], Awaitable[typing.Any]]]:
         """The vocabulary this plan understands, composed once.
