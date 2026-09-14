@@ -1108,27 +1108,6 @@ class PlanExecutor:
             # before another can be opened.
             await self._suspension.wait_cleared()
 
-    async def _wait_for_a_change(self, seen: set[typing.Hashable]) -> None:
-        """Park until the suspension clears, or a reason outside ``seen`` joins it.
-
-        The two ways an episode's hold ends. Cleared is every reason gone, and a
-        joiner is a condition tripping while the plan is already held, which the
-        plan takes in rather than starting a second suspension for.
-
-        Waking on either is what lets a joiner's pre-plan run in band. The
-        supervisor used to work those off itself, off the plan stack, because
-        the plan was parked on the clear alone and could not be reached.
-
-        The test and the wait are one uninterrupted stretch of loop thread, so a
-        condition tripping cannot slip between them and leave this parked with a
-        joiner nobody has run.
-        """
-        while True:
-            reasons = self._suspension.reasons
-            if not reasons or reasons.keys() - seen:
-                return
-            await self._suspension.wait_changed()
-
     def _begin_suspension(self, opening: dict[typing.Hashable, SuspensionReason]) -> bool:
         """Put a suspension for ``opening`` in front of the plan.
 
@@ -2679,6 +2658,17 @@ class PlanExecutor:
         # message.
         joined: list[SuspensionReason] = []
 
+        async def a_change():
+            """Park until the suspension clears, or a reason outside ``seen`` joins it."""
+            while True:
+                reasons = self._suspension.reasons
+                if not reasons or reasons.keys() - seen:
+                    return
+                # Nothing may await between that test and this wait: a condition
+                # tripping in the gap would leave the plan parked here with a
+                # joiner nobody has run.
+                await self._suspension.wait_changed()
+
         def suspension():
             # None of this is replayed: rewinding is what happens after it.
             yield Msg("rewindable", None, False)
@@ -2696,7 +2686,7 @@ class PlanExecutor:
             # makes "nothing runs unprompted while paused" true rather than
             # merely intended.
             while True:
-                yield Msg("wait_for", None, [functools.partial(self._wait_for_a_change, seen)])
+                yield Msg("wait_for", None, [a_change])
                 joining = {key: reason for key, reason in self._suspension.reasons.items() if key not in seen}
                 if not joining:
                     break
