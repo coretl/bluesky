@@ -27,7 +27,6 @@ from .plan_executor import (  # noqa: F401
     UNCACHEABLE_COMMANDS,
     LoggingPropertyMachine,
     PlanExecutor,
-    PlanSession,
     RunEngineMetadata,
     RunEngineStateMachine,
     WaitForTimeoutError,
@@ -35,6 +34,7 @@ from .plan_executor import (  # noqa: F401
     default_scan_id_source,
     do_nothing,
 )
+from .plan_session import PlanSession  # noqa: F401
 from .protocols import SyncOrAsync, T
 from .suspenders import SUBSCRIPTION_TIMEOUT
 from .suspensions import SuspensionReason, join_justifications, running_on

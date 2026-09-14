@@ -15,11 +15,8 @@ from ophyd.signal import Signal
 
 import bluesky
 from bluesky import Msg
-from bluesky.plan_executor import (
-    PlanEnvironment,
-    PlanExecutor,
-    PlanSession,
-)
+from bluesky.plan_executor import PlanEnvironment, PlanExecutor
+from bluesky.plan_session import PlanSession
 from bluesky.suspenders import SuspendBoolHigh
 from bluesky.utils import InvalidCommand, RunEngineInterrupted
 

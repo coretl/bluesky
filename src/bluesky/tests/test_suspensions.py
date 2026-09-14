@@ -639,7 +639,7 @@ def test_a_trip_between_building_the_plan_and_running_it_still_holds():
     A headless caller can hold an executor for as long as it likes before
     awaiting it, so the window is as wide as it chooses.
     """
-    from bluesky.plan_executor import PlanSession
+    from bluesky.plan_session import PlanSession
 
     steps = []
 
