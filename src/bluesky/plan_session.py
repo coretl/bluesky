@@ -43,10 +43,9 @@ class PlanSession:
     that is already running in an asyncio event loop, such as a headless data
     acquisition service.
 
-    A session does not hold the executors it builds -- whoever asked for one
-    owns it. That is what lets a headless caller run two plans at once against
-    the same durable metadata and suspenders. A `RunEngine` drives exactly one,
-    and enforces that itself, because a terminal has one main thread to block.
+    A session does not hold the executors it builds, so a headless caller can
+    run two plans at once against one set of durable metadata and suspenders.
+    A `RunEngine` drives exactly one, and enforces that itself.
 
     Parameters
     ----------
@@ -73,17 +72,10 @@ class PlanSession:
         because that is what a user recognises in their logs; without one each
         executor answers for itself.
 
-    An argument here means a setting nothing changes once the session exists.
-    ``md``, ``loop`` and ``log`` are consumed while it is being built -- ``md``
-    is stamped with the library versions, ``loop`` is what the durable suspension is
-    created on, and ``log`` is written to while those versions are collected --
-    and ``run_bundler_cls`` and ``identity`` are decided once by whoever
-    constructs the session and never revised.
-
-    Everything else is an attribute you assign, because changing it later is
-    part of the interface: a `RunEngine` exposes a property for each, and
-    `make_executor` reads them when it freezes a `PlanEnvironment`, so a change
-    takes effect for the next plan and never the one already running.
+    An argument here is a setting nothing changes once the session exists.
+    Everything else is an attribute you assign, read by `make_executor` as it
+    freezes each plan's `PlanEnvironment`, so that a change takes effect for the
+    next plan and never the one already running.
 
     Attributes
     ----------
@@ -128,9 +120,8 @@ class PlanSession:
         is a supported choice, and is never replaced -- each plan is given a
         copy of its contents to read.
 
-    The rest are settings, read as `make_executor` builds each plan's
-    `PlanEnvironment`, so that changing one affects the next plan and never the
-    one already running: ``preprocessors``, ``md_validator``,
+    The rest are the settings read as each plan's `PlanEnvironment` is built:
+    ``preprocessors``, ``md_validator``,
     ``md_normalizer``, ``run_bundler_cls``, ``identity``,
     ``record_interruptions``, ``strict_pre_declare``, and ``rewindable`` --
     the last being only the *default*, since a running plan owns its own live
@@ -223,14 +214,10 @@ class PlanSession:
     async def _next_scan_id(self) -> int:
         """Compute the ``scan_id`` for a run that is opening, and return it.
 
-        Given to each executor so that writing to ``md`` stays the session's
-        job: an executor is handed metadata to read, not to own.
-
-        The id is *returned* rather than left in ``md`` for the caller to read
-        back, because two executors may be opening runs at the same time and
-        each must use the one it was given. Storing it in ``md`` is what makes
-        the default source count up, and is still done here, under a lock that
-        holds across the ``await``.
+        Returned rather than left in ``md`` for the caller to read back: two
+        executors may be opening runs at once, and each must use the id it was
+        given. It is stored in ``md`` as well, under a lock held across the
+        ``await``, which is what makes the default source count up.
         """
         async with self._scan_id_lock:
             scan_id = await maybe_await(self.scan_id_source(self.md))
@@ -303,16 +290,13 @@ class PlanSession:
     def make_executor(self, plan, *, metadata=None, subs=None) -> "PlanExecutor":
         """Build an executor for ``plan``, and hand it to the caller.
 
-        The caller owns what comes back; this session does not keep a
-        reference. Everything durable is passed in here instead -- the
-        metadata, the settings, the document dispatcher, the hooks and the
-        suspenders -- so that more than one executor can be running against one
-        session at a time, which is what a headless service wants. A
-        `RunEngine` keeps exactly one, and is where "one plan at a time" is
+        The caller owns what comes back; this session keeps no reference, so
+        more than one executor can be running against one session at a time.
+        A `RunEngine` keeps exactly one, and is where "one plan at a time" is
         enforced.
 
         Building a new executor is also how the previous plan's state is
-        cleared, including its subscriptions: those live on the executor's own
+        cleared, subscriptions included: those live on the executor's own
         dispatcher and are discarded with it.
 
         Parameters
@@ -374,13 +358,11 @@ class PlanSession:
         """Install a durable suspender, given to every executor built after it.
 
         Installing subscribes the suspender to its signal here and now, and it
-        stays subscribed between plans: a suspender that only started watching
-        when a plan started could not report that it was *already* tripped, and
-        waiting for beam that is already down is what suspenders are for.
+        stays subscribed between plans, so it can report a condition that was
+        already bad when a plan started.
 
         It has no plan to suspend, and needs none: tripping holds up this
-        session's suspension, and whichever executors are running are waiting on
-        that suspension already. A suspender never learns what it is suspending.
+        session's suspension, which every executor it builds is waiting on.
         """
         self._suspenders.add(suspender)
         suspender.install(self._suspension)

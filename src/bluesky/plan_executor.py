@@ -185,16 +185,7 @@ class RunEngineStateMachine(StateMachine):
 def announce_state_change(identity, hooks: "PlanHooks", old_value, value) -> None:
     """Log a state change, and tell the state hook about it.
 
-    Split out of :meth:`LoggingPropertyMachine.__set__` so that a state change
-    which does not go through the machine can be announced too, and announced
-    identically: there is one definition of what an observer is told rather
-    than two to drift apart. `RunEngine` uses that for its ``panicked`` state,
-    which cannot go through the machine because the loop is wedged.
-
-    ``identity`` is what the log record names as having changed state. It is
-    passed rather than inferred because the state now belongs to a
-    `PlanExecutor`, one per plan, while the thing a user recognises in their
-    logs is the long-lived `RunEngine` driving them.
+    ``identity`` is what the log record names as having changed state.
     """
     tags = {"old_state": old_value, "new_state": value, "RE": identity}
 
@@ -275,31 +266,10 @@ def _default_md_normalizer(md: RunEngineMetadata) -> RunEngineMetadata:
 class PlanEnvironment:
     """Everything a plan needs to know about where it is being run.
 
-    A `PlanExecutor` is given one of these instead of the `PlanSession` that
-    built it, so that it can be constructed and tested without a session, and
-    so that it has no route back to one.
-
-    Frozen on purpose. A plan's environment does not change under it: an
-    executor is built for one plan, and what it was told at that moment is what
-    that plan sees to the end. A `PlanSession` keeps its settings as ordinary
-    attributes and builds one of these from them in `PlanSession.make_executor`,
-    so changing a setting takes effect for the *next* plan and the session
-    never holds a second copy of one to keep in step.
-
-    Everything here is read by the executor while its plan runs. Settings it
-    only consumes at construction -- ``preprocessors``, which wrap the plan
-    once, and the ``rewindable`` default, which seeds a flag the plan then owns
-    -- are arguments to `PlanExecutor` instead, so that this stays a
-    description of the environment rather than a bag of constructor arguments.
-
-    ``md`` is no exception: it is a snapshot taken as the executor is built, so
-    writing to the session's metadata takes effect for the next plan and not
-    the one already running. The per-run ``scan_id`` is the one thing that does
-    reach past it, because the counter is durable -- the session computes it
-    through ``next_scan_id``, which hands the value back rather than leaving
-    the caller to read it out of ``md``: two executors may be running plans on
-    one session at once, and each must use the id it was given rather than
-    whatever the other has since stored.
+    Frozen: an executor is built for one plan, and what it was told as it was
+    built is what that plan sees to the end. Changing a setting on the
+    `PlanSession` therefore takes effect for the *next* plan, not the running
+    one. Everything here is read by the executor while its plan runs.
 
     Attributes
     ----------
@@ -349,19 +319,12 @@ def do_nothing(*args, **kwargs) -> None:
 class PlanHooks:
     """The places a plan's progress can be observed from.
 
-    Every hook is callable, and an unset one is `do_nothing` rather than ``None``,
-    so whoever has something to report just reports it. Assigning ``None`` is
-    still how a caller says nobody is listening -- `__setattr__` stores
-    `do_nothing` for it -- which is what keeps ``RE.waiting_hook = None`` working.
-
-    The names carry no ``_hook`` suffix: they are the attributes of a thing
-    already called `PlanHooks`, and ``hooks.msg`` says it once.
+    Every hook is callable, and an unset one is `do_nothing` rather than
+    ``None``; assigning ``None`` is how a caller says nobody is listening.
 
     Mutable, and shared by reference with every executor a session builds --
-    the opposite guarantee to `PlanEnvironment`. Setting ``RE.msg_hook`` while
-    a plan is running must take effect on *that* plan, because these are
-    debugging and display attachments rather than anything the plan's meaning
-    depends on.
+    the opposite guarantee to `PlanEnvironment` -- so setting ``RE.msg_hook``
+    while a plan is running takes effect on *that* plan.
 
     Attributes
     ----------
@@ -412,23 +375,16 @@ class PlanHooks:
 class PlanExecutor:
     """Executes one plan, which may contain any number of runs.
 
-    An executor owns everything that belongs to the execution of a single
-    plan: the stack of generators being worked off, the messages cached for
-    rewinding, the devices seen and staged, and the status objects being
-    waited on. It is built for a plan and discarded after it, so clearing
-    those caches is a matter of building a new one.
+    An executor owns everything belonging to one plan's execution: the stack of
+    generators being worked off, the messages cached for rewinding, the devices
+    seen and staged, and the status objects being waited on. It is built for a
+    plan and discarded after it.
 
-    It lives on its session's event loop, and holds no locks and no threading
-    primitives. A `RunEngine` marshals everything the main thread asks for
-    onto the loop before it arrives here, and a sync ophyd ``Status`` object's
-    done-callback is trampolined onto the loop by
-    :meth:`_add_status_to_group`, so every method that touches this object's
-    state runs on the loop.
-
-    :meth:`emit` is the exception, and the only one: a sync ophyd signal fires
-    its monitor callback on the device's own thread, and that reaches ``emit``
-    directly. It touches no executor state, but it does mean a document can be
-    given to subscribers off the loop. See its docstring.
+    Every method that touches its state runs on its session's event loop, and it
+    holds no locks and no threading primitives. :meth:`emit` is the one
+    exception -- a sync ophyd signal fires its monitor callback on the device's
+    own thread and reaches ``emit`` directly, so a document can be given to
+    subscribers off the loop. See its docstring.
 
     Prefer :meth:`PlanSession.make_executor` to constructing one directly: a
     session must know which executor is running, because that is how a
@@ -629,11 +585,6 @@ class PlanExecutor:
     def emit(self, name, doc) -> None:
         """Give a document to every subscriber that should see it.
 
-        The dispatcher this plan was built with holds the session's as its
-        parent, so ordering -- subscriptions outliving the plan before the ones
-        that arrived with it, which is what a single shared registry gave by
-        construction -- is settled there rather than here.
-
         May be called from a thread that is not the event loop's: a sync ophyd
         signal fires its monitor callback on the device's own thread, and that
         path reaches here. Subscribers are therefore invoked on whichever
@@ -677,20 +628,15 @@ class PlanExecutor:
         are entries into a running plan from a state where the user had control
         and the suspension may have moved without anything watching it.
 
-        One read decides both halves. They used to be decided separately -- the
-        hold when the executor was built, the supervisor when the plan started
-        -- and could disagree: a condition going bad in between left the plan
-        with nothing holding it and a supervisor that thought it was already
-        being held, so the plan ran straight through a tripped suspender.
-
-        A tripped suspension is waited for **in band**, ahead of the plan's first
-        message. A suspension proper cannot do that job: there is no checkpoint
-        yet to rewind to, so requesting one would abort the plan rather than
-        hold it. The exception is a plan that was already parked in that wait
-        when it paused -- the run loop re-sends the message on the way out, so
-        a second one would hold for the same thing twice.
+        One read decides both halves, so they cannot disagree.
         """
         tripped = self._suspension.tripped
+        # Held in band, ahead of the plan's first message. A suspension proper
+        # cannot do this job: there is no checkpoint yet to rewind to, so
+        # requesting one would abort the plan rather than hold it. A plan
+        # already parked in that wait when it paused is the exception -- the run
+        # loop re-sends the message on the way out, and a second would hold for
+        # the same thing twice.
         if tripped and self._cleared_when_paused:
             self._push_plan(single_gen(Msg("wait_for", None, [self._suspension.wait_cleared])))
         if self._supervisor is not None:
@@ -1356,9 +1302,7 @@ class PlanExecutor:
     async def resume(self):
         """Continue a paused plan from its last checkpoint. On the loop.
 
-        Rewinds, tells devices, then releases the plan -- one call, because a
-        caller that has to release the gate itself afterwards is a caller that
-        can forget to.
+        Rewinds, tells devices, then releases the plan.
 
         A condition that went bad while the plan was paused is waited for here
         rather than suspended around: returning from a pause is returning from
@@ -2030,14 +1974,8 @@ class PlanExecutor:
     async def _resume_from_suspender(self, msg: Msg) -> typing.Any:
         """The suspension is over: tell the devices. Msg('_resume_from_suspender')
 
-        Sent by the helper plan `_start_suspender` pushes, between the wait on
-        the suspender's future and the post-plan, which is why this is a message
-        at all: the work has to be sequenced among the plans the suspension
-        runs, and only the plan stack can do that.
-
-        Nothing to do with `RunEngine.resume`, despite what this said until
-        2026-09-11. There is no ``Msg('resume')``, this takes no keyword
-        arguments, and a paused plan comes back by a different road entirely.
+        Sent by the helper plan `_start_suspender` pushes, between the hold and
+        the post-plan. Nothing to do with `RunEngine.resume`.
 
         Monitors are untouched: a suspension never stopped them.
         """

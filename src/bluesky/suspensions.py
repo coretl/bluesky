@@ -48,23 +48,18 @@ def running_on(loop: asyncio.AbstractEventLoop) -> bool:
 class Suspension:
     """What holds a plan up, tripped while anything has a reason to trip it.
 
-    Reasons are keyed, normally by the suspender that raised them, and the
-    nothing is tripped exactly when none stands. Two conditions tripping at once
-    are two reasons and one suspension, rather than two suspensions.
+    Reasons are keyed, normally by the suspender that raised them, and nothing
+    is tripped exactly when none stands. Two conditions tripping at once are two
+    reasons and one suspension, rather than two suspensions.
 
     Suspensions chain. One with a ``parent`` is tripped whenever its parent
     is, which is how a suspender installed somewhere long-lived holds up every
     plan run under it while one installed by a plan holds up only that plan.
 
-    Written only on the loop, and read from anywhere. `trip` and `clear`
-    do not check that: this class is internal, and its callers are the two
-    boundaries that own their crossings -- a suspender tripping on its signal's
-    thread, and the `RunEngine` methods called from the prompt.
-
-    `tripped` and `reasons` answer on any thread. The reasons are an
-    immutable mapping, swapped rather than mutated, so a reader sees one
-    snapshot or the next and never a mapping mid-change. Their callers report
-    rather than decide, so eventual consistency is what they need.
+    `trip` and `clear` must be called on the loop, and do not check that.
+    `tripped` and `reasons` answer on any thread: the reasons are an immutable
+    mapping, swapped rather than mutated, so a reader sees one snapshot or the
+    next and never a mapping mid-change.
     """
 
     def __init__(self, name: str, loop: asyncio.AbstractEventLoop, parent: Suspension | None = None) -> None:
