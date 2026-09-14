@@ -1217,16 +1217,6 @@ class PlanExecutor:
         self._plan_stack.append(plan)
         self._response_stack.append(None)
 
-    def _release_pause(self) -> None:
-        """Let a paused plan move again. On the loop.
-
-        Not a gate a caller opens: a plan is parked here only because it paused
-        itself, so the ways out are the ways back in -- `resume`, `abort`,
-        `stop` and `halt`, each of which arranges what the plan should find
-        when it wakes and then calls this last.
-        """
-        self._run_permit.set()
-
     @property
     def state(self):
         """This plan's state. One of {'idle', 'running', 'paused', ...}.
@@ -1785,7 +1775,11 @@ class PlanExecutor:
         # condition has cleared. No pre-plans on the way back in: there is
         # nothing here for one to reverse.
         self._arrange_permission()
-        self._release_pause()
+        # Last, so the parked plan finds all of the above already arranged when
+        # it wakes. The gate is never opened from anywhere but here and the
+        # three ways of ending a plan: it is closed only by a plan pausing
+        # itself, so the ways out are the ways back in.
+        self._run_permit.set()
 
     async def stop(self, *, success: bool = True, finalize: bool = True, reason: str = "") -> None:
         """End the running plan. The three public verbs are the three modes.
@@ -1872,7 +1866,7 @@ class PlanExecutor:
             # plan.
             self.exit_exception = RequestAbort() if exception is RequestAbort else exception
             self._exception = exception
-            self._release_pause()
+            self._run_permit.set()
         else:
             self._run_task.cancel()
 
