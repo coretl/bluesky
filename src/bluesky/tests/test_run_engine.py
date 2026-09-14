@@ -763,16 +763,33 @@ def test_ending_a_paused_plan_records_what_ended_it(verb, expected):
 def test_ending_a_running_plan_records_no_exception():
     """A plan that was not paused is cancelled, so there is nothing to record."""
     RE = RunEngine({}, call_returns_result=True)
+    running = threading.Event()
 
     def plan():
         yield Msg("open_run")
-        for _ in range(50):
+        for _ in range(200):
             yield Msg("sleep", None, 0.01)
         yield Msg("close_run")
 
-    threading.Timer(0.1, RE.stop).start()
-    with pytest.raises(RunEngineInterrupted):
-        RE(plan())
+    # Stop from another thread -- `stop` crosses onto the loop and waits, so the
+    # loop itself cannot ask -- but only once the plan is demonstrably running.
+    # A timer set to a wall-clock instant can arrive while the engine is still
+    # idle on a loaded machine, and then the stop raises in the timer's thread
+    # where nothing sees it and the plan runs happily to the end.
+    def stop_once_running():
+        running.wait(10)
+        RE.stop()
+
+    RE.msg_hook = lambda msg: running.set() if msg.command == "sleep" else None
+    stopper = threading.Thread(target=stop_once_running)
+    stopper.start()
+    try:
+        with pytest.raises(RunEngineInterrupted):
+            RE(plan())
+    finally:
+        running.set()
+        stopper.join()
+
     assert RE._executor.exit_exception is None
 
 
