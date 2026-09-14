@@ -11,6 +11,7 @@ import pathlib
 import threading
 
 import pytest
+from ophyd.signal import Signal
 
 import bluesky
 from bluesky import Msg
@@ -19,7 +20,8 @@ from bluesky.plan_executor import (
     PlanExecutor,
     PlanSession,
 )
-from bluesky.utils import RunEngineInterrupted
+from bluesky.suspenders import SuspendBoolHigh
+from bluesky.utils import InvalidCommand, RunEngineInterrupted
 
 
 class _RecordingSignal:
@@ -286,6 +288,131 @@ def test_two_plans_run_at_once_on_one_session():
     # whichever the other stored last.
     assert sorted(doc["scan_id"] for doc in starts) == [1, 2]
     assert session.md["scan_id"] == 2
+
+
+def test_a_session_suspender_holds_every_plan_running_under_it():
+    """One condition on the session holds every plan the session is running.
+
+    Suspensions chain: each plan's suspension has the session's as its parent,
+    so a condition raised on the session is tripped for all of them rather than
+    for whichever plan happened to start first.
+    """
+    finished: list[str] = []
+
+    async def main():
+        session = PlanSession()
+        sig = Signal(value=0, name="beam")
+        # Already bad before either plan starts, so both are held at their
+        # first message rather than racing a timer.
+        sig.put(1)
+        session.install_suspender(SuspendBoolHigh(sig))
+
+        async def run(name, executor):
+            await executor.run()
+            finished.append(name)
+
+        first = session.make_executor([Msg("checkpoint"), Msg("null")])
+        second = session.make_executor([Msg("checkpoint"), Msg("null")])
+        runners = asyncio.gather(run("first", first), run("second", second))
+        await asyncio.sleep(0.2)
+        held = list(finished)
+        sig.put(0)
+        await runners
+        return held
+
+    held = asyncio.run(main())
+    # Neither plan got past its first message while the condition stood.
+    assert held == []
+    # And both finished once it cleared.
+    assert sorted(finished) == ["first", "second"]
+
+
+def test_a_plans_own_suspender_holds_only_that_plan():
+    """A suspender a plan installs for itself does not reach the other plan.
+
+    The chain runs one way. A plan's suspension is tripped by the session's
+    reasons as well as its own; the session's is not tripped by a plan's, or
+    one plan could hold up every other plan the session is running.
+    """
+    finished: list[str] = []
+
+    async def main():
+        session = PlanSession()
+        sig = Signal(value=0, name="mine")
+        # Bad before it is installed, so installing it holds this plan here.
+        sig.put(1)
+        susp = SuspendBoolHigh(sig)
+
+        async def run(name, executor):
+            await executor.run()
+            finished.append(name)
+
+        held = session.make_executor([Msg("checkpoint"), Msg("install_suspender", None, susp), Msg("null")])
+        free = session.make_executor([Msg("checkpoint"), Msg("null")])
+        runners = asyncio.gather(run("held", held), run("free", free))
+        await asyncio.sleep(0.2)
+        meanwhile = list(finished)
+        sig.put(0)
+        await runners
+        return meanwhile
+
+    meanwhile = asyncio.run(main())
+    # The plan that installed nothing ran to the end while the other was held.
+    assert meanwhile == ["free"]
+    assert finished == ["free", "held"]
+
+
+def test_two_plans_documents_reach_the_session_and_only_their_own_subscribers():
+    """Each plan's own subscribers see its documents; the session's see both.
+
+    Dispatchers chain the way suspensions do, so a subscription that arrives
+    with one plan must not be handed the other plan's documents.
+    """
+
+    async def main():
+        session = PlanSession()
+        session_starts: list[str] = []
+        first_starts: list[str] = []
+        session.dispatcher.subscribe(
+            lambda name, doc: session_starts.append(doc["uid"]) if name == "start" else None
+        )
+
+        plan = [Msg("open_run"), Msg("sleep", None, 0.05), Msg("close_run")]
+        first = session.make_executor(
+            list(plan),
+            subs={"start": [lambda name, doc: first_starts.append(doc["uid"])]},
+        )
+        second = session.make_executor(list(plan))
+        await asyncio.gather(first.run(), second.run())
+        return session_starts, first_starts, first, second
+
+    session_starts, first_starts, first, second = asyncio.run(main())
+
+    # The session saw both plans' runs.
+    assert sorted(session_starts) == sorted([*first.run_start_uids, *second.run_start_uids])
+    # The subscription that arrived with the first plan saw only its own.
+    assert first_starts == list(first.run_start_uids)
+
+
+def test_one_plan_failing_leaves_the_other_alone():
+    """Two plans on one session fail independently.
+
+    They share a session, a dispatcher and a suspension chain, and none of
+    those is a route for one plan's exception to reach the other.
+    """
+
+    async def main():
+        session = PlanSession()
+        good = session.make_executor([Msg("open_run"), Msg("sleep", None, 0.1), Msg("close_run")])
+        bad = session.make_executor([Msg("open_run"), Msg("aardvark")])
+        outcomes = await asyncio.gather(good.run(), bad.run(), return_exceptions=True)
+        return good, bad, outcomes
+
+    good, bad, outcomes = asyncio.run(main())
+
+    assert good._exit_status == "success"
+    assert isinstance(outcomes[1], InvalidCommand)
+    assert bad._exit_status == "fail"
 
 
 def test_a_setting_reaches_the_next_plan_and_not_the_running_one():
