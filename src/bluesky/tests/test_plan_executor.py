@@ -210,7 +210,7 @@ def test_run_a_plan_without_a_run_engine():
 
     assert collected == ["start", "stop"]
     assert len(executor.run_start_uids) == 1
-    assert executor._exit_status == "success"
+    assert executor.exit_status == "success"
     assert executor.state == "idle"
     assert not executor.interrupted
     assert plan_return is None
@@ -228,17 +228,24 @@ def test_plan_return_value_without_a_run_engine():
     assert asyncio.run(main()) == 42
 
 
-def test_result_describes_the_finished_plan():
+def test_the_executor_says_how_the_plan_finished():
+    """The outcome is readable off the executor, by whoever ran it.
+
+    A headless caller used to have to build a `RunEngineResult` -- a
+    `RunEngine`'s return shape, which it has no other use for -- or read a
+    private attribute, to find out whether the plan it ran actually worked.
+    """
+
     async def main():
         executor = PlanSession().make_executor([Msg("open_run"), Msg("close_run")])
-        plan_return = await executor.run()
-        return executor.result(plan_return)
+        await executor.run()
+        return executor
 
-    result = asyncio.run(main())
-    assert result.exit_status == "success"
-    assert not result.interrupted
-    assert result.reason == ""
-    assert len(result.run_start_uids) == 1
+    executor = asyncio.run(main())
+    assert executor.exit_status == "success"
+    assert executor.exit_reason == ""
+    assert not executor.interrupted
+    assert len(executor.run_start_uids) == 1
 
 
 def test_session_outlives_its_executors():
@@ -282,7 +289,7 @@ def test_two_plans_run_at_once_on_one_session():
 
     session, first, second = asyncio.run(main())
 
-    assert first._exit_status == second._exit_status == "success"
+    assert first.exit_status == second.exit_status == "success"
     assert first.run_start_uids != second.run_start_uids
     # Each run was given a scan id of its own, rather than both reading back
     # whichever the other stored last.
@@ -410,9 +417,9 @@ def test_one_plan_failing_leaves_the_other_alone():
 
     good, bad, outcomes = asyncio.run(main())
 
-    assert good._exit_status == "success"
+    assert good.exit_status == "success"
     assert isinstance(outcomes[1], InvalidCommand)
-    assert bad._exit_status == "fail"
+    assert bad.exit_status == "fail"
 
 
 def test_a_setting_reaches_the_next_plan_and_not_the_running_one():
@@ -595,7 +602,7 @@ def test_executor_starts_empty():
 
     first, second = asyncio.run(main())
     assert first.run_start_uids and not second.run_start_uids
-    assert second._exit_status == "success"
+    assert second.exit_status == "success"
     assert second._exception is None
     # the caches themselves are private; this is the point of the class, so
     # reach in rather than let it go untested
