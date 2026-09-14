@@ -973,6 +973,11 @@ class PlanExecutor:
         # has neither has nothing else to ask.
         self.exit_status: str = "success"  # optimistic default
         self.exit_reason: str = ""
+        # What was thrown in to end the plan early, for whoever asks afterwards.
+        # Separate from `_exception`, which is the transport: the run loop takes
+        # that one and clears it on the way to throwing it into the plan, and it
+        # is routinely gone before the caller that ended the plan can look.
+        self.exit_exception: typing.Any = None
         self._reason: str = ""  # the reason `stop` was given, if it was
         self._deferred_pause_requested: bool = False  # pause at next 'checkpoint'
 
@@ -1299,6 +1304,7 @@ class PlanExecutor:
         self._reason = ""
         self.exit_status = "success"
         self.exit_reason = ""
+        self.exit_exception = None
         # sentinel to decide if need to add to the response stack or not
         sentinel = object()
         plan_return = NO_PLAN_RETURN
@@ -1827,6 +1833,19 @@ class PlanExecutor:
             # A paused plan is parked at the gate, so raising the exception into
             # it is not enough on its own: it has to be let go before it can run
             # whatever cleanup it is being allowed.
+            #
+            # Recorded before it is handed over, because handing it over is what
+            # loses it: releasing the pause lets the run loop take `_exception`
+            # and clear it, which it usually does before the caller that asked
+            # for the stop gets as far as asking how the plan ended.
+            # An instance for abort, the class for stop and halt. That is what
+            # `main` put in `RunEngineResult.exception`, and a caller reading it
+            # can tell the difference -- `isinstance` answers for the one and
+            # not the others -- so it is preserved rather than tidied. Only the
+            # record: `_exception` stays the class it already was, because the
+            # run loop compares it by identity with what comes back out of the
+            # plan.
+            self.exit_exception = RequestAbort() if exception is RequestAbort else exception
             self._exception = exception
             self._release_pause()
         else:

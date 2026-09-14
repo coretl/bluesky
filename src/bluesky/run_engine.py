@@ -834,7 +834,7 @@ class RunEngine:
             self._executor.exit_status,
             self._executor.interrupted,
             self._executor.exit_reason,
-            self._executor._exception,
+            self._executor.exit_exception,
         )
 
     def __call__(

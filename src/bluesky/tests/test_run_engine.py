@@ -41,6 +41,7 @@ from bluesky.run_engine import (
     FailedStatus,
     IllegalMessageSequence,
     NoReplayAllowed,
+    PlanHalt,
     RequestAbort,
     RequestStop,
     RunEngineInterrupted,
@@ -726,6 +727,53 @@ def test_exit_raise(RE, unpause_func, excp):
         RE(simple_plan())
     unpause_func(RE)
     assert flag
+
+
+@pytest.mark.parametrize(
+    "verb,expected",
+    [("stop", RequestStop), ("abort", RequestAbort), ("halt", PlanHalt)],
+)
+def test_ending_a_paused_plan_records_what_ended_it(verb, expected):
+    """`RunEngineResult.exception` says what was thrown in to end the plan.
+
+    Only reachable for a paused plan: a running one has its task cancelled
+    instead, and there is no exception to report. The record has to be taken as
+    the exception is handed over, because handing it over is what loses it --
+    releasing the pause lets the run loop take it and clear it, usually before
+    the caller that asked for the stop can look.
+    """
+    RE = RunEngine({}, call_returns_result=True)
+
+    def plan():
+        yield Msg("open_run")
+        yield Msg("pause")
+        yield Msg("close_run")
+
+    with pytest.raises(RunEngineInterrupted):
+        RE(plan())
+    exception = getattr(RE, verb)().exception
+
+    # It is the exception that verb throws in.
+    assert (exception if isinstance(exception, type) else type(exception)) is expected
+    # abort records an instance where stop and halt record the class. `main`
+    # does the same, and `isinstance` can tell them apart, so it is preserved.
+    assert isinstance(exception, type) is (verb != "abort")
+
+
+def test_ending_a_running_plan_records_no_exception():
+    """A plan that was not paused is cancelled, so there is nothing to record."""
+    RE = RunEngine({}, call_returns_result=True)
+
+    def plan():
+        yield Msg("open_run")
+        for _ in range(50):
+            yield Msg("sleep", None, 0.01)
+        yield Msg("close_run")
+
+    threading.Timer(0.1, RE.stop).start()
+    with pytest.raises(RunEngineInterrupted):
+        RE(plan())
+    assert RE._executor.exit_exception is None
 
 
 @uses_os_kill_sigint
