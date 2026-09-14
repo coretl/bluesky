@@ -4,81 +4,12 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Hashable, Iterable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from types import MappingProxyType
 
 from .utils import Msg
 
 PlanLike = Iterable[Msg] | Callable[[], Iterable[Msg]]
-
-
-@dataclass
-class SuspensionEpisode:
-    """One suspension of one plan, and the reasons taking part in it.
-
-    ``opening`` are the reasons standing when the suspension began; ``joined``
-    are those that tripped while the plan was already held. The split decides
-    when each one's pre-plan runs -- the openers' before the plan is held, a
-    joiner's as it arrives -- and ``undo_order`` puts every post-plan in the
-    reverse of arrival. Both run in band, on the plan stack.
-
-    ``fut`` is what releases the episode: the suspension clearing, for one a
-    suspender raised. The episode does not join the justifications: whoever is
-    told about it decides how to say it, and `RunEngine` is the one that
-    prints.
-
-    ``joined`` is filled after the episode is handed on, so read it late.
-    """
-
-    opening: dict[Hashable, SuspensionReason]
-    fut: Callable
-    joined: list[SuspensionReason] = field(default_factory=list)
-
-    def __post_init__(self) -> None:
-        # Snapshotted, so that joining cannot quietly enlarge the opening set.
-        self._opening_order = list(self.opening.values())
-        self._seen = set(self.opening)
-
-    def unseen(self, reasons: Mapping[Hashable, SuspensionReason]) -> dict[Hashable, SuspensionReason]:
-        """Those of ``reasons`` this episode has not taken in yet."""
-        return {key: reason for key, reason in reasons.items() if key not in self._seen}
-
-    async def wait_for_a_change(self, suspension: Suspension) -> None:
-        """Park until this episode is released, or an unseen reason joins it.
-
-        Released is ``fut``: the suspension clearing, for an episode a suspender
-        raised. Joined is a condition tripping while the plan is already held,
-        which the plan takes in rather than starting a second suspension for.
-
-        Waking on either is what lets a joiner's pre-plan run in band. The
-        supervisor used to work those off itself, off the plan stack, because
-        the plan was parked here on ``fut`` alone and could not be reached.
-
-        The unseen test and the wait are one uninterrupted stretch of loop
-        thread, so a condition tripping cannot slip between them and leave this
-        parked with a joiner nobody has run.
-        """
-        released = asyncio.ensure_future(self.fut())
-        try:
-            while not released.done() and not self.unseen(suspension.reasons):
-                changed = asyncio.ensure_future(suspension.wait_changed())
-                await asyncio.wait([released, changed], return_when=asyncio.FIRST_COMPLETED)
-                changed.cancel()
-        finally:
-            released.cancel()
-
-    def add_joiner(self, key: Hashable, reason: SuspensionReason) -> None:
-        """Take ``key`` into an episode that has already begun."""
-        self._seen.add(key)
-        self.joined.append(reason)
-
-    def pre_plans(self) -> Iterable[SuspensionReason]:
-        """The openers, in the order they fired."""
-        return self._opening_order
-
-    def undo_order(self) -> list[SuspensionReason]:
-        """Every reason, in the reverse of the order it arrived."""
-        return [*reversed(self.joined), *reversed(self._opening_order)]
 
 
 @dataclass(frozen=True)

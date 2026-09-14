@@ -23,7 +23,7 @@ from bluesky.suspenders import (
 from bluesky.tests import ophyd_async, requires_ophyd_async
 from bluesky.tests.utils import MsgCollector
 
-from .utils import _fabricate_asycio_event, suspend_until
+from .utils import force_suspension
 
 if ophyd_async:
     from ophyd_async.core import soft_signal_rw
@@ -484,9 +484,7 @@ def test_unresumable_suspend_fail(RE):
     m_coll = MsgCollector()
     RE.msg_hook = m_coll
 
-    ev = _fabricate_asycio_event(RE.loop)
-    threading.Timer(0.1, partial(suspend_until, RE, ev.wait)).start()
-    threading.Timer(1, ev.set).start()
+    threading.Timer(0.1, partial(force_suspension, RE)).start()
     start = time.time()
     with pytest.raises(RunEngineInterrupted):
         RE(scan)

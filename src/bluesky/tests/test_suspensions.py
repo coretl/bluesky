@@ -21,7 +21,7 @@ from bluesky.suspensions import Suspension, SuspensionReason, join_justification
 from bluesky.tests import ophyd_async, requires_ophyd_async
 from bluesky.utils import FailedPause, RunEngineInterrupted
 
-from .utils import suspend_until
+from .utils import force_suspension
 
 if ophyd_async:
     from ophyd_async.core import soft_signal_rw
@@ -445,10 +445,7 @@ def test_a_suspension_arriving_after_the_plan_ends_does_nothing(RE):
     executor = RE._executor
     assert executor.state.is_idle
 
-    async def nothing():
-        return None
-
-    suspend_until(RE, nothing, justification="too late").result(timeout=10)
+    force_suspension(RE, justification="too late").result(timeout=10)
 
     # And it left the state alone.
     assert executor.state.is_idle

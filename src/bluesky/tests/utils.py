@@ -79,29 +79,66 @@ def _careful_event_set(ev):
     return inner
 
 
-def suspend_until(RE, fut=None, *, pre_plan=None, post_plan=None, justification=None):
-    """Raise a suspension on ``RE``'s plan without going through a suspender.
+# `suspend_until`'s in-flight releases, kept alive. See the comment there.
+_releases: set[asyncio.Task] = set()
 
-    Not a supported route, and deliberately not a method on `RunEngine`: it
-    reaches past the suspension straight into the executor, so a suspension raised
-    this way is not in ``RE.suspensions`` and does not merge with a suspender's.
-    That is what ``RunEngine.request_suspend`` did, and why it was deleted.
 
-    The suite keeps it for the conditions a suspender cannot easily produce: a
-    malformed pre-plan, a pre-plan that raises, a plan with no checkpoint to
-    rewind to. Anything testing ordinary suspension should install a suspender
-    instead.
+def suspend_until(RE, fut, *, pre_plan=None, post_plan=None, justification=None):
+    """Hold ``RE``'s running plan until ``fut`` completes.
+
+    Trips the plan's suspension under a key of its own and clears it when
+    ``fut`` does, so the plan's supervisor opens and ends the suspension exactly
+    as it would one a suspender raised. Deliberately not a method on
+    `RunEngine`: ``RunEngine.request_suspend`` was one, and was deleted.
+
+    The suite keeps it for a hold whose length the test decides, which a
+    suspender cannot easily give: the conditions a suspender cannot produce at
+    all go through `force_suspension` instead.
 
     Callable from any thread, including a ``threading.Timer``.
     """
-    from bluesky.suspensions import SuspensionEpisode, SuspensionReason
-
-    episode = SuspensionEpisode(
-        {object(): SuspensionReason(justification or "", pre_plan, post_plan)},
-        fut=fut,
-    )
+    key = object()
 
     async def begin():
-        RE._executor._begin_suspension(episode)
+        suspension = RE._executor._suspension
+        suspension.trip(key, justification or "", pre_plan=pre_plan, post_plan=post_plan)
+
+        async def release():
+            await fut()
+            suspension.clear(key)
+
+        # Held onto until it finishes: a task with no strong reference anywhere
+        # can be collected mid-await, and this one is the only thing that ends
+        # the hold.
+        task = asyncio.ensure_future(release())
+        _releases.add(task)
+        task.add_done_callback(_releases.discard)
+
+    return asyncio.run_coroutine_threadsafe(begin(), RE.loop)
+
+
+def force_suspension(RE, *, pre_plan=None, post_plan=None, justification=None):
+    """Put a suspension in front of ``RE``'s plan without tripping anything.
+
+    Not a supported route: it reaches past the suspension straight into the
+    executor, so the reason is not in ``RE.suspensions``, does not merge with a
+    suspender's, and never reaches the supervisor -- which is the point, since
+    the supervisor arranges nothing while a plan is paused and this must, to
+    test what a pre-plan does on resume.
+
+    Nothing here trips the suspension, so the hold it opens is already over by
+    the time the plan reaches it: what runs is the pre-plan, the rewind and the
+    post-plan. The suite keeps it for the conditions a suspender cannot produce
+    -- a malformed pre-plan, a pre-plan that raises, a plan with no checkpoint
+    to rewind to -- and `suspend_until` for a hold that lasts.
+
+    Callable from any thread, including a ``threading.Timer``.
+    """
+    from bluesky.suspensions import SuspensionReason
+
+    opening = {object(): SuspensionReason(justification or "", pre_plan, post_plan)}
+
+    async def begin():
+        RE._executor._begin_suspension(opening)
 
     return asyncio.run_coroutine_threadsafe(begin(), RE.loop)
