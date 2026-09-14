@@ -1060,23 +1060,6 @@ class PlanExecutor:
         for suspender in list(self._plan_suspenders):
             self._drop_plan_suspender(suspender)
 
-    async def _run_out_of_band(self, plan):
-        """Work off a short message sequence outside the plan stack.
-
-        A suspender's pre-plan runs when its condition fires, which may be
-        while the plan is already suspended for another condition. The run loop
-        will not reach a message pushed onto the plan stack then -- it is parked
-        in the suspension's ``wait_for`` -- so a shutter that must close now
-        cannot be closed by queueing one.
-
-        Not used while the plan is paused. Nothing runs unprompted there.
-
-        Only for the short, self-contained sequences a pre- or post-plan is.
-        There is no plan stack, no checkpoint and no rewind here.
-        """
-        for msg in ensure_generator(_called(plan)):
-            await self._command_registry[msg.command](msg)
-
     def _arrange_permission(self) -> None:
         """Hold the plan if it may not run yet, and watch the suspension from here.
 
@@ -1123,7 +1106,10 @@ class PlanExecutor:
             self._hooks.suspend(episode.justification)
             if not self._begin_suspension(episode):
                 return
-            await self._gather_joiners(episode)
+            # The plan runs the episode from here -- taking in whatever joins it
+            # and running the pre-plans -- so this only waits for it to end
+            # before another can be opened.
+            await self._suspension.wait_cleared()
 
     async def _wait_for_a_reason_to_suspend(self) -> dict[typing.Hashable, SuspensionReason]:
         """Park until the suspension is tripped and the plan is running."""
@@ -1162,23 +1148,6 @@ class PlanExecutor:
         # the message just pushed.
         self._task.cancel()
         return True
-
-    async def _gather_joiners(self, episode: SuspensionEpisode) -> None:
-        """Run the pre-plan of every condition that joins an open suspension.
-
-        Each runs out of band, because the plan is parked in the suspension's
-        ``wait_for`` and will not reach anything pushed onto its stack. Their
-        post-plans wait for the unwind, so that they cannot race the plan
-        resuming.
-        """
-        while self._suspension.tripped:
-            await self._suspension.wait_changed()
-            for key, reason in self._suspension.reasons.items():
-                if episode.sees(key):
-                    continue
-                episode.add_joiner(key, reason)
-                if reason.pre_plan is not None:
-                    await self._run_out_of_band(reason.pre_plan)
 
     @property
     def suspensions(self) -> typing.Mapping[typing.Hashable, SuspensionReason]:
@@ -2720,16 +2689,31 @@ class PlanExecutor:
         def suspension():
             # None of this is replayed: rewinding is what happens after it.
             yield Msg("rewindable", None, False)
-            # The openers' pre-plans, in band, after the rewind and after
-            # movable objects have stopped. Joiners run theirs out of band, in
-            # `_gather_joiners`, because the plan is parked below.
+            # The openers' pre-plans, after the rewind and after movable
+            # objects have stopped.
             for reason in episode.pre_plans():
                 if reason.pre_plan is not None:
                     yield from ensure_generator(_called(reason.pre_plan))
-            yield Msg("wait_for", None, [episode.fut])
+            # Then hold, until the episode is released. A condition tripping
+            # while the plan is held joins this episode rather than opening a
+            # second one, and its pre-plan runs here, in band, on the way
+            # through -- so it is the plan that runs it, on the plan stack,
+            # with a checkpoint behind it and the run loop's error handling
+            # around it. A paused plan reaches none of this, which is what
+            # makes "nothing runs unprompted while paused" true rather than
+            # merely intended.
+            while True:
+                yield Msg("wait_for", None, [functools.partial(episode.wait_for_a_change, self._suspension)])
+                joining = episode.unseen(self._suspension.reasons)
+                if not joining:
+                    break
+                for key, reason in joining.items():
+                    episode.add_joiner(key, reason)
+                    if reason.pre_plan is not None:
+                        yield from ensure_generator(_called(reason.pre_plan))
             yield Msg("_resume_from_suspender", None)
             # Read now rather than when this generator was built, so that
-            # everything which joined while the plan was held is undone too.
+            # everything which joined in the loop above is undone too.
             for reason in episode.undo_order():
                 if reason.post_plan is not None:
                     yield from ensure_generator(_called(reason.post_plan))

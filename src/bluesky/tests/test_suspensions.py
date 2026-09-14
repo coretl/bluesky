@@ -369,11 +369,11 @@ def test_a_pretripped_condition_runs_neither_of_its_plans(RE, hw):
 
 
 def test_a_condition_joining_a_suspension_runs_its_pre_plan(RE):
-    """A pre-plan runs off the plan stack, so it needs the executor's commands.
+    """A condition joining an open suspension gets its pre-plan run too.
 
-    The plan is parked in the suspension's ``wait_for`` and will not reach
-    anything pushed onto its stack, so the second condition's pre-plan is
-    worked off out of band.
+    The plan is held inside the suspension, not parked away from it: it wakes
+    on the join, runs the second condition's pre-plan in band on its own stack,
+    and goes back to holding.
     """
     first = Signal(value=0, name="first")
     second = Signal(value=0, name="second")
@@ -398,6 +398,39 @@ def test_a_condition_joining_a_suspension_runs_its_pre_plan(RE):
 
     # Both pre-plans ran to completion.
     assert finished == ["first", "second"]
+
+
+def test_a_joining_pre_plan_that_raises_reaches_the_plan(RE):
+    """A joiner's pre-plan is the plan's work, so its exception is the plan's.
+
+    It used to be run off the plan stack by the supervisor task, which nobody
+    awaits: the exception killed that task silently and resurfaced later as
+    "Task exception was never retrieved" against whatever test happened to be
+    running when the loop got round to reporting it.
+    """
+    first = Signal(value=0, name="first")
+    second = Signal(value=0, name="second")
+
+    def fine():
+        yield Msg("null")
+
+    def raises():
+        yield Msg("null")
+        raise RuntimeError("joiner pre-plan")
+
+    RE.install_suspender(SuspendBoolHigh(first, pre_plan=fine))
+    RE.install_suspender(SuspendBoolHigh(second, pre_plan=raises))
+
+    _at(0.1, first.put, 1)
+    _at(0.3, second.put, 1)
+    # A safety net, so a failure to propagate shows up as a failed assertion
+    # rather than as a hung suite.
+    _at(1.5, lambda: (first.put(0), second.put(0)))
+
+    with pytest.raises(RuntimeError, match="joiner pre-plan"):
+        RE([Msg("checkpoint")] + [Msg("sleep", None, 0.2)] * 10)
+
+    RE.clear_suspenders()
 
 
 def test_a_suspension_arriving_after_the_plan_ends_does_nothing(RE):

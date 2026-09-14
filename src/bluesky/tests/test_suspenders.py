@@ -580,8 +580,9 @@ def test_two_conditions_make_one_suspension(RE):
     commands = [msg.command for msg in m_coll.msgs]
     # One suspension for both conditions.
     assert commands.count("_start_suspender") == 1
-    # And the plan waits once.
-    assert commands.count("wait_for") == 1
+    # And it is released once: one continuous hold, however many times the plan
+    # wakes inside it to take a joining condition in.
+    assert commands.count("_resume_from_suspender") == 1
     RE.clear_suspenders()
 
 

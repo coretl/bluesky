@@ -18,9 +18,12 @@ class SuspensionEpisode:
 
     ``opening`` are the reasons standing when the suspension began; ``joined``
     are those that tripped while the plan was already held. The split decides
-    how each one's pre-plan runs -- in band for the openers, out of band for the
-    joiners, which cannot reach a plan stack the plan is parked away from -- and
-    ``undo_order`` puts every post-plan in the reverse of arrival.
+    when each one's pre-plan runs -- the openers' before the plan is held, a
+    joiner's as it arrives -- and ``undo_order`` puts every post-plan in the
+    reverse of arrival. Both run in band, on the plan stack.
+
+    ``fut`` is what releases the episode: the suspension clearing, for one a
+    suspender raised.
 
     ``joined`` is filled after the episode is handed on, so read it late.
     """
@@ -34,9 +37,33 @@ class SuspensionEpisode:
         self._opening_order = list(self.opening.values())
         self._seen = set(self.opening)
 
-    def sees(self, key: Hashable) -> bool:
-        """Whether ``key`` is already taking part."""
-        return key in self._seen
+    def unseen(self, reasons: Mapping[Hashable, SuspensionReason]) -> dict[Hashable, SuspensionReason]:
+        """Those of ``reasons`` this episode has not taken in yet."""
+        return {key: reason for key, reason in reasons.items() if key not in self._seen}
+
+    async def wait_for_a_change(self, suspension: Suspension) -> None:
+        """Park until this episode is released, or an unseen reason joins it.
+
+        Released is ``fut``: the suspension clearing, for an episode a suspender
+        raised. Joined is a condition tripping while the plan is already held,
+        which the plan takes in rather than starting a second suspension for.
+
+        Waking on either is what lets a joiner's pre-plan run in band. The
+        supervisor used to work those off itself, off the plan stack, because
+        the plan was parked here on ``fut`` alone and could not be reached.
+
+        The unseen test and the wait are one uninterrupted stretch of loop
+        thread, so a condition tripping cannot slip between them and leave this
+        parked with a joiner nobody has run.
+        """
+        released = asyncio.ensure_future(self.fut())
+        try:
+            while not released.done() and not self.unseen(suspension.reasons):
+                changed = asyncio.ensure_future(suspension.wait_changed())
+                await asyncio.wait([released, changed], return_when=asyncio.FIRST_COMPLETED)
+                changed.cancel()
+        finally:
+            released.cancel()
 
     def add_joiner(self, key: Hashable, reason: SuspensionReason) -> None:
         """Take ``key`` into an episode that has already begun."""
