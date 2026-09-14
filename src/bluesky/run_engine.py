@@ -15,15 +15,16 @@ from bluesky._vendor.super_state_machine.errors import TransitionError
 from bluesky._vendor.super_state_machine.extras import ProxyString
 
 from .bundlers import RunBundler
-from .log import ComposableLogAdapter, logger
 
 # Re-exported, and deliberately left out of the __all__ below, so that
 # `from bluesky.run_engine import Dispatcher` and its like keep working.
+from .dispatcher import Dispatcher, DocumentNames  # noqa: F401
+from .log import ComposableLogAdapter, logger
+
+# Re-exported as well, for the same reason.
 from .plan_executor import (  # noqa: F401
     NO_PLAN_RETURN,
     UNCACHEABLE_COMMANDS,
-    Dispatcher,
-    DocumentNames,
     LoggingPropertyMachine,
     PlanExecutor,
     PlanSession,
