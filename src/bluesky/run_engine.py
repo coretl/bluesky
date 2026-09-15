@@ -1297,51 +1297,22 @@ class RunEngine:
 # can be added once the ecosystem reads RunEngine._executor, or uses a
 # PlanExecutor directly.
 
-# Forwards with a caller we can point at, inside bluesky or outside it.
+# Each is here because something reads it; the file that does is named beside
+# it, so an entry whose caller goes away can go with it. Names with no caller
+# to point at are not carried: they were, as insurance, and the search behind
+# that is recorded in the pull request that introduced this split.
 _FORWARDS_WITH_CALLERS = {
-    "_task": "_task",
-    "_run_bundlers": "_run_bundlers",
-    "_run_start_uids": "run_start_uids",
-    "_seen_wait_and_move_on_keys": "_seen_wait_and_move_on_keys",
-    "_command_registry": "_command_registry",
+    "_task": "_task",  # tests/test_run_engine.py
+    "_run_bundlers": "_run_bundlers",  # tests/test_run_engine.py
+    "_run_start_uids": "run_start_uids",  # tests/test_plan_executor.py
+    "_seen_wait_and_move_on_keys": "_seen_wait_and_move_on_keys",  # tests/test_flyer.py
+    "_command_registry": "_command_registry",  # tests/test_run_engine.py
+    "_msg_cache": "_msg_cache",  # tests/test_run_engine.py
+    "_exception": "_exception",  # tests/test_suspensions.py
+    "_exit_status": "exit_status",  # tests/test_plan_executor.py
 }
 
-# Forwards with no caller we could find, carried as insurance rather than
-# because anything needs them. Searched across bluesky, its tests and docs,
-# bluesky-queueserver and blueapi when this was written; the pull request that
-# introduced this split records what was searched and what was found. Delete
-# this dict and its term in the union below if you would rather not carry them.
-_FORWARDS_WITHOUT_KNOWN_CALLERS = {
-    "_run_permit": "_run_permit",
-    "_pardon_failures": "_pardon_failures",
-    "_plan": "_plan",
-    "_plan_stack": "_plan_stack",
-    "_response_stack": "_response_stack",
-    "_msg_cache": "_msg_cache",
-    # bluesky-queueserver reads this, but only as an AttributeError fallback
-    # behind the public RunEngine.deferred_pause_requested, which it tries
-    # first and which has existed since v1.10. The fallback cannot fire against
-    # a bluesky this new, and queueserver carries its own TODO to delete it.
-    #
-    # Points at the executor's private attribute rather than its public
-    # property, which is read-only: these forwards are read/write, and a shim
-    # for compatibility should not be where an assignment starts raising.
-    "_deferred_pause_requested": "_deferred_pause_requested",
-    "_rewindable_flag": "rewindable",
-    "_metadata_per_call": "_metadata_per_call",
-    "_run_tracing_spans": "_run_tracing_spans",
-    "_staged": "_staged",
-    "_objs_seen": "_objs_seen",
-    "_movable_objs_touched": "_movable_objs_touched",
-    "_groups": "_groups",
-    "_status_objs": "_status_objs",
-    "_exception": "_exception",
-    "_interrupted": "interrupted",
-    "_exit_status": "exit_status",
-    "_reason": "_reason",
-}
-
-_EXECUTOR_FORWARDS = _FORWARDS_WITH_CALLERS | _FORWARDS_WITHOUT_KNOWN_CALLERS
+_EXECUTOR_FORWARDS = _FORWARDS_WITH_CALLERS
 
 
 def _forward_to_executor(name: str) -> property:
