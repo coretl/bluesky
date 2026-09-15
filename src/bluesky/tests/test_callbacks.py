@@ -624,6 +624,18 @@ def test_broken_table():
         assert ln.strip() == "failed to format row"
 
 
+def test_livetable_stop_without_start():
+    """A 'stop' document with no preceding 'start' must be ignored, not crash.
+
+    Regression test: ``LiveTable.stop`` dereferenced ``self._start["uid"]``,
+    which is ``None`` until a 'start' is seen, raising ``TypeError``.
+    """
+    lt = LiveTable(["det"])
+    # Call the raw method directly (the public __call__ is wrapped by
+    # make_class_safe, which would swallow the TypeError and log it).
+    lt.stop({"run_start": "some-uid", "uid": "stop-uid"})
+
+
 def test_callback_safe():
     @make_callback_safe
     def test_function(to_fail):

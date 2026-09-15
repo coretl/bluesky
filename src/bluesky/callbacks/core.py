@@ -434,7 +434,8 @@ class LiveTable(CallbackBase):
         super().event(doc)
 
     def stop(self, doc):
-        if ensure_uid(doc["run_start"]) != self._start["uid"]:
+        # Ignore a 'stop' with no preceding 'start', or one from another run.
+        if self._start is None or ensure_uid(doc["run_start"]) != self._start["uid"]:
             return
 
         # This sleep is just cosmetic. It improves the odds that the bottom
