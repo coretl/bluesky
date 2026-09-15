@@ -35,7 +35,7 @@ class PlanSession:
     builds many, one per plan::
 
         executor = session.make_executor(my_plan())
-        result = await executor.run()
+        result = await executor
 
     A `RunEngine` composes a session with the machinery needed to drive it
     from a terminal on the main thread, and uses that same pair of calls. A

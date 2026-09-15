@@ -848,20 +848,22 @@ class PlanExecutor:
             _span.set_attribute("exit_status", "aborted")
             _span.end()
 
-    async def run(self):
-        """Wait for the plan this executor was built for, and say what it returned.
+    def __await__(self):
+        """Wait for the plan, and give back what it returned.
 
-        The plan is already under way; this waits for it::
+        The plan is already under way, so this waits for it rather than
+        starting it::
 
             executor = session.make_executor(plan)
-            result = await executor.run()
+            result = await executor
 
-        Returns
-        -------
-        The value the plan returned, or :data:`NO_PLAN_RETURN` if it did not
-        run to completion.
+        What comes back is the plan's return value, or :data:`NO_PLAN_RETURN`
+        if it did not run to completion. Awaiting twice is allowed and answers
+        the same thing twice: the plan ran once, and this is the record of it.
         """
-        return await self._task
+        if self._task is None:
+            raise RuntimeError(f"{self!r} was built with no plan, so there is nothing to wait for.")
+        return self._task.__await__()
 
     def done(self) -> bool:
         """Whether the plan has finished, however it finished.

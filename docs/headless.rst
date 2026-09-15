@@ -32,24 +32,25 @@ Running one plan
     >>> async def main():
     ...     session = PlanSession()
     ...     executor = session.make_executor(plan())
-    ...     return await executor.run()
+    ...     return await executor
     ...
     >>> asyncio.run(main())
     'a value the plan returned'
 
 ``make_executor`` builds an executor from the session's settings as they stand at
-that moment, and hands it to you. The session does not keep a reference, which is
-what lets one session run more than one plan at a time. ``run`` executes the plan
-and returns what the plan returned; an executor runs once.
+that moment, sets the plan going, and hands it to you. The session does not keep
+a reference, which is what lets one session run more than one plan at a time.
+Awaiting the executor waits for the plan and gives back what it returned; an
+executor is built for one plan and runs it once.
 
 Because the plan is loaded as the executor is built, a malformed plan raises from
-``make_executor`` rather than from ``run``.
+``make_executor`` rather than out of the await.
 
 How the plan ended
 ------------------
 
-``run`` returns the plan's return value, which says nothing about how the plan
-got there. The executor says that, and it is the same executor afterwards as
+Awaiting an executor gives the plan's return value, which says nothing about
+how the plan got there. The executor says that, and it is the same executor afterwards as
 during -- it runs one plan and then holds the record of it:
 
 .. doctest::
@@ -61,7 +62,7 @@ during -- it runs one plan and then holds the record of it:
     >>> async def main():
     ...     session = PlanSession()
     ...     executor = session.make_executor(scan())
-    ...     await executor.run()
+    ...     await executor
     ...     return executor.exit_status, executor.exit_reason, executor.interrupted
     ...
     >>> asyncio.run(main())
@@ -84,7 +85,7 @@ attributes; a caller that is not a `RunEngine` reads them directly.
 When a plan fails
 -----------------
 
-A plan that raises raises out of ``run``. The executor still cleans up first --
+A plan that raises raises out of the await. The executor still cleans up first --
 stopping what it set, unstaging, closing open runs -- and still records how it
 ended:
 
@@ -98,7 +99,7 @@ ended:
     ...     session = PlanSession()
     ...     executor = session.make_executor(falls_over())
     ...     try:
-    ...         await executor.run()
+    ...         await executor
     ...     except RuntimeError:
     ...         pass
     ...     return executor.exit_status, executor.exit_reason
@@ -108,7 +109,7 @@ ended:
 
 A failing status object raises :class:`~bluesky.utils.FailedStatus` the same
 way. Nothing is swallowed and stored for you to find later, so a service can
-let the exception travel: ``await executor.run()`` inside your own ``try`` is
+let the exception travel: ``await executor`` inside your own ``try`` is
 the whole error-handling story.
 
 Stopping a plan is not failing it. ``stop`` and its modes below end the plan
@@ -125,8 +126,8 @@ Subscribe on the session and you see every document from every plan it runs:
     ...     session = PlanSession()
     ...     names = []
     ...     session.subscribe(lambda name, doc: names.append(name))
-    ...     await session.make_executor(scan()).run()
-    ...     await session.make_executor(scan()).run()
+    ...     await session.make_executor(scan())
+    ...     await session.make_executor(scan())
     ...     return names
     ...
     >>> asyncio.run(main())
@@ -141,8 +142,8 @@ Subscribe for one plan and the subscription is discarded with its executor:
     ...     durable, just_this_plan = [], []
     ...     session.subscribe(lambda name, doc: durable.append(name))
     ...     first = session.make_executor(scan(), subs={"start": lambda n, d: just_this_plan.append(n)})
-    ...     await first.run()
-    ...     await session.make_executor(scan()).run()
+    ...     await first
+    ...     await session.make_executor(scan())
     ...     return durable, just_this_plan
     ...
     >>> asyncio.run(main())
@@ -165,7 +166,7 @@ counter. Each plan is given a copy of it as the plan is launched, so writing to
     ...     session.md["proposal"] = "p1234"
     ...     starts = []
     ...     session.subscribe(lambda name, doc: starts.append(doc), "start")
-    ...     await session.make_executor(scan()).run()
+    ...     await session.make_executor(scan())
     ...     return starts[0]["proposal"], starts[0]["scan_id"]
     ...
     >>> asyncio.run(main())
@@ -187,7 +188,7 @@ main thread to block; a service driving the loop itself does not:
     ...     session = PlanSession()
     ...     first = session.make_executor(scan())
     ...     second = session.make_executor(scan())
-    ...     await asyncio.gather(first.run(), second.run())
+    ...     await asyncio.gather(first, second)
     ...     return first.run_start_uids != second.run_start_uids, session.md["scan_id"]
     ...
     >>> asyncio.run(main())

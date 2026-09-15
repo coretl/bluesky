@@ -628,7 +628,7 @@ def test_a_trip_between_building_the_plan_and_running_it_still_holds():
         assert not executor._suspension.tripped
 
         session._suspension.trip("beam", "beam is down")
-        task = asyncio.ensure_future(executor.run())
+        task = asyncio.ensure_future(executor)
         await asyncio.sleep(0.3)
         held = list(steps)
 
