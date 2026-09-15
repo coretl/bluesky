@@ -4,7 +4,7 @@ import inspect
 import threading
 import typing
 import weakref
-from contextlib import ExitStack
+from contextlib import ExitStack, suppress
 from dataclasses import dataclass
 from datetime import datetime
 from functools import partial
@@ -412,6 +412,15 @@ class RunEngine:
         self._session.hooks.announce = print
         self._session.hooks.suspend = self._announce_suspension
         self._session.hooks.pause = self._blocking_event.set
+        # An executor's task exists from the moment it is built, which is
+        # before `_resume_task` has entered the context managers that install
+        # SigintHandler. This hook is how the plan is held in the gap, and it
+        # starts shut: every executor this engine builds is held at it, and
+        # only `__call__` ever opens it. The empty one built below, and the one
+        # `reset` puts in its place, are held there for their whole lives --
+        # which is how they report 'idle' and hold nothing, as they claim to.
+        self._start_permitted = asyncio.Event()
+        self._session.hooks.start = self._start_permitted.wait
 
         if context_managers is None:
             context_managers = [SigintHandler]
@@ -439,7 +448,7 @@ class RunEngine:
         # headless caller may keep several. Built empty here rather than left
         # None so that "no plan yet" is not a third state every caller has to
         # reason about: it reports 'idle', which is what it means.
-        self._executor = self.__on_loop(partial(self._session.make_executor, []))
+        self._executor = self._session._idle_executor()
 
         # aliases for back-compatibility
         self.subscribe_lossless = self.dispatcher.subscribe
@@ -708,15 +717,21 @@ class RunEngine:
     def call_returns_result(self):
         return self._call_returns_result
 
-    def _new_executor(self, plan=(), *, metadata=None, subs=None):
+    def _new_executor(self, plan=None, *, metadata=None, subs=None):
         """Start a fresh executor, discarding the state of the previous plan.
 
         Building a new one is how the caches are cleared: there is no list of
         things to remember to reset. The session owns the construction, and
         tears down the previous plan's temporary subscriptions as it goes.
 
-        The default empty plan is what the deprecated cache-clearing methods
-        below want: an executor that reports 'idle' and holds nothing.
+        With no plan -- which is what `reset` and the deprecated cache-clearing
+        methods below want -- the new one has nothing running and no task:
+        somewhere to read 'idle' off, not a plan waiting to go.
+
+        With one, the plan is under way as soon as it is built, and held at
+        `PlanHooks.start` until `__call__` releases it. Either way the task
+        belonging to the executor being replaced is cancelled here, since
+        nothing else will ever await it.
         """
         # One plan at a time is this engine's rule, not the session's: a
         # session may have several executors running for a headless caller,
@@ -728,12 +743,59 @@ class RunEngine:
                 f"{self._executor!r} is still running a plan, in the "
                 f"'{self._executor.state}' state. A RunEngine runs one plan at a time."
             )
+
+        async def build():
+            # All of this on the loop, in one crossing. Nothing yields to the
+            # loop between the new task's creation and the callback going on,
+            # so the plan cannot have got anywhere before either is arranged.
+            #
+            # Shut first, so the new plan is held from birth. Only `__call__`
+            # opens it, so an executor built for a reset is held for good --
+            # which is why there is one with no task at all to build instead.
+            self._start_permitted.clear()
+            outgoing = self._executor._task
+            if outgoing is not None and not outgoing.done():
+                # A held task is nobody's to await and would outlive the
+                # executor that owns it. Waited for rather than just asked, so
+                # that nothing is left half-cancelled behind a plan that is
+                # about to start.
+                #
+                # Only one that has not finished: awaiting a finished task
+                # re-raises whatever ended it, and the plan before this one is
+                # allowed to have failed -- that is the caller's news, already
+                # delivered, not this plan's problem. The guard above means an
+                # unfinished one is held at the gate, so cancelling it can end
+                # only one way.
+                outgoing.cancel()
+                with suppress(asyncio.CancelledError):
+                    await outgoing
+            if plan is None:
+                return self._session._idle_executor(), None
+            executor = self._session.make_executor(plan, metadata=metadata, subs=subs)
+
+            # The main thread cannot read an asyncio Task, so the plan's
+            # outcome is carried over to a future it can read. This is what
+            # `_build_task` used to keep, and the reason it was allowed to
+            # cross without waiting.
+            reachable: concurrent.futures.Future = concurrent.futures.Future()
+
+            def finished(task: asyncio.Task) -> None:
+                if task.cancelled():
+                    reachable.cancel()
+                elif task.exception() is not None:
+                    reachable.set_exception(task.exception())
+                else:
+                    reachable.set_result(task.result())
+                self._blocking_event.set()
+
+            executor._task.add_done_callback(finished)
+            return executor, reachable
+
         # Built on the loop, like every other session call this engine makes.
         # `__on_loop` re-raises on this thread, so a malformed plan still raises
         # where the caller can catch it -- which is the whole reason the plan is
         # loaded before the run begins rather than inside it.
-        self._executor = self.__on_loop(partial(self._session.make_executor, plan, metadata=metadata, subs=subs))
-        self._task_fut = None
+        self._executor, self._task_fut = self.__on_loop(build())
 
     def reset(self):
         """
@@ -909,26 +971,17 @@ class RunEngine:
         self._announce_tripped(self._session.suspensions, "begin")
 
         # Building the executor loads the plan, so a malformed one raises on
-        # this thread rather than inside the loop.
+        # this thread rather than inside the loop. The plan is under way from
+        # here, held at `PlanHooks.start` until `_release_plan` below.
         self._new_executor(plan, metadata=metadata_kw, subs=subs)
         self.log.info("Executing plan %r", plan)
 
-        def _build_task():
-            # The one crossing that keeps the future rather than the result.
-            # `_resume_task` waits on `_blocking_event` instead, because that
-            # wait has to be interruptible by Ctrl-C and a future's is not.
-            self._blocking_event.clear()
-            self._task_fut = asyncio.run_coroutine_threadsafe(
-                self._executor.run(),
-                loop=self.loop,
-            )
+        def _release_plan():
+            # Inside _resume_task's context managers, so SigintHandler is
+            # installed before the plan can reach its first message.
+            self.__on_loop(self._start_permitted.set)
 
-            def set_blocking_event(future):
-                self._blocking_event.set()
-
-            self._task_fut.add_done_callback(set_blocking_event)
-
-        plan_return = self._resume_task(init_func=_build_task)
+        plan_return = self._resume_task(init_func=_release_plan)
 
         if self._executor.interrupted:
             raise RunEngineInterrupted(self.pause_msg) from None

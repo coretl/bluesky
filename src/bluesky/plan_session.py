@@ -319,6 +319,23 @@ class PlanSession:
         # executor arranges that for itself.
         suspension = Suspension("plan", self._loop, parent=self._suspension)
 
+        executor = self._build(plan, suspension, metadata=metadata, subs=subs)
+        executor._begin()
+        return executor
+
+    def _idle_executor(self) -> "PlanExecutor":
+        """An executor with no plan running, for a caller that needs one to read.
+
+        A `RunEngine` keeps one between plans so that "no plan yet" is not a
+        third state every caller has to reason about: it reports 'idle', which
+        is what it means. It is never begun, because nothing would await it and
+        a task parked for good would leave an object holding a plan that never
+        ran.
+        """
+        return self._build((), Suspension("plan", self._loop, parent=self._suspension))
+
+    def _build(self, plan, suspension, *, metadata=None, subs=None) -> "PlanExecutor":
+        """Compose an executor for ``plan``, without setting it going."""
         return PlanExecutor(
             plan,
             # Built fresh for this plan, from the settings as they stand right

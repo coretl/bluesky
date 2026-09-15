@@ -63,6 +63,24 @@ def test_the_old_import_location_still_works():
     assert run_engine.PlanExecutor is PlanExecutor
 
 
+def _look_at_a_fresh_executor(session, look, plan=()):
+    """Build an executor on the session's loop and hand ``look`` the result.
+
+    Building one starts its plan, so a test that only wants to inspect a fresh
+    executor does it here: nothing yields to the loop between the build and the
+    look, and the task is cancelled rather than left to run.
+    """
+
+    async def main():
+        executor = session.make_executor(plan)
+        try:
+            return look(executor)
+        finally:
+            executor._task.cancel()
+
+    return session._loop.run_until_complete(main())
+
+
 def test_executor_holds_no_threading_primitives(idle_session):
     """The executor is single threaded by construction.
 
@@ -70,14 +88,15 @@ def test_executor_holds_no_threading_primitives(idle_session):
     locks. If this fails, something that belongs to the RunEngine, which is
     the only thread-aware object of the three, has leaked down into it.
     """
-    executor = idle_session.make_executor([])
 
-    offenders = {
-        name: type(value).__name__
-        for name, value in vars(executor).items()
-        if isinstance(value, THREADING_PRIMITIVES)
-    }
-    assert offenders == {}
+    def look(executor):
+        return {
+            name: type(value).__name__
+            for name, value in vars(executor).items()
+            if isinstance(value, THREADING_PRIMITIVES)
+        }
+
+    assert _look_at_a_fresh_executor(idle_session, look) == {}
 
 
 @pytest.mark.parametrize("cls", [PlanSession, PlanExecutor])
@@ -141,14 +160,13 @@ def test_every_hop_onto_the_loop_is_one_of_the_few_we_mean():
     assert _crossings("plan_executor.py") == {"done_callback"}
     # Only the signal's own callback.
     assert _crossings("suspenders.py") == {"__call__"}
-    # The facade crosses for everyone, which is why it may cross at all -- but
-    # through one implementation, so that "where does a thread reach the loop"
-    # keeps a short answer. `_build_task` is the single exception, and is one
-    # because it wants the future rather than the result: the wait that matters
-    # for a running plan is `_resume_task` blocking on `_blocking_event`, which
-    # Ctrl-C can interrupt where waiting on a future cannot.
-    # One crossing, plus the plan task.
-    assert _crossings("run_engine.py") == {"_run_on", "_build_task"}
+    # The facade crosses for everyone, which is why it may cross at all -- and
+    # now through one implementation with no exceptions, so that "where does a
+    # thread reach the loop" has a one-word answer. `_build_task` used to be
+    # the second, because it wanted the future rather than the result; the plan
+    # task is built on the loop with the rest of the executor now, and the
+    # future the main thread reads is filled in from its done callback.
+    assert _crossings("run_engine.py") == {"_run_on"}
 
 
 def test_a_suspender_holds_no_threading_primitives():
@@ -659,22 +677,37 @@ def test_executor_starts_empty():
         session = PlanSession()
         first = session.make_executor([Msg("open_run"), Msg("close_run")])
         await first.run()
-        return first, session.make_executor([])
+        # Read before yielding: building the second one started its plan, and
+        # what is being asserted is what it was *born* with.
+        second = session.make_executor([])
+        try:
+            return (
+                first,
+                second,
+                {
+                    name: getattr(second, name)
+                    for name in ("run_start_uids", "exit_status", "_exception", "_msg_cache", "_objs_seen")
+                },
+                len(second._plan_stack),
+                dict(second._run_bundlers),
+            )
+        finally:
+            second._task.cancel()
 
-    first, second = asyncio.run(main())
-    assert first.run_start_uids and not second.run_start_uids
-    assert second.exit_status == "success"
-    assert second._exception is None
+    first, second, born, plan_stack_depth, run_bundlers = asyncio.run(main())
+    assert first.run_start_uids and not born["run_start_uids"]
+    assert born["exit_status"] == "success"
+    assert born["_exception"] is None
     # the caches themselves are private; this is the point of the class, so
     # reach in rather than let it go untested
-    assert not second._msg_cache
-    assert not second._objs_seen
-    assert not second._run_bundlers
+    assert not born["_msg_cache"]
+    assert not born["_objs_seen"]
+    assert not run_bundlers
     # The plan stack is not empty, and must not be: an executor is built for a
     # plan, so its own plan is on the stack from construction. What matters is
     # that the *previous* plan left nothing behind, which is what the emptied
     # caches above show.
-    assert len(second._plan_stack) == 1
+    assert plan_stack_depth == 1
 
 
 def test_run_engine_keeps_its_executor_after_the_plan(RE):
@@ -757,11 +790,17 @@ def test_ignore_callback_exceptions_is_read_live_by_a_plan(RE):
     well as every plan after it.
     """
     RE.ignore_callback_exceptions = True
-    executor = RE._session.make_executor([Msg("null")])
-    assert executor._dispatcher.ignore_exceptions is True
+    # The engine's own route to a new executor: built on the loop, and held at
+    # `hooks.start` so its plan cannot run while the flag is read off it.
+    RE._new_executor([Msg("null")])
+    assert RE._executor._dispatcher.ignore_exceptions is True
 
     RE.ignore_callback_exceptions = False
-    assert executor._dispatcher.ignore_exceptions is False
+    assert RE._executor._dispatcher.ignore_exceptions is False
+
+    # Nothing is going to run that plan: put an idle executor back in its
+    # place, which is what discards the one held here.
+    RE._new_executor()
 
 
 def test_re_class_answers_for_whoever_is_driving(RE):

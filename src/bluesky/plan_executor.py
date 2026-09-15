@@ -367,7 +367,10 @@ class PlanHooks:
     state: Callable = do_nothing
     announce: Callable[[str], None] = do_nothing
     suspend: Callable[[typing.Mapping[typing.Hashable, SuspensionReason]], None] = do_nothing
-    start: Callable[[], SyncOrAsync[None]] = do_nothing
+    # Whatever it returns is discarded -- `asyncio.Event.wait`, which is what a
+    # `RunEngine` sets here, returns True -- so only the shape matters: no
+    # arguments, and awaitable or not as the implementer likes.
+    start: Callable[[], SyncOrAsync[typing.Any]] = do_nothing
     pause: Callable[[], None] = do_nothing
 
     def __setattr__(self, name: str, value) -> None:
@@ -484,16 +487,17 @@ class PlanExecutor:
         # When set, done callbacks from status objects belonging to this plan
         # stop reporting failures: the plan they belong to is over.
         self._pardon_failures = asyncio.Event()
-        # run() may only be entered once. A finished executor is 'idle' again,
-        # so its state cannot tell a spent one from a fresh one.
-        self._spent = False
 
+        # The task running this plan, built at the end of __init__. One plan
+        # per executor is structural now: there is one task and it is entered
+        # once, so nothing has to guard against a second run.
+        #
         # Reached for by name through RunEngine._task, which bluesky's own
         # tests use to cancel a plan (test_run_engine.py). Private because
         # cancelling the task behind a plan's back is not a supported way to
         # stop one -- halt() is -- and the forward exists so those call sites
         # keep working, not because they are a good idea.
-        self._task: asyncio.Task | None = None  # the task running this plan
+        self._task: asyncio.Task | None = None
         self._plan_stack: deque[typing.Any] = deque()  # generators to work off of
         self._response_stack: deque[typing.Any] = deque()  # responses to send into them
         # Processed msgs, for rewinding. None once a 'clear_checkpoint' has
@@ -582,6 +586,22 @@ class PlanExecutor:
         for wrapper_func in preprocessors:
             gen = wrapper_func(gen)
         self._push_plan(gen)
+
+    def _begin(self) -> None:
+        """Set this plan going, as the session does the moment it is built.
+
+        Creating the task is what makes this object a handle to a plan under
+        way rather than a plan waiting to be started: `run` awaits it, `pause`
+        and `stop` steer it. It cannot reach the plan's first message before
+        the loop next yields, and `PlanHooks.start` holds it there for anyone
+        who needs that moment -- a `RunEngine` has a signal handler to install.
+
+        Separate from ``__init__`` for the one caller that wants an executor
+        with nothing running: a `RunEngine` keeps one between plans, to answer
+        for the state of a plan it does not have, and a task parked forever
+        would make that an object holding a plan that never ran.
+        """
+        self._task = asyncio.create_task(self._run())
 
     # The hooks are the session's; firing one, and checking whether it is set
     # at all, belongs to whoever has something to report -- which for all three
@@ -829,9 +849,9 @@ class PlanExecutor:
             _span.end()
 
     async def run(self):
-        """Execute the plan this executor was built for.
+        """Wait for the plan this executor was built for, and say what it returned.
 
-        Awaiting this is all that is needed to run a plan::
+        The plan is already under way; this waits for it::
 
             executor = session.make_executor(plan)
             result = await executor.run()
@@ -840,14 +860,11 @@ class PlanExecutor:
         -------
         The value the plan returned, or :data:`NO_PLAN_RETURN` if it did not
         run to completion.
+        """
+        return await self._task
 
-        Raises
-        ------
-        RuntimeError
-            If called twice. An executor is for one plan; caches like
-            ``run_start_uids`` and ``_pardon_failures`` are never reset, so a
-            second run would accumulate uids and silently pardon the second
-            plan's status failures.
+    async def _run(self):
+        """Run the plan, as the task built for it in ``__init__``.
 
         Notes
         -----
@@ -860,16 +877,6 @@ class PlanExecutor:
         - Try to remove any monitoring subscriptions left on by the plan.
         - If interrupting the middle of a run, try to emit a RunStop document.
         """
-        if self._spent:
-            raise RuntimeError(
-                f"{self!r} has already run its plan. Build another executor: one executor runs one plan."
-            )
-        self._spent = True
-        # grab the current task.  We need to do this here because the
-        # object returned by `run_coroutine_threadsafe` is a future
-        # that acts as a proxy that does not have the correct behavior
-        # when `.cancel` is called on it.
-        self._task = asyncio.current_task(self._env.loop)
         # Before the permission is arranged and before the state leaves 'idle',
         # so that whoever is holding the plan here is holding an executor that
         # has not started, and a suspender tripping meanwhile is arranged for
