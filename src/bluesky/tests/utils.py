@@ -128,7 +128,7 @@ def suspend_until(RE, fut, *, pre_plan=None, post_plan=None, justification=None)
     key = object()
 
     async def begin():
-        suspension = RE._executor._suspension
+        suspension = RE._runner._suspension
         suspension.trip(key, justification or "", pre_plan=pre_plan, post_plan=post_plan)
 
         async def release():
@@ -149,7 +149,7 @@ def force_suspension(RE, *, pre_plan=None, post_plan=None, justification=None):
     """Put a suspension in front of ``RE``'s plan without tripping anything.
 
     Not a supported route: it reaches past the suspension straight into the
-    executor, so the reason is not in ``RE.suspensions``, does not merge with a
+    runner, so the reason is not in ``RE.suspensions``, does not merge with a
     suspender's, and never reaches the supervisor -- which is the point, since
     the supervisor arranges nothing while a plan is paused and this must, to
     test what a pre-plan does on resume.
@@ -167,6 +167,6 @@ def force_suspension(RE, *, pre_plan=None, post_plan=None, justification=None):
     opening = {object(): SuspensionReason(justification or "", pre_plan, post_plan)}
 
     async def begin():
-        RE._executor._begin_suspension(opening)
+        RE._runner._begin_suspension(opening)
 
     return asyncio.run_coroutine_threadsafe(begin(), RE.loop)

@@ -18,7 +18,7 @@ class Dispatcher:
     these with the session's as its ``parent``, so that a document reaches the
     subscribers outliving the plan before the ones that arrived with it -- the
     order a single shared registry gave by construction -- and so that dropping
-    the executor drops its subscriptions. Whoever emits a document hands it to
+    the runner drops its subscriptions. Whoever emits a document hands it to
     one dispatcher and the chain does the rest.
     """
 

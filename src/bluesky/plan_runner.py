@@ -1,6 +1,6 @@
 """The environment plans run in, and the execution of a single plan.
 
-See :class:`PlanSession` and :class:`PlanExecutor`. A `bluesky.run_engine.RunEngine`
+See :class:`PlanSession` and :class:`PlanRunner`. A `bluesky.run_engine.RunEngine`
 composes the two and drives them from a terminal on the main thread.
 """
 
@@ -66,7 +66,7 @@ __all__ = [
     "UNCACHEABLE_COMMANDS",
     "Dispatcher",
     "LoggingPropertyMachine",
-    "PlanExecutor",
+    "PlanRunner",
     "RunEngineMetadata",
     "RunEngineStateMachine",
     "WaitForTimeoutError",
@@ -74,7 +74,7 @@ __all__ = [
 ]
 
 # TODO: rename this; tracked by #2054. Inaccurate since the split, because
-# these spans are emitted by the executor, which runs plans with no RunEngine
+# these spans are emitted by the runner, which runs plans with no RunEngine
 # in the process. Held anyway, because span names are the query surface --
 # renaming would silently stop every saved query and dashboard built on the old
 # ones from matching -- and because they are documented in
@@ -266,24 +266,24 @@ def _default_md_normalizer(md: RunEngineMetadata) -> RunEngineMetadata:
 class PlanEnvironment:
     """Everything a plan needs to know about where it is being run.
 
-    Frozen: an executor is built for one plan, and what it was told as it was
+    Frozen: a runner is built for one plan, and what it was told as it was
     built is what that plan sees to the end. Changing a setting on the
     `PlanSession` therefore takes effect for the *next* plan, not the running
-    one. Everything here is read by the executor while its plan runs.
+    one. Everything here is read by the runner while its plan runs.
 
     Attributes
     ----------
     loop
         The event loop plans are executed on.
     log
-        Where the executor logs to.
+        Where the runner logs to.
     md
-        The metadata this plan runs under, snapshotted as its executor was
+        The metadata this plan runs under, snapshotted as its runner was
         built. A plain ``dict``, copied from whatever the session holds -- a
         `bluesky.utils.PersistentDict` is a supported choice there, and only
         its contents are copied, never the store itself.
     next_scan_id
-        Called by the executor as each run opens, and returns the ``scan_id``
+        Called by the runner as each run opens, and returns the ``scan_id``
         for that run. Reaches past the snapshot on purpose: the counter is
         durable, so the session computes it, stores it in its own ``md`` as the
         starting point for the next one, and returns it; concurrent callers are
@@ -322,7 +322,7 @@ class PlanHooks:
     Every hook is callable, and an unset one is `do_nothing` rather than
     ``None``; assigning ``None`` is how a caller says nobody is listening.
 
-    Mutable, and shared by reference with every executor a session builds --
+    Mutable, and shared by reference with every runner a session builds --
     the opposite guarantee to `PlanEnvironment` -- so setting ``RE.msg_hook``
     while a plan is running takes effect on *that* plan.
 
@@ -353,11 +353,11 @@ class PlanHooks:
         `RunEngine` uses this to hold the plan until its signal handler is
         installed; a headless caller has none to install and can leave it unset.
 
-        The only hook the executor *waits* on rather than tells: one that
+        The only hook the runner *waits* on rather than tells: one that
         returns late holds the plan late, and one that never returns never
         starts it.
     pause
-        Called with no arguments when an executor comes to rest paused. A
+        Called with no arguments when a runner comes to rest paused. A
         `RunEngine` uses this to release the main thread; a headless caller has
         no thread to release and can leave it unset.
     """
@@ -384,10 +384,10 @@ class PlanHooks:
         super().__setattr__(name, do_nothing if value is None else value)
 
 
-class PlanExecutor:
+class PlanRunner:
     """Executes one plan, which may contain any number of runs.
 
-    An executor owns everything belonging to one plan's execution: the stack of
+    A runner owns everything belonging to one plan's execution: the stack of
     generators being worked off, the messages cached for rewinding, the devices
     seen and staged, and the status objects being waited on. It is built for a
     plan and discarded after it.
@@ -398,15 +398,15 @@ class PlanExecutor:
     own thread and reaches ``emit`` directly, so a document can be given to
     subscribers off the loop. See its docstring.
 
-    Prefer :meth:`PlanSession.make_executor` to constructing one directly: a
-    session must know which executor is running, because that is how a
+    Prefer :meth:`PlanSession.start` to constructing one directly: a
+    session must know which runner is running, because that is how a
     suspender reaches the plan in progress.
 
     Parameters
     ----------
     plan : iterable of Msg
-        The plan to execute. Taken here rather than by :meth:`run` so that an
-        executor is structurally for one plan: there is no second plan to hand
+        The plan to execute. Taken at construction so that a runner is
+        structurally for one plan: there is no second plan to hand
         it. ``env``'s preprocessors are applied to it now, so a malformed plan
         raises on the calling thread rather than inside the task.
     env : PlanEnvironment
@@ -433,7 +433,7 @@ class PlanExecutor:
         ``Msg('RE_class')`` reports the class of. A plan is executed by one of
         these, but what a user recognises in their logs is the long-lived
         `RunEngine` driving them, so whoever is driving names itself. Defaults
-        to this executor, which is what a headless caller wants. The hook that
+        to this runner, which is what a headless caller wants. The hook that
         *watches* state changes is ``hooks.state``.
     commands : mapping, optional
         Extra `Msg` commands, composed over the built-ins. A session passes the
@@ -451,7 +451,7 @@ class PlanExecutor:
         What :attr:`rewindable` starts at. The plan then owns it and changes it
         constantly -- see `bluesky.preprocessors` -- so this is an argument
         rather than part of the environment: the session's default is read once,
-        at construction, and the live value lives on this executor.
+        at construction, and the live value lives on this runner.
     """
 
     _state = LoggingPropertyMachine(RunEngineStateMachine)
@@ -489,7 +489,7 @@ class PlanExecutor:
         self._pardon_failures = asyncio.Event()
 
         # The task running this plan, built at the end of __init__. One plan
-        # per executor is structural now: there is one task and it is entered
+        # per runner is structural now: there is one task and it is entered
         # once, so nothing has to guard against a second run.
         #
         # Reached for by name through RunEngine._task, which bluesky's own
@@ -510,7 +510,7 @@ class PlanExecutor:
         # live value is plan state and must not outlive the plan.
         self._rewindable_flag: bool = initially_rewindable
 
-        # Materialise this executor's state machine while this is still the
+        # Materialise this runner's state machine while this is still the
         # only thread with a reference, so that no later read from another
         # thread can race the WeakKeyDictionary insertion. Every write after
         # this happens on the event loop, which is why it needs no lock.
@@ -518,7 +518,7 @@ class PlanExecutor:
 
         # Subscriptions that last only as long as this plan. Making the
         # lifetime structural means teardown is nothing more than dropping this
-        # executor, and it gives plan tokens a namespace of their own, so a
+        # runner, and it gives plan tokens a namespace of their own, so a
         # plan cannot unsubscribe a session callback by guessing an integer.
         # Ordering documents against the session's subscribers is the
         # dispatcher's own business, through its parent.
@@ -536,7 +536,7 @@ class PlanExecutor:
         self.run_start_uids: list[typing.Any] = []  # RunStart uids generated
         self._run_tracing_spans: list[Span] = []  # open tracing spans
 
-        # The suspenders this plan installs for itself, which this executor
+        # The suspenders this plan installs for itself, which this runner
         # owns outright and which write to the suspension just below. The durable
         # ones are the session's: they hold this plan up through the suspension
         # chain, so there is nothing to keep a copy of here -- and a copy would
@@ -578,12 +578,12 @@ class PlanExecutor:
         self._command_registry = self._build_command_registry(commands, without_commands)
 
         # Load the plan last, so that a preprocessor seeing a half-built
-        # executor is not a thing that can happen.
+        # runner is not a thing that can happen.
         self._plan = plan  # this ref is just used for metadata introspection
         if plan is None:
             # Nothing to run, so nothing runs: no plan on the stack and no
             # task. The one caller who wants this is a `RunEngine`, which keeps
-            # an executor between plans to answer for the state of a plan it
+            # a runner between plans to answer for the state of a plan it
             # does not have. Giving that one a task would park a coroutine for
             # the life of the engine and leave an object holding a plan that
             # never ran, which is exactly what this class must not do.
@@ -595,7 +595,7 @@ class PlanExecutor:
             gen = wrapper_func(gen)
         self._push_plan(gen)
 
-        # Last of all: there is a plan, the executor is whole, so it goes.
+        # Last of all: there is a plan, the runner is whole, so it goes.
         # Creating the task here is what makes this object a handle to a plan
         # under way rather than one waiting to be started -- `run` awaits it,
         # `pause` and `stop` steer it. It cannot reach the plan's first message
@@ -605,7 +605,7 @@ class PlanExecutor:
 
     # The hooks are the session's; firing one, and checking whether it is set
     # at all, belongs to whoever has something to report -- which for all three
-    # of these is the executor.
+    # of these is the runner.
 
     def _on_state_change(self, value, old_value) -> None:
         """Say that this plan changed state, in the name of whoever drives it."""
@@ -761,7 +761,7 @@ class PlanExecutor:
     def rewindable(self) -> bool:
         """Whether messages may be replayed on a rewind.
 
-        Owned by this executor and seeded from the session's default, because
+        Owned by this runner and seeded from the session's default, because
         plans change it for their own duration -- see
         `bluesky.preprocessors.rewindable_wrapper`, which every
         ``trigger_and_read`` on a non-rewind-safe device goes through.
@@ -798,7 +798,7 @@ class PlanExecutor:
     def state(self):
         """This plan's state. One of {'idle', 'running', 'paused', ...}.
 
-        Belongs to the executor rather than the session because every non-idle
+        Belongs to the runner rather than the session because every non-idle
         value describes one plan's execution: `pausing`, `suspending`,
         `aborting`, `stopping` and `halting` all mean that somebody outside the
         run loop has asked *this* plan to stop.
@@ -854,8 +854,8 @@ class PlanExecutor:
         The plan is already under way, so this waits for it rather than
         starting it::
 
-            executor = session.make_executor(plan)
-            result = await executor
+            runner = session.start(plan)
+            result = await runner
 
         What comes back is the plan's return value, or :data:`NO_PLAN_RETURN`
         if it did not run to completion. Awaiting twice is allowed and answers
@@ -888,7 +888,7 @@ class PlanExecutor:
         - If interrupting the middle of a run, try to emit a RunStop document.
         """
         # Before the permission is arranged and before the state leaves 'idle',
-        # so that whoever is holding the plan here is holding an executor that
+        # so that whoever is holding the plan here is holding a runner that
         # has not started, and a suspender tripping meanwhile is arranged for
         # when it does. Outside the try below: a cancel while waiting here ends
         # a plan that never ran, and must not be reported as one that aborted.
@@ -1368,7 +1368,7 @@ class PlanExecutor:
 
         ``finalize`` says whether the plan may run its own cleanup -- the
         ``finally`` of a `bluesky.preprocessors.finalize_wrapper`, say. It does
-        not gate this executor's teardown, which always runs: stopping movables,
+        not gate this runner's teardown, which always runs: stopping movables,
         clearing monitors, unstaging, closing runs. The plan is stopped from
         cleaning up by *what is thrown into it*: `PlanHalt` is a `GeneratorExit`,
         so the plan cannot yield again once it arrives.
@@ -1519,7 +1519,7 @@ class PlanExecutor:
             raise IllegalMessageSequence("A 'close_run' message was not received before the 'open_run' message")
 
         # A run is opening, so ask for its scan id. Used as given, rather than
-        # read back out of md: another executor may be opening a run on this
+        # read back out of md: another runner may be opening a run on this
         # same session, and md holds whichever id was handed out last.
         scan_id = await maybe_await(self._env.next_scan_id())
 
@@ -2303,11 +2303,11 @@ class PlanExecutor:
 
     # The built-in vocabulary, as command name -> the method that handles it.
     # The methods themselves, so that following one is a click rather than a
-    # search, and unbound so that the table can be read without an executor to
+    # search, and unbound so that the table can be read without a runner to
     # bind to: `PlanSession.commands` reports what the next plan will
-    # understand, and it holds no executor to ask. Defined below the handlers
+    # understand, and it holds no runner to ask. Defined below the handlers
     # because a class body cannot name a method it has not reached yet.
-    _DEFAULT_COMMANDS: typing.ClassVar[dict[str, Callable[["PlanExecutor", Msg], Awaitable[typing.Any]]]] = {
+    _DEFAULT_COMMANDS: typing.ClassVar[dict[str, Callable[["PlanRunner", Msg], Awaitable[typing.Any]]]] = {
         "declare_stream": _declare_stream,
         "create": _create,
         "save": _save,
@@ -2353,7 +2353,7 @@ class PlanExecutor:
     ) -> dict[str, Callable[[Msg], Awaitable[typing.Any]]]:
         """The vocabulary this plan understands, composed once.
 
-        The built-ins bound to this executor, then whatever was registered on
+        The built-ins bound to this runner, then whatever was registered on
         top, less whatever was unregistered. Composed here and never again: a
         plan's meaning must not change under it, and nothing can change it from
         inside, since no `Msg` reaches the registry. Registering a command

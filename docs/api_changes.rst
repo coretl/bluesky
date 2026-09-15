@@ -22,14 +22,14 @@ Added
 Fixed
 -----
 
-- A plan is held when a condition goes bad between the executor being built and
+- A plan is held when a condition goes bad between the runner being built and
   the plan starting.  Whether the suspension was tripped was read twice, once when
-  the executor was built and once when the plan started, and the two readings
+  the runner was built and once when the plan started, and the two readings
   could disagree: a condition tripping in between left the plan with nothing
   holding it and a supervisor that believed it was already being held, so the
   plan ran to completion through a tripped suspender.  One reading now decides
   both.  The window is brief through ``RunEngine.__call__`` and as wide as it
-  likes for a caller holding an executor of its own.
+  likes for a caller holding a runner of its own.
 - A suspension no longer duplicates the documents from a monitored signal.
   Resuming from one re-subscribed every monitor, having never unsubscribed
   them: monitors run throughout a suspension, and only a *pause* stops them.
@@ -145,7 +145,7 @@ Changed
   post-plans run in the reverse order, so **pre- and post-plans should be
   idempotent**.
 - Returning from a pause is now like returning from idle.  While a plan is
-  paused the executor arranges nothing: a condition going bad trips the
+  paused the runner arranges nothing: a condition going bad trips the
   suspension and does no more, and no pre-plan runs, because control has gone back
   to the user and something else may be using the beamline.  On ``resume`` the
   plan then *waits* for every condition to clear rather than suspending around
@@ -169,13 +169,13 @@ Changed
   counter is durable and two plans must never be handed the same id.  Whatever
   mapping ``RE.md`` is -- a ``PersistentDict``, say -- stays where it is; only
   its contents are copied.
-- The executor no longer prints.  Two new hooks carry what it used to say:
+- The runner no longer prints.  Two new hooks carry what it used to say:
   ``hooks.announce``, called with a line about what happened, and
   ``hooks.suspend``, called as a suspension begins with the reasons standing,
   keyed by whoever raised them.  A ``RunEngine`` wires the first to ``print``
   and joins and renders the second itself, so nothing changes at a prompt.  A headless ``PlanSession`` leaves
   both unset and is silent unless it sets them, which is what lets a service
-  route them somewhere that is not a terminal: nothing the executor says now
+  route them somewhere that is not a terminal: nothing the runner says now
   tells anyone which key to press, since only a ``RunEngine`` and
   ``SigintHandler`` know a keyboard is attached.
 - ``RunEngine.commands`` returns a sorted tuple of command names rather than a

@@ -22,11 +22,11 @@ from .dispatcher import Dispatcher, DocumentNames  # noqa: F401
 from .log import ComposableLogAdapter, logger
 
 # Re-exported as well, for the same reason.
-from .plan_executor import (  # noqa: F401
+from .plan_runner import (  # noqa: F401
     NO_PLAN_RETURN,
     UNCACHEABLE_COMMANDS,
     LoggingPropertyMachine,
-    PlanExecutor,
+    PlanRunner,
     RunEngineMetadata,
     RunEngineStateMachine,
     WaitForTimeoutError,
@@ -56,7 +56,7 @@ from .utils import (
 )
 
 # What this module defines, plus the names it has always passed through from
-# bluesky.utils and event_model. The names that moved to plan_executor are
+# bluesky.utils and event_model. The names that moved to plan_runner are
 # exported from there, not here.
 __all__ = [
     "MAX_DEPTH_EXCEEDED_ERR_MSG",
@@ -327,7 +327,7 @@ class RunEngine:
         # trumps whatever the plan's state machine last recorded.
         if self._is_panicked:
             return _PANICKED_STATE
-        return self._executor.state
+        return self._runner.state
 
     @property
     def deferred_pause_requested(self):
@@ -343,7 +343,7 @@ class RunEngine:
         boolean
             Indicates if deferred pause was requested, but not processed.
         """
-        return self._executor.deferred_pause_requested
+        return self._runner.deferred_pause_requested
 
     def __init__(
         self,
@@ -389,7 +389,7 @@ class RunEngine:
             log=log,
             # Honour a RunBundler overridden on a RunEngine subclass, and name
             # this RunEngine as what a plan's state changes happen to and what
-            # Msg('RE_class') reports, rather than the executor that happens to
+            # Msg('RE_class') reports, rather than the runner that happens to
             # be running the plan.
             run_bundler_cls=type(self).RunBundler,
             identity=self,
@@ -407,15 +407,15 @@ class RunEngine:
         # reached and one of the four arriving by another route would say
         # otherwise. A headless caller has no thread to release and leaves it
         # unset.
-        # The executor says what happened; this is the half that knows a
+        # The runner says what happened; this is the half that knows a
         # terminal is watching, and so the only half that may say what to press.
         self._session.hooks.announce = print
         self._session.hooks.suspend = self._announce_suspension
         self._session.hooks.pause = self._blocking_event.set
-        # An executor's task exists from the moment it is built, which is
+        # A runner's task exists from the moment it is built, which is
         # before `_resume_task` has entered the context managers that install
         # SigintHandler. This hook is how the plan is held in the gap, and it
-        # starts shut: every executor this engine builds is held at it, and
+        # starts shut: every runner this engine builds is held at it, and
         # only `__call__` ever opens it. The empty one built below, and the one
         # `reset` puts in its place, are held there for their whole lives --
         # which is how they report 'idle' and hold nothing, as they claim to.
@@ -436,19 +436,19 @@ class RunEngine:
         self._call_returns_result = call_returns_result  # should __call__ return UIDs or plan value
         self._task_fut = None  # future proxy to the task running the plan
 
-        # Everything belonging to the execution of a single plan lives on an
-        # executor. A new one is built for each __call__ and kept afterwards,
+        # Everything belonging to the execution of a single plan lives on a
+        # runner. A new one is built for each __call__ and kept afterwards,
         # so that a paused plan can be resumed and a finished one inspected.
         # The forwarding properties installed at the bottom of this module
         # keep RE._msg_cache, RE._task and the rest pointing at it. The session
         # built one as it was constructed, so adopt that rather than replacing
         # it with an identical one.
-        # The session builds executors and hands them over; this engine keeps
+        # The session builds runners and hands them over; this engine keeps
         # exactly one, because it drives a plan from a single main thread. A
         # headless caller may keep several. Built empty here rather than left
         # None so that "no plan yet" is not a third state every caller has to
         # reason about: it reports 'idle', which is what it means.
-        self._executor = self._session._idle_executor()
+        self._runner = self._session._idle_runner()
 
         # aliases for back-compatibility
         self.subscribe_lossless = self.dispatcher.subscribe
@@ -667,14 +667,14 @@ class RunEngine:
         # default, which is what the next plan will start from -- and not the
         # last plan's parting value, which a plan aborted mid
         # rewindable_wrapper can leave False.
-        if not self._executor.state.is_idle:
-            return self._executor.rewindable
+        if not self._runner.state.is_idle:
+            return self._runner.rewindable
         return self._session.rewindable
 
     @rewindable.setter
     def rewindable(self, v):
         # Written to both: the session's default so it outlives this plan, and
-        # the running executor so it takes effect now. The executor's setter
+        # the running runner so it takes effect now. The runner's setter
         # discards the message cache if the value actually changed, which is
         # what stops a later pause replaying through what follows.
         #
@@ -684,7 +684,7 @@ class RunEngine:
         # second thread is not supported, and while a plan is running the
         # main thread is blocked inside __call__ and cannot get here anyway.
         self._session.rewindable = bool(v)
-        self._executor.rewindable = bool(v)
+        self._runner.rewindable = bool(v)
 
     @property
     def loop(self):
@@ -697,7 +697,7 @@ class RunEngine:
         The durable ones installed on this engine, plus any the running plan
         installed for itself, which last only as long as that plan.
         """
-        return tuple(set(self._session.suspenders) | set(self._executor.suspenders))
+        return tuple(set(self._session.suspenders) | set(self._runner.suspenders))
 
     @property
     def verbose(self):
@@ -717,8 +717,8 @@ class RunEngine:
     def call_returns_result(self):
         return self._call_returns_result
 
-    def _new_executor(self, plan=None, *, metadata=None, subs=None):
-        """Start a fresh executor, discarding the state of the previous plan.
+    def _new_runner(self, plan=None, *, metadata=None, subs=None):
+        """Start a fresh runner, discarding the state of the previous plan.
 
         Building a new one is how the caches are cleared: there is no list of
         things to remember to reset. The session owns the construction, and
@@ -730,18 +730,18 @@ class RunEngine:
 
         With one, the plan is under way as soon as it is built, and held at
         `PlanHooks.start` until `__call__` releases it. Either way the task
-        belonging to the executor being replaced is cancelled here, since
+        belonging to the runner being replaced is cancelled here, since
         nothing else will ever await it.
         """
         # One plan at a time is this engine's rule, not the session's: a
-        # session may have several executors running for a headless caller,
+        # session may have several runners running for a headless caller,
         # but a RunEngine has one main thread to block and one plan to block
-        # it for. Checked here, so that every route to a new executor -- a
+        # it for. Checked here, so that every route to a new runner -- a
         # call, a reset, the deprecated cache-clearing methods -- is covered.
-        if not self._executor.state.is_idle:
+        if not self._runner.state.is_idle:
             raise RuntimeError(
-                f"{self._executor!r} is still running a plan, in the "
-                f"'{self._executor.state}' state. A RunEngine runs one plan at a time."
+                f"{self._runner!r} is still running a plan, in the "
+                f"'{self._runner.state}' state. A RunEngine runs one plan at a time."
             )
 
         async def build():
@@ -750,13 +750,13 @@ class RunEngine:
             # so the plan cannot have got anywhere before either is arranged.
             #
             # Shut first, so the new plan is held from birth. Only `__call__`
-            # opens it, so an executor built for a reset is held for good --
+            # opens it, so a runner built for a reset is held for good --
             # which is why there is one with no task at all to build instead.
             self._start_permitted.clear()
-            outgoing = self._executor._task
+            outgoing = self._runner._task
             if outgoing is not None and not outgoing.done():
                 # A held task is nobody's to await and would outlive the
-                # executor that owns it. Waited for rather than just asked, so
+                # runner that owns it. Waited for rather than just asked, so
                 # that nothing is left half-cancelled behind a plan that is
                 # about to start.
                 #
@@ -770,8 +770,8 @@ class RunEngine:
                 with suppress(asyncio.CancelledError):
                     await outgoing
             if plan is None:
-                return self._session._idle_executor(), None
-            executor = self._session.make_executor(plan, metadata=metadata, subs=subs)
+                return self._session._idle_runner(), None
+            runner = self._session.start(plan, metadata=metadata, subs=subs)
 
             # The main thread cannot read an asyncio Task, so the plan's
             # outcome is carried over to a future it can read. This is what
@@ -788,14 +788,14 @@ class RunEngine:
                     reachable.set_result(task.result())
                 self._blocking_event.set()
 
-            executor._task.add_done_callback(finished)
-            return executor, reachable
+            runner._task.add_done_callback(finished)
+            return runner, reachable
 
         # Built on the loop, like every other session call this engine makes.
         # `__on_loop` re-raises on this thread, so a malformed plan still raises
         # where the caller can catch it -- which is the whole reason the plan is
         # loaded before the run begins rather than inside it.
-        self._executor, self._task_fut = self.__on_loop(build())
+        self._runner, self._task_fut = self.__on_loop(build())
 
     def reset(self):
         """
@@ -804,15 +804,15 @@ class RunEngine:
         Lossless subscriptions are not unsubscribed.
         """
         self._raise_if_panicked()
-        if self._executor.state != "idle":
+        if self._runner.state != "idle":
             self.halt()
-        self._new_executor()
+        self._new_runner()
         self.dispatcher.unsubscribe_all()
 
     @property
     def resumable(self):
         "i.e., can the plan in progress by rewound"
-        return self._executor.resumable
+        return self._runner.resumable
 
     @property
     def ignore_callback_exceptions(self):
@@ -866,7 +866,7 @@ class RunEngine:
         use the blocking `request_pause` below, which never returns if the
         event loop is wedged, and there is no public non-blocking equivalent.
         """
-        await self._executor.pause(defer)
+        await self._runner.pause(defer)
 
     def request_pause(self, defer=False):
         """
@@ -887,24 +887,24 @@ class RunEngine:
             False by default.
         """
         self._raise_if_panicked()
-        return self.__on_loop(self._executor.pause(defer))
+        return self.__on_loop(self._runner.pause(defer))
 
     def _create_result(self, plan_return) -> RunEngineResult:
         """Describe how the plan finished, to return from `__call__`.
 
-        Built here rather than by the executor: this is what *this* caller
-        returns, and a `PlanExecutor` may be driven by something that wants a
-        different shape, or none. The executor reports the parts -- what it
+        Built here rather than by the runner: this is what *this* caller
+        returns, and a `PlanRunner` may be driven by something that wants a
+        different shape, or none. The runner reports the parts -- what it
         ran, how it ended and why -- and whoever ran it decides what to make
         of them.
         """
         return RunEngineResult(
-            tuple(self._executor.run_start_uids),
+            tuple(self._runner.run_start_uids),
             plan_return,
-            self._executor.exit_status,
-            self._executor.interrupted,
-            self._executor.exit_reason,
-            self._executor.exit_exception,
+            self._runner.exit_status,
+            self._runner.interrupted,
+            self._runner.exit_reason,
+            self._runner.exit_exception,
         )
 
     def __call__(
@@ -962,18 +962,18 @@ class RunEngine:
                 raise RuntimeError(text)
 
         # If we are in the wrong state, raise.
-        if not self._executor.state.is_idle:
-            raise RuntimeError(f"The RunEngine is in a {self._executor.state} state")
+        if not self._runner.state.is_idle:
+            raise RuntimeError(f"The RunEngine is in a {self._runner.state} state")
 
         # An already-tripped suspender is holding the session's suspension, and
-        # `make_executor` puts the wait for it in front of the plan. All this
+        # `start` puts the wait for it in front of the plan. All this
         # adds is the heads-up, which only makes sense at a prompt.
         self._announce_tripped(self._session.suspensions, "begin")
 
-        # Building the executor loads the plan, so a malformed one raises on
+        # Building the runner loads the plan, so a malformed one raises on
         # this thread rather than inside the loop. The plan is under way from
         # here, held at `PlanHooks.start` until `_release_plan` below.
-        self._new_executor(plan, metadata=metadata_kw, subs=subs)
+        self._new_runner(plan, metadata=metadata_kw, subs=subs)
         self.log.info("Executing plan %r", plan)
 
         def _release_plan():
@@ -983,14 +983,14 @@ class RunEngine:
 
         plan_return = self._resume_task(init_func=_release_plan)
 
-        if self._executor.interrupted:
+        if self._runner.interrupted:
             raise RunEngineInterrupted(self.pause_msg) from None
 
         if self._call_returns_result:
             run_engine_result = self._create_result(plan_return)
             return run_engine_result
         else:
-            return tuple(self._executor.run_start_uids)
+            return tuple(self._runner.run_start_uids)
 
     def resume(self):
         """Resume a paused plan from the last checkpoint.
@@ -1006,30 +1006,30 @@ class RunEngine:
         self._raise_if_panicked()
 
         # The state machine does not capture the whole picture.
-        if not self._executor.state.is_paused:
+        if not self._runner.state.is_paused:
             raise TransitionError(
-                f"The RunEngine is the {self._executor.state} state. You can only resume for the paused state."
+                f"The RunEngine is the {self._runner.state} state. You can only resume for the paused state."
             )
 
         # `resume` waits for any condition that went bad while the plan was
         # paused, rather than suspending around it, so this call can block for
         # as long as the beam is down. Say so, as `__call__` does.
-        self._announce_tripped(self._executor.suspensions, "continue")
+        self._announce_tripped(self._runner.suspensions, "continue")
 
         def _release_plan():
             # Inside _resume_task's context managers, so that SigintHandler is
             # reinstalled before the plan is allowed to move again.
-            self.__on_loop(self._executor.resume())
+            self.__on_loop(self._runner.resume())
 
         plan_return = self._resume_task(init_func=_release_plan)
-        if self._executor.interrupted:
+        if self._runner.interrupted:
             raise RunEngineInterrupted(self.pause_msg) from None
 
         if self._call_returns_result:
             run_engine_result = self._create_result(plan_return)
             return run_engine_result
         else:
-            return tuple(self._executor.run_start_uids)
+            return tuple(self._runner.run_start_uids)
 
     def _resume_task(self, *, init_func=None):
         # Clear the blocking Event so that we can wait on it below.
@@ -1057,7 +1057,7 @@ class RunEngine:
                 except KeyboardInterrupt:
                     import ctypes
 
-                    self._executor.interrupted = True
+                    self._runner.interrupted = True
                     # we can not interrupt a python thread from the outside
                     # but there is an API to schedule an exception to be raised
                     # the next time that thread would interpret byte code.
@@ -1078,7 +1078,7 @@ class RunEngine:
                     # before giving up and putting the RE in a
                     # non-recoverable panicked state.
                     if not task_finished or num_threads != 1:
-                        old_state = self._executor.state
+                        old_state = self._runner.state
                         self._is_panicked = True
                         # The session's machine is untouched -- it belongs to
                         # the loop -- so announce the change by hand, so that
@@ -1087,7 +1087,7 @@ class RunEngine:
                         announce_state_change(self, self._session.hooks, old_state, "panicked")
                 except Exception as raised_er:
                     self.halt()
-                    self._executor.interrupted = True
+                    self._runner.interrupted = True
                     raise raised_er
             finally:
                 if self._task_fut.done():
@@ -1184,7 +1184,7 @@ class RunEngine:
         # resuming into a wait nothing will end.
         def clear_both():
             self._session.clear_suspenders()
-            self._executor.clear_suspenders()
+            self._runner.clear_suspenders()
 
         self.__on_loop(clear_both, timeout=SUBSCRIPTION_TIMEOUT)
 
@@ -1205,7 +1205,7 @@ class RunEngine:
         :meth:`RunEngine.halt`
         :meth:`RunEngine.stop`
         """
-        return self.__interrupter_helper(self._executor.stop(success=False, reason=reason))
+        return self.__interrupter_helper(self._runner.stop(success=False, reason=reason))
 
     def stop(self):
         """
@@ -1224,7 +1224,7 @@ class RunEngine:
         :meth:`RunEngine.abort`
         :meth:`RunEngine.halt`
         """
-        return self.__interrupter_helper(self._executor.stop())
+        return self.__interrupter_helper(self._runner.stop())
 
     def halt(self):
         """
@@ -1243,7 +1243,7 @@ class RunEngine:
         :meth:`RunEngine.abort`
         :meth:`RunEngine.stop`
         """
-        return self.__interrupter_helper(self._executor.stop(success=False, finalize=False))
+        return self.__interrupter_helper(self._runner.stop(success=False, finalize=False))
 
     def __on_loop(self, work, *, timeout=None):
         """Run ``work`` on this engine's loop, and wait for what it returns.
@@ -1279,7 +1279,7 @@ class RunEngine:
             coro.close()
         self._raise_if_panicked()
 
-        was_paused = self._executor.state == "paused"
+        was_paused = self._runner.state == "paused"
         # Whatever the coroutine raises, e.g. a TransitionError, is raised here.
         # No timeout: an abort has nowhere else to go, and giving up on it would
         # leave the plan running with the caller told it had stopped.
@@ -1295,7 +1295,7 @@ class RunEngine:
     def _announce_tripped(self, suspensions, verb: str) -> None:
         """Say what is holding a plan up, and that the call will wait for it.
 
-        Only a prompt needs this: the wait itself is arranged by the executor,
+        Only a prompt needs this: the wait itself is arranged by the runner,
         which holds the plan whether or not anybody is watching. Without it a
         blocking `resume` is indistinguishable from a hang.
         """
@@ -1314,7 +1314,7 @@ class RunEngine:
     def _announce_suspension(self, reasons: typing.Mapping[typing.Hashable, SuspensionReason]) -> None:
         """Say a suspension has begun, and how to get back to a prompt.
 
-        The joining happens here rather than in the executor, alongside
+        The joining happens here rather than in the runner, alongside
         `_announce_tripped`, which does the same for the standing set.
         """
         print("Suspending....To get prompt hit Ctrl-C twice to pause.")
@@ -1327,13 +1327,13 @@ class RunEngine:
         """What abort(), stop() and halt() return."""
         if self._call_returns_result:
             return self._create_result(NO_PLAN_RETURN)
-        return tuple(self._executor.run_start_uids)
+        return tuple(self._runner.run_start_uids)
 
-    # Emission belongs to the executor now, which hands a document to its
+    # Emission belongs to the runner now, which hands a document to its
     # dispatcher and lets the chain carry it to the session's subscribers.
     def emit(self, name, doc):
         """Give a document to every subscriber."""
-        self._executor.emit(name, doc)
+        self._runner.emit(name, doc)
 
     def emit_sync(self, name, doc):
         """Deprecated. Use :meth:`emit`, which is synchronous."""
@@ -1345,14 +1345,14 @@ class RunEngine:
         self.emit(name, doc)
 
 
-# Private names that live on the executor for the plan being run, mapped to the
-# executor attribute they forward to. Tests and downstream code read and write
+# Private names that live on the runner for the plan being run, mapped to the
+# runner attribute they forward to. Tests and downstream code read and write
 # them, so they keep working.
 #
 # Forwarding silently is deliberate: the test suite turns warnings into errors,
 # so a DeprecationWarning here would break callers rather than warn them. One
-# can be added once the ecosystem reads RunEngine._executor, or uses a
-# PlanExecutor directly.
+# can be added once the ecosystem reads RunEngine._runner, or uses a
+# PlanRunner directly.
 
 # Each is here because something reads it; the file that does is named beside
 # it, so an entry whose caller goes away can go with it. Names with no caller
@@ -1361,36 +1361,36 @@ class RunEngine:
 _FORWARDS_WITH_CALLERS = {
     "_task": "_task",  # tests/test_run_engine.py
     "_run_bundlers": "_run_bundlers",  # tests/test_run_engine.py
-    "_run_start_uids": "run_start_uids",  # tests/test_plan_executor.py
+    "_run_start_uids": "run_start_uids",  # tests/test_plan_runner.py
     "_seen_wait_and_move_on_keys": "_seen_wait_and_move_on_keys",  # tests/test_flyer.py
     "_command_registry": "_command_registry",  # tests/test_run_engine.py
     "_msg_cache": "_msg_cache",  # tests/test_run_engine.py
     "_exception": "_exception",  # tests/test_suspensions.py
-    "_exit_status": "exit_status",  # tests/test_plan_executor.py
+    "_exit_status": "exit_status",  # tests/test_plan_runner.py
 }
 
-_EXECUTOR_FORWARDS = _FORWARDS_WITH_CALLERS
+_RUNNER_FORWARDS = _FORWARDS_WITH_CALLERS
 
 
-def _forward_to_executor(name: str) -> property:
-    """A property reading and writing ``name`` on the current executor."""
+def _forward_to_runner(name: str) -> property:
+    """A property reading and writing ``name`` on the current runner."""
 
     def getter(self):
-        return getattr(self._executor, name)
+        return getattr(self._runner, name)
 
     def setter(self, value):
-        setattr(self._executor, name, value)
+        setattr(self._runner, name, value)
 
-    return property(getter, setter, doc=f"Forwards to :attr:`PlanExecutor.{name}`.")
+    return property(getter, setter, doc=f"Forwards to :attr:`PlanRunner.{name}`.")
 
 
-for _old_name, _new_name in _EXECUTOR_FORWARDS.items():
-    setattr(RunEngine, _old_name, _forward_to_executor(_new_name))
+for _old_name, _new_name in _RUNNER_FORWARDS.items():
+    setattr(RunEngine, _old_name, _forward_to_runner(_new_name))
 del _old_name, _new_name
 
 
 # The event loop plans are driven on, and the process-wide registration of it.
-# These live here rather than beside `PlanExecutor` because every one of them
+# These live here rather than beside `PlanRunner` because every one of them
 # is about driving a loop from *outside* it -- running one on a background
 # thread, handing work to it from the prompt, letting IPython await on it.
 # A plan being executed is already on the loop and needs none of it.

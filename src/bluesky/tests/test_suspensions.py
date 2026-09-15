@@ -409,18 +409,18 @@ def test_a_joining_pre_plan_that_raises_reaches_the_plan(RE):
 def test_a_suspension_arriving_after_the_plan_ends_does_nothing(RE):
     """The supervisor's task can outlive the plan that created it.
 
-    A suspension raised through the test back door can reach an executor that
+    A suspension raised through the test back door can reach a runner that
     has already gone idle. Neither transition it would attempt is legal from
     'idle'.
     """
     RE([Msg("null")])
-    executor = RE._executor
-    assert executor.state.is_idle
+    runner = RE._runner
+    assert runner.state.is_idle
 
     force_suspension(RE, justification="too late").result(timeout=10)
 
     # And it left the state alone.
-    assert executor.state.is_idle
+    assert runner.state.is_idle
 
 
 def test_a_suspension_reaches_both_hooks(RE):
@@ -600,15 +600,15 @@ def test_two_conditions_tripping_in_one_turn_each_run_their_plans(RE):
 
 
 def test_a_trip_between_building_the_plan_and_running_it_still_holds():
-    """The window between `make_executor` and the plan's first message.
+    """The window between `start` and the plan's first message.
 
     Whether the suspension is tripped is read when the plan starts, not when the
-    executor is built. It used to be read at both, and the two could disagree:
+    runner is built. It used to be read at both, and the two could disagree:
     a condition going bad in between left the plan with nothing holding it and
     a supervisor that believed it was already being held, so the plan ran to
     completion through a tripped suspender.
 
-    A headless caller can hold an executor for as long as it likes before
+    A headless caller can hold a runner for as long as it likes before
     awaiting it, so the window is as wide as it chooses.
     """
     from bluesky.plan_session import PlanSession
@@ -623,12 +623,12 @@ def test_a_trip_between_building_the_plan_and_running_it_still_holds():
 
     async def main():
         session = PlanSession()
-        executor = session.make_executor(plan())
+        runner = session.start(plan())
         # Nothing had tripped when this was built.
-        assert not executor._suspension.tripped
+        assert not runner._suspension.tripped
 
         session._suspension.trip("beam", "beam is down")
-        task = asyncio.ensure_future(executor)
+        task = asyncio.ensure_future(runner)
         await asyncio.sleep(0.3)
         held = list(steps)
 

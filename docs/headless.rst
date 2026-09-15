@@ -11,10 +11,10 @@ consumer, a test -- wants the first without the second.
 Those two halves are separate objects. A :class:`~bluesky.plan_session.PlanSession`
 holds everything that outlives any one plan: the metadata, the settings, the
 document subscribers, the durable suspenders. A
-:class:`~bluesky.plan_executor.PlanExecutor` executes exactly one plan and holds
-everything belonging to that plan alone. One session builds many executors.
+:class:`~bluesky.plan_runner.PlanRunner` executes exactly one plan and holds
+everything belonging to that plan alone. One session builds many runners.
 
-A `RunEngine` composes the two, and uses the same pair of calls you are about to.
+A `RunEngine` composes the two, and reaches them the same way you are about to.
 
 Running one plan
 ----------------
@@ -31,26 +31,26 @@ Running one plan
     ...
     >>> async def main():
     ...     session = PlanSession()
-    ...     executor = session.make_executor(plan())
-    ...     return await executor
+    ...     runner = session.start(plan())
+    ...     return await runner
     ...
     >>> asyncio.run(main())
     'a value the plan returned'
 
-``make_executor`` builds an executor from the session's settings as they stand at
+``start`` builds a runner from the session's settings as they stand at
 that moment, sets the plan going, and hands it to you. The session does not keep
 a reference, which is what lets one session run more than one plan at a time.
-Awaiting the executor waits for the plan and gives back what it returned; an
-executor is built for one plan and runs it once.
+Awaiting the runner waits for the plan and gives back what it returned; a
+runner is built for one plan and runs it once.
 
-Because the plan is loaded as the executor is built, a malformed plan raises from
-``make_executor`` rather than out of the await.
+Because the plan is loaded as the runner is built, a malformed plan raises from
+``start`` rather than out of the await.
 
 How the plan ended
 ------------------
 
-Awaiting an executor gives the plan's return value, which says nothing about
-how the plan got there. The executor says that, and it is the same executor afterwards as
+Awaiting a runner gives the plan's return value, which says nothing about
+how the plan got there. The runner says that, and it is the same runner afterwards as
 during -- it runs one plan and then holds the record of it:
 
 .. doctest::
@@ -61,9 +61,9 @@ during -- it runs one plan and then holds the record of it:
     ...
     >>> async def main():
     ...     session = PlanSession()
-    ...     executor = session.make_executor(scan())
-    ...     await executor
-    ...     return executor.exit_status, executor.exit_reason, executor.interrupted
+    ...     runner = session.start(scan())
+    ...     await runner
+    ...     return runner.exit_status, runner.exit_reason, runner.interrupted
     ...
     >>> asyncio.run(main())
     ('success', '', False)
@@ -75,7 +75,7 @@ if the plan was paused, stopped, aborted or halted rather than reaching its own
 end. ``run_start_uids`` lists every run it opened.
 
 ``done()`` says whether the plan has finished at all, which ``state`` cannot:
-an executor reports ``'idle'`` both before its plan reaches the first message
+a runner reports ``'idle'`` both before its plan reaches the first message
 and after the plan has ended.
 
 There is no result object to build. :class:`~bluesky.run_engine.RunEngineResult`
@@ -85,7 +85,7 @@ attributes; a caller that is not a `RunEngine` reads them directly.
 When a plan fails
 -----------------
 
-A plan that raises raises out of the await. The executor still cleans up first --
+A plan that raises raises out of the await. The runner still cleans up first --
 stopping what it set, unstaging, closing open runs -- and still records how it
 ended:
 
@@ -97,19 +97,19 @@ ended:
     ...
     >>> async def main():
     ...     session = PlanSession()
-    ...     executor = session.make_executor(falls_over())
+    ...     runner = session.start(falls_over())
     ...     try:
-    ...         await executor
+    ...         await runner
     ...     except RuntimeError:
     ...         pass
-    ...     return executor.exit_status, executor.exit_reason
+    ...     return runner.exit_status, runner.exit_reason
     ...
     >>> asyncio.run(main())
     ('fail', 'the detector fell over')
 
 A failing status object raises :class:`~bluesky.utils.FailedStatus` the same
 way. Nothing is swallowed and stored for you to find later, so a service can
-let the exception travel: ``await executor`` inside your own ``try`` is
+let the exception travel: ``await runner`` inside your own ``try`` is
 the whole error-handling story.
 
 Stopping a plan is not failing it. ``stop`` and its modes below end the plan
@@ -126,14 +126,14 @@ Subscribe on the session and you see every document from every plan it runs:
     ...     session = PlanSession()
     ...     names = []
     ...     session.subscribe(lambda name, doc: names.append(name))
-    ...     await session.make_executor(scan())
-    ...     await session.make_executor(scan())
+    ...     await session.start(scan())
+    ...     await session.start(scan())
     ...     return names
     ...
     >>> asyncio.run(main())
     ['start', 'stop', 'start', 'stop']
 
-Subscribe for one plan and the subscription is discarded with its executor:
+Subscribe for one plan and the subscription is discarded with its runner:
 
 .. doctest::
 
@@ -141,9 +141,9 @@ Subscribe for one plan and the subscription is discarded with its executor:
     ...     session = PlanSession()
     ...     durable, just_this_plan = [], []
     ...     session.subscribe(lambda name, doc: durable.append(name))
-    ...     first = session.make_executor(scan(), subs={"start": lambda n, d: just_this_plan.append(n)})
+    ...     first = session.start(scan(), subs={"start": lambda n, d: just_this_plan.append(n)})
     ...     await first
-    ...     await session.make_executor(scan())
+    ...     await session.start(scan())
     ...     return durable, just_this_plan
     ...
     >>> asyncio.run(main())
@@ -166,7 +166,7 @@ counter. Each plan is given a copy of it as the plan is launched, so writing to
     ...     session.md["proposal"] = "p1234"
     ...     starts = []
     ...     session.subscribe(lambda name, doc: starts.append(doc), "start")
-    ...     await session.make_executor(scan())
+    ...     await session.start(scan())
     ...     return starts[0]["proposal"], starts[0]["scan_id"]
     ...
     >>> asyncio.run(main())
@@ -178,7 +178,7 @@ so two plans running at once are never handed the same one.
 More than one plan at once
 --------------------------
 
-The session holds no executor, so nothing about it is single-plan. A
+The session holds no runner, so nothing about it is single-plan. A
 `RunEngine`'s one-plan-at-a-time rule is a `RunEngine`'s, because it has one
 main thread to block; a service driving the loop itself does not:
 
@@ -186,8 +186,8 @@ main thread to block; a service driving the loop itself does not:
 
     >>> async def main():
     ...     session = PlanSession()
-    ...     first = session.make_executor(scan())
-    ...     second = session.make_executor(scan())
+    ...     first = session.start(scan())
+    ...     second = session.start(scan())
     ...     await asyncio.gather(first, second)
     ...     return first.run_start_uids != second.run_start_uids, session.md["scan_id"]
     ...
@@ -248,27 +248,27 @@ Driving a running plan
 
 The lifecycle verbs are coroutines, because there is no main thread to block::
 
-    await executor.pause()                                # at the next checkpoint
-    await executor.pause(defer=False)                     # now
-    await executor.resume()
+    await runner.pause()                                # at the next checkpoint
+    await runner.pause(defer=False)                     # now
+    await runner.resume()
 
 Ending a plan early is one verb in three modes. ``success`` decides whether the
 runs close as ``'success'`` or ``'abort'``; ``finalize`` decides whether the
 plan may run its own cleanup on the way out::
 
-    await executor.stop()                                 # RunEngine.stop
-    await executor.stop(success=False)                    # RunEngine.abort
-    await executor.stop(success=False, finalize=False)    # RunEngine.halt
+    await runner.stop()                                 # RunEngine.stop
+    await runner.stop(success=False)                    # RunEngine.abort
+    await runner.stop(success=False, finalize=False)    # RunEngine.halt
 
-There is no ``executor.abort`` or ``executor.halt``; those are the `RunEngine`
-names for these three calls. ``executor.state`` says where the plan is.
+There is no ``runner.abort`` or ``runner.halt``; those are the `RunEngine`
+names for these three calls. ``runner.state`` says where the plan is.
 
 Hooks
 -----
 
 Nothing here writes to standard output. A `RunEngine` prints what a plan has to
 say because it is driving a terminal; a session says it through ``hooks``, which
-it shares with every executor it builds, and which are unset by default -- so a
+it shares with every runner it builds, and which are unset by default -- so a
 service that wants any of it must attach something:
 
 ``hooks.announce``
@@ -297,13 +297,13 @@ service that wants any of it must attach something:
     Awaited before the plan's first message, and may be a coroutine. A
     `RunEngine` uses it to hold the plan until its signal handler is installed;
     a headless caller has none to install and can leave it unset. It is the one
-    hook the executor waits on rather than tells, so a hook that returns late
+    hook the runner waits on rather than tells, so a hook that returns late
     holds the plan late.
 
 ``hooks.pause``
-    Called with no arguments when an executor comes to rest paused. A
+    Called with no arguments when a runner comes to rest paused. A
     `RunEngine` uses it to release the main thread; a headless caller has no
     thread to release and can leave it unset.
 
-Nothing the executor says tells anyone which key to press: only a `RunEngine`
+Nothing the runner says tells anyone which key to press: only a `RunEngine`
 knows a keyboard is attached.

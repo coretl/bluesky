@@ -9,10 +9,10 @@ import event_model
 from .bundlers import RunBundler, maybe_await
 from .dispatcher import Dispatcher
 from .log import ComposableLogAdapter, logger
-from .plan_executor import (
+from .plan_runner import (
     PlanEnvironment,
-    PlanExecutor,
     PlanHooks,
+    PlanRunner,
     RunEngineMetadata,
     _default_event_loop,
     _default_md_normalizer,
@@ -31,11 +31,11 @@ class PlanSession:
 
     A session holds everything that outlives any single plan: the persistent
     metadata, the document routing, the suspenders and the hooks. It does not
-    execute anything itself; a :class:`PlanExecutor` does that, and one session
+    execute anything itself; a :class:`PlanRunner` does that, and one session
     builds many, one per plan::
 
-        executor = session.make_executor(my_plan())
-        result = await executor
+        runner = session.start(my_plan())
+        result = await runner
 
     A `RunEngine` composes a session with the machinery needed to drive it
     from a terminal on the main thread, and uses that same pair of calls. A
@@ -43,7 +43,7 @@ class PlanSession:
     that is already running in an asyncio event loop, such as a headless data
     acquisition service.
 
-    A session does not hold the executors it builds, so a headless caller can
+    A session does not hold the runners it builds, so a headless caller can
     run two plans at once against one set of durable metadata and suspenders.
     A `RunEngine` drives exactly one, and enforces that itself.
 
@@ -59,7 +59,7 @@ class PlanSession:
         to the loop a `RunEngine` has already established.
 
     log : logging.LoggerAdapter, optional
-        Where this session and its executors log to.
+        Where this session and its runners log to.
 
     run_bundler_cls : type, optional
         The bundler used to compose documents for each open run. A
@@ -70,10 +70,10 @@ class PlanSession:
         What a state change is logged as having happened to, and what
         ``Msg('RE_class')`` reports the class of. A `RunEngine` passes itself,
         because that is what a user recognises in their logs; without one each
-        executor answers for itself.
+        runner answers for itself.
 
     An argument here is a setting nothing changes once the session exists.
-    Everything else is an attribute you assign, read by `make_executor` as it
+    Everything else is an attribute you assign, read by `start` as it
     freezes each plan's `PlanEnvironment`, so that a change takes effect for the
     next plan and never the one already running.
 
@@ -100,15 +100,15 @@ class PlanSession:
         setting for the session and every plan running under it.
 
     hooks
-        The `PlanHooks` record shared with every executor this session builds.
+        The `PlanHooks` record shared with every runner this session builds.
         One mutable record rather than a copy per plan, so setting a hook on it
         mid-plan takes effect on the plan already running.
 
     suspenders
         Read-only collection of the durable
-        `bluesky.suspenders.SuspenderBase` objects, which every executor this
+        `bluesky.suspenders.SuspenderBase` objects, which every runner this
         session builds is given. Suspenders installed from inside a plan
-        belong to that plan's executor and are not here.
+        belong to that plan's runner and are not here.
 
     suspensions
         What is holding up every plan this session runs, and who raised each.
@@ -126,7 +126,7 @@ class PlanSession:
     ``md_normalizer``, ``run_bundler_cls``, ``identity``,
     ``record_interruptions``, ``strict_pre_declare``, and ``rewindable`` --
     the last being only the *default*, since a running plan owns its own live
-    value in `PlanExecutor.rewindable`.
+    value in `PlanRunner.rewindable`.
     """
 
     def __init__(
@@ -171,11 +171,11 @@ class PlanSession:
 
         self.scan_id_source: typing.Callable[[RunEngineMetadata], SyncOrAsync[int]] = default_scan_id_source
         # Serialises scan id allocation. Computing the next id reads md and
-        # writes it back with an await in between, so two executors opening a
+        # writes it back with an await in between, so two runners opening a
         # run at the same moment would otherwise be handed the same number.
         self._scan_id_lock = asyncio.Lock()
 
-        # The observation points, shared by reference with every executor this
+        # The observation points, shared by reference with every runner this
         # session builds, so that setting one mid-plan takes effect on that
         # plan. Set them on this record rather than through a constructor
         # argument each: `session.hooks.pause = f` reaches a running plan,
@@ -183,7 +183,7 @@ class PlanSession:
         self.hooks = PlanHooks()
 
         # Settings a plan is run under. Plain attributes, read when
-        # `make_executor` builds the frozen `PlanEnvironment` it hands over,
+        # `start` builds the frozen `PlanEnvironment` it hands over,
         # so changing one here takes effect for the next plan and never for
         # the one already running. Held once, so nothing can drift out of
         # step with a copy of itself.
@@ -199,11 +199,11 @@ class PlanSession:
 
         self._suspenders: set[SuspenderBase] = set()
         # The durable half of the suspension state. Suspenders installed here
-        # write to this suspension, and every executor this session builds waits
+        # write to this suspension, and every runner this session builds waits
         # on it as well as on its own -- the same shape as the two dispatchers.
         self._suspension = Suspension("session", loop)
 
-        # Commands the user has added or removed. Composed into each executor's
+        # Commands the user has added or removed. Composed into each runner's
         # vocabulary as it is built, so that registrations survive the plan
         # that was running when they were made.
         self._registered_commands: dict[str, typing.Callable] = {}
@@ -216,7 +216,7 @@ class PlanSession:
         """Compute the ``scan_id`` for a run that is opening, and return it.
 
         Returned rather than left in ``md`` for the caller to read back: two
-        executors may be opening runs at once, and each must use the id it was
+        runners may be opening runs at once, and each must use the id it was
         given. It is stored in ``md`` as well, under a lock held across the
         ``await``, which is what makes the default source count up.
         """
@@ -245,7 +245,7 @@ class PlanSession:
         """Register a new Message command.
 
         The session remembers it, so that it survives being composed over a
-        different set of built-ins when the next executor is built.
+        different set of built-ins when the next runner is built.
 
         Parameters
         ----------
@@ -274,36 +274,36 @@ class PlanSession:
     def commands(self) -> tuple[str, ...]:
         """The names of the commands the next plan will understand.
 
-        `PlanExecutor`'s built-ins plus whatever has been registered here, less
+        `PlanRunner`'s built-ins plus whatever has been registered here, less
         whatever has been unregistered. Names only: the callable a name resolves
-        to is bound to the executor running the plan, and this session holds no
-        executor to bind one to.
+        to is bound to the runner running the plan, and this session holds no
+        runner to bind one to.
         """
-        names = set(PlanExecutor._DEFAULT_COMMANDS) | set(self._registered_commands)
+        names = set(PlanRunner._DEFAULT_COMMANDS) | set(self._registered_commands)
         return tuple(sorted(names - self._unregistered_commands))
 
     def _command_docs(self) -> dict[str, str | None]:
         """Docstring per command name, for `RunEngine.print_command_registry`."""
-        registry: dict[str, typing.Callable] = dict(PlanExecutor._DEFAULT_COMMANDS)
+        registry: dict[str, typing.Callable] = dict(PlanRunner._DEFAULT_COMMANDS)
         registry.update(self._registered_commands)
         return {name: registry[name].__doc__ for name in self.commands}
 
-    def make_executor(self, plan, *, metadata=None, subs=None) -> "PlanExecutor":
-        """Build an executor for ``plan``, and hand it to the caller.
+    def start(self, plan, *, metadata=None, subs=None) -> "PlanRunner":
+        """Build a runner for ``plan``, and hand it to the caller.
 
         The caller owns what comes back; this session keeps no reference, so
-        more than one executor can be running against one session at a time.
+        more than one runner can be running against one session at a time.
         A `RunEngine` keeps exactly one, and is where "one plan at a time" is
         enforced.
 
-        Building a new executor is also how the previous plan's state is
-        cleared, subscriptions included: those live on the executor's own
+        Building a new runner is also how the previous plan's state is
+        cleared, subscriptions included: those live on the runner's own
         dispatcher and are discarded with it.
 
         Parameters
         ----------
         plan : iterable of Msg
-            The plan the new executor will run. Malformed plans raise here, on
+            The plan the new runner will run. Malformed plans raise here, on
             the calling thread.
         metadata : dict, optional
             Metadata for every run the plan opens.
@@ -314,27 +314,27 @@ class PlanSession:
         """
         return self._build(plan, metadata=metadata, subs=subs)
 
-    def _idle_executor(self) -> "PlanExecutor":
-        """An executor with no plan, for a caller that needs one to read.
+    def _idle_runner(self) -> "PlanRunner":
+        """A runner with no plan, for a caller that needs one to read.
 
         A `RunEngine` keeps one between plans so that "no plan yet" is not a
         third state every caller has to reason about: it reports 'idle', which
         is what it means. Composing the environment is this session's job, which
         is why this lives here; deciding that no plan means nothing running is
-        the executor's, and it makes that decision itself.
+        the runner's, and it makes that decision itself.
         """
         return self._build(None)
 
-    def _build(self, plan, *, metadata=None, subs=None) -> "PlanExecutor":
-        """Compose an executor for ``plan``, from the settings as they stand."""
+    def _build(self, plan, *, metadata=None, subs=None) -> "PlanRunner":
+        """Compose a runner for ``plan``, from the settings as they stand."""
         # This plan's own suspension, under the session's. A suspender the plan
         # installs holds up this plan; one installed on the session holds up
         # every plan it runs, and the chain is what makes those one mechanism.
         # An already-tripped suspension holds the plan at its first message; the
-        # executor arranges that for itself.
+        # runner arranges that for itself.
         suspension = Suspension("plan", self._loop, parent=self._suspension)
 
-        return PlanExecutor(
+        return PlanRunner(
             plan,
             # Built fresh for this plan, from the settings as they stand right
             # now. Frozen once handed over, so the plan cannot have its
@@ -405,7 +405,7 @@ class PlanSession:
     def unsubscribe_all(self) -> None:
         """Unregister every callback registered on this session.
 
-        A plan's own subscribers are not reached: they belong to its executor
+        A plan's own subscribers are not reached: they belong to its runner
         and end with it.
         """
         self._dispatcher.unsubscribe_all()
@@ -426,14 +426,14 @@ class PlanSession:
         self._dispatcher.ignore_exceptions = val
 
     def install_suspender(self, suspender: SuspenderBase) -> None:
-        """Install a durable suspender, given to every executor built after it.
+        """Install a durable suspender, given to every runner built after it.
 
         Installing subscribes the suspender to its signal here and now, and it
         stays subscribed between plans, so it can report a condition that was
         already bad when a plan started.
 
         It has no plan to suspend, and needs none: tripping holds up this
-        session's suspension, which every executor it builds is waiting on.
+        session's suspension, which every runner it builds is waiting on.
         """
         self._suspenders.add(suspender)
         suspender.install(self._suspension)

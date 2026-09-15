@@ -1,6 +1,6 @@
-"""Tests for the seam between PlanSession, PlanExecutor and RunEngine.
+"""Tests for the seam between PlanSession, PlanRunner and RunEngine.
 
-These guard the properties that make the executor usable without a
+These guard the properties that make the runner usable without a
 RunEngine: that it is pure asyncio, and that it can be driven directly.
 """
 
@@ -15,7 +15,7 @@ from ophyd.signal import Signal
 
 import bluesky
 from bluesky import Msg
-from bluesky.plan_executor import PlanEnvironment, PlanExecutor
+from bluesky.plan_runner import PlanEnvironment, PlanRunner
 from bluesky.plan_session import PlanSession
 from bluesky.suspenders import SuspendBoolHigh
 from bluesky.utils import InvalidCommand, RunEngineInterrupted
@@ -60,46 +60,46 @@ def test_the_old_import_location_still_works():
     from bluesky import run_engine
 
     assert run_engine.PlanSession is PlanSession
-    assert run_engine.PlanExecutor is PlanExecutor
+    assert run_engine.PlanRunner is PlanRunner
 
 
-def _look_at_a_fresh_executor(session, look, plan=()):
-    """Build an executor on the session's loop and hand ``look`` the result.
+def _look_at_a_fresh_runner(session, look, plan=()):
+    """Build a runner on the session's loop and hand ``look`` the result.
 
     Building one starts its plan, so a test that only wants to inspect a fresh
-    executor does it here: nothing yields to the loop between the build and the
+    runner does it here: nothing yields to the loop between the build and the
     look, and the task is cancelled rather than left to run.
     """
 
     async def main():
-        executor = session.make_executor(plan)
+        runner = session.start(plan)
         try:
-            return look(executor)
+            return look(runner)
         finally:
-            executor._task.cancel()
+            runner._task.cancel()
 
     return session._loop.run_until_complete(main())
 
 
-def test_executor_holds_no_threading_primitives(idle_session):
-    """The executor is single threaded by construction.
+def test_runner_holds_no_threading_primitives(idle_session):
+    """The runner is single threaded by construction.
 
     Everything it touches is reached from the event loop, so it needs no
     locks. If this fails, something that belongs to the RunEngine, which is
     the only thread-aware object of the three, has leaked down into it.
     """
 
-    def look(executor):
+    def look(runner):
         return {
             name: type(value).__name__
-            for name, value in vars(executor).items()
+            for name, value in vars(runner).items()
             if isinstance(value, THREADING_PRIMITIVES)
         }
 
-    assert _look_at_a_fresh_executor(idle_session, look) == {}
+    assert _look_at_a_fresh_runner(idle_session, look) == {}
 
 
-@pytest.mark.parametrize("cls", [PlanSession, PlanExecutor])
+@pytest.mark.parametrize("cls", [PlanSession, PlanRunner])
 def test_source_takes_no_locks(cls):
     """Neither class ever blocks a thread, so neither may lock or join."""
     source = inspect.getsource(cls)
@@ -157,14 +157,14 @@ def test_every_hop_onto_the_loop_is_one_of_the_few_we_mean():
     # A suspension is written on the loop; its caller crosses.
     assert _crossings("suspensions.py") == set()
     # Only the ophyd status callback.
-    assert _crossings("plan_executor.py") == {"done_callback"}
+    assert _crossings("plan_runner.py") == {"done_callback"}
     # Only the signal's own callback.
     assert _crossings("suspenders.py") == {"__call__"}
     # The facade crosses for everyone, which is why it may cross at all -- and
     # now through one implementation with no exceptions, so that "where does a
     # thread reach the loop" has a one-word answer. `_build_task` used to be
     # the second, because it wanted the future rather than the result; the plan
-    # task is built on the loop with the rest of the executor now, and the
+    # task is built on the loop with the rest of the runner now, and the
     # future the main thread reads is filled in from its done callback.
     assert _crossings("run_engine.py") == {"_run_on"}
 
@@ -186,14 +186,14 @@ def test_a_suspender_holds_no_threading_primitives():
     assert offenders == {}
 
 
-def test_the_executor_never_says_what_to_press():
+def test_the_runner_never_says_what_to_press():
     """It cannot know that a keyboard is attached.
 
     the announce hook may be wired to a websocket, where telling someone to hit
     Ctrl-C is wrong. Saying what to press belongs to the `RunEngine` and to
     `SigintHandler`, which exist only where a terminal does.
     """
-    source = (pathlib.Path(bluesky.__file__).parent / "plan_executor.py").read_text()
+    source = (pathlib.Path(bluesky.__file__).parent / "plan_runner.py").read_text()
 
     # Not even in a docstring; SIGINT is the accurate word here.
     assert "Ctrl" not in source
@@ -211,23 +211,23 @@ def test_session_holds_no_threading_primitives(idle_session):
 
 
 def test_run_a_plan_without_a_run_engine():
-    """A PlanExecutor executes a plan with no RunEngine in the process."""
+    """A PlanRunner executes a plan with no RunEngine in the process."""
     collected = []
 
     async def main():
         session = PlanSession(md={"beamline": "test"})
         session.subscribe(lambda name, doc: collected.append(name))
-        executor = session.make_executor([Msg("open_run"), Msg("close_run")])
-        plan_return = await executor
-        return executor, plan_return
+        runner = session.start([Msg("open_run"), Msg("close_run")])
+        plan_return = await runner
+        return runner, plan_return
 
-    executor, plan_return = asyncio.run(main())
+    runner, plan_return = asyncio.run(main())
 
     assert collected == ["start", "stop"]
-    assert len(executor.run_start_uids) == 1
-    assert executor.exit_status == "success"
-    assert executor.state == "idle"
-    assert not executor.interrupted
+    assert len(runner.run_start_uids) == 1
+    assert runner.exit_status == "success"
+    assert runner.state == "idle"
+    assert not runner.interrupted
     assert plan_return is None
 
 
@@ -237,16 +237,16 @@ def test_plan_return_value_without_a_run_engine():
             yield Msg("null")
             return 42
 
-        executor = PlanSession().make_executor(plan())
-        return await executor
+        runner = PlanSession().start(plan())
+        return await runner
 
     assert asyncio.run(main()) == 42
 
 
 def test_a_malformed_plan_raises_on_the_calling_thread(RE):
-    """Loading the plan as the executor is built is what puts it here.
+    """Loading the plan as the runner is built is what puts it here.
 
-    The `RunEngine` builds its executor on the loop, so this is the property
+    The `RunEngine` builds its runner on the loop, so this is the property
     that says the crossing waits and re-raises rather than leaving the failure
     in a future on the loop thread. The engine is left usable.
     """
@@ -254,14 +254,14 @@ def test_a_malformed_plan_raises_on_the_calling_thread(RE):
         RE(42)
 
     # Not left mid-plan by the failure.
-    assert RE._executor.state.is_idle
+    assert RE._runner.state.is_idle
     RE([Msg("null")])
 
 
 def test_the_start_hook_holds_the_plan_before_its_first_message():
     """`hooks.start` is awaited before anything the plan can observe.
 
-    The hook the executor waits on rather than tells. A `RunEngine` will hold
+    The hook the runner waits on rather than tells. A `RunEngine` will hold
     the plan here until its signal handler is installed.
     """
     seen = []
@@ -275,17 +275,17 @@ def test_the_start_hook_holds_the_plan_before_its_first_message():
             await held.wait()
 
         session.hooks.start = hold
-        executor = session.make_executor([Msg("null")])
-        running = asyncio.ensure_future(executor)
+        runner = session.start([Msg("null")])
+        running = asyncio.ensure_future(runner)
 
         # Long enough for the plan to have run had nothing held it.
         await asyncio.sleep(0.1)
         # The hook was reached, and the plan has not started behind it.
-        state_while_held = str(executor.state)
+        state_while_held = str(runner.state)
         seen.append("released")
         held.set()
         await running
-        return state_while_held, str(executor.state)
+        return state_while_held, str(runner.state)
 
     state_while_held, state_after = asyncio.run(main())
 
@@ -296,7 +296,7 @@ def test_the_start_hook_holds_the_plan_before_its_first_message():
 
 
 def test_awaiting_twice_answers_the_same_thing_twice():
-    """One plan per executor is structural, so a second await is not an error.
+    """One plan per runner is structural, so a second await is not an error.
 
     It used to raise: `run` was a coroutine anyone could enter again, and the
     caches behind it are never reset. There is one task now, entered once, so
@@ -308,18 +308,18 @@ def test_awaiting_twice_answers_the_same_thing_twice():
             yield Msg("null")
             return 42
 
-        executor = PlanSession().make_executor(plan())
-        return await executor, await executor
+        runner = PlanSession().start(plan())
+        return await runner, await runner
 
     assert asyncio.run(main()) == (42, 42)
 
 
-def test_awaiting_an_executor_with_no_plan_says_so(idle_session):
+def test_awaiting_an_runner_with_no_plan_says_so(idle_session):
     """The one a `RunEngine` keeps between plans has nothing to wait for."""
 
     async def main():
         with pytest.raises(RuntimeError, match="no plan"):
-            await idle_session._idle_executor()
+            await idle_session._idle_runner()
 
     idle_session._loop.run_until_complete(main())
 
@@ -332,16 +332,16 @@ def test_done_says_what_idle_cannot():
         session = PlanSession()
         held = asyncio.Event()
         session.hooks.start = held.wait
-        executor = session.make_executor([Msg("null")])
+        runner = session.start([Msg("null")])
 
         await asyncio.sleep(0.05)
         # Held before its first message: idle, and not done.
-        seen["held"] = (str(executor.state), executor.done())
+        seen["held"] = (str(runner.state), runner.done())
 
         held.set()
-        await executor
+        await runner
         # Finished: idle again, and this time done.
-        seen["finished"] = (str(executor.state), executor.done())
+        seen["finished"] = (str(runner.state), runner.done())
 
     asyncio.run(main())
 
@@ -356,15 +356,15 @@ def test_a_synchronous_start_hook_is_allowed():
     async def main():
         session = PlanSession()
         session.hooks.start = lambda: called.append("start")
-        await session.make_executor([Msg("null")])
+        await session.start([Msg("null")])
 
     asyncio.run(main())
 
     assert called == ["start"]
 
 
-def test_the_executor_says_how_the_plan_finished():
-    """The outcome is readable off the executor, by whoever ran it.
+def test_the_runner_says_how_the_plan_finished():
+    """The outcome is readable off the runner, by whoever ran it.
 
     A headless caller used to have to build a `RunEngineResult` -- a
     `RunEngine`'s return shape, which it has no other use for -- or read a
@@ -372,18 +372,18 @@ def test_the_executor_says_how_the_plan_finished():
     """
 
     async def main():
-        executor = PlanSession().make_executor([Msg("open_run"), Msg("close_run")])
-        await executor
-        return executor
+        runner = PlanSession().start([Msg("open_run"), Msg("close_run")])
+        await runner
+        return runner
 
-    executor = asyncio.run(main())
-    assert executor.exit_status == "success"
-    assert executor.exit_reason == ""
-    assert not executor.interrupted
-    assert len(executor.run_start_uids) == 1
+    runner = asyncio.run(main())
+    assert runner.exit_status == "success"
+    assert runner.exit_reason == ""
+    assert not runner.interrupted
+    assert len(runner.run_start_uids) == 1
 
 
-def test_session_outlives_its_executors():
+def test_session_outlives_its_runners():
     """One session, many plans in turn. Metadata and subscriptions persist."""
     names = []
 
@@ -392,9 +392,9 @@ def test_session_outlives_its_executors():
         session.subscribe(lambda name, doc: names.append(name))
         uids = []
         for _ in range(3):
-            executor = session.make_executor([Msg("open_run"), Msg("close_run")])
-            await executor
-            uids.extend(executor.run_start_uids)
+            runner = session.start([Msg("open_run"), Msg("close_run")])
+            await runner
+            uids.extend(runner.run_start_uids)
         return session, uids
 
     session, uids = asyncio.run(main())
@@ -407,7 +407,7 @@ def test_session_outlives_its_executors():
 def test_two_plans_run_at_once_on_one_session():
     """A headless caller may run more than one plan against a session.
 
-    The session holds no executor, so nothing about it is single-plan. The
+    The session holds no runner, so nothing about it is single-plan. The
     RunEngine's "one plan at a time" rule is the RunEngine's, because it has
     one main thread to block.
     """
@@ -417,8 +417,8 @@ def test_two_plans_run_at_once_on_one_session():
         session = PlanSession(md={"beamline": "test"})
         session.subscribe(lambda name, doc: starts.append(doc) if name == "start" else None)
         plan = [Msg("open_run"), Msg("sleep", None, 0.05), Msg("close_run")]
-        first = session.make_executor(list(plan))
-        second = session.make_executor(list(plan))
+        first = session.start(list(plan))
+        second = session.start(list(plan))
         await asyncio.gather(first, second)
         return session, first, second
 
@@ -449,12 +449,12 @@ def test_a_session_suspender_holds_every_plan_running_under_it():
         sig.put(1)
         session.install_suspender(SuspendBoolHigh(sig))
 
-        async def run(name, executor):
-            await executor
+        async def run(name, runner):
+            await runner
             finished.append(name)
 
-        first = session.make_executor([Msg("checkpoint"), Msg("null")])
-        second = session.make_executor([Msg("checkpoint"), Msg("null")])
+        first = session.start([Msg("checkpoint"), Msg("null")])
+        second = session.start([Msg("checkpoint"), Msg("null")])
         runners = asyncio.gather(run("first", first), run("second", second))
         await asyncio.sleep(0.2)
         held = list(finished)
@@ -485,12 +485,12 @@ def test_a_plans_own_suspender_holds_only_that_plan():
         sig.put(1)
         susp = SuspendBoolHigh(sig)
 
-        async def run(name, executor):
-            await executor
+        async def run(name, runner):
+            await runner
             finished.append(name)
 
-        held = session.make_executor([Msg("checkpoint"), Msg("install_suspender", None, susp), Msg("null")])
-        free = session.make_executor([Msg("checkpoint"), Msg("null")])
+        held = session.start([Msg("checkpoint"), Msg("install_suspender", None, susp), Msg("null")])
+        free = session.start([Msg("checkpoint"), Msg("null")])
         runners = asyncio.gather(run("held", held), run("free", free))
         await asyncio.sleep(0.2)
         meanwhile = list(finished)
@@ -518,11 +518,11 @@ def test_two_plans_documents_reach_the_session_and_only_their_own_subscribers():
         session.subscribe(lambda name, doc: session_starts.append(doc["uid"]) if name == "start" else None)
 
         plan = [Msg("open_run"), Msg("sleep", None, 0.05), Msg("close_run")]
-        first = session.make_executor(
+        first = session.start(
             list(plan),
             subs={"start": [lambda name, doc: first_starts.append(doc["uid"])]},
         )
-        second = session.make_executor(list(plan))
+        second = session.start(list(plan))
         await asyncio.gather(first, second)
         return session_starts, first_starts, first, second
 
@@ -543,8 +543,8 @@ def test_one_plan_failing_leaves_the_other_alone():
 
     async def main():
         session = PlanSession()
-        good = session.make_executor([Msg("open_run"), Msg("sleep", None, 0.1), Msg("close_run")])
-        bad = session.make_executor([Msg("open_run"), Msg("aardvark")])
+        good = session.start([Msg("open_run"), Msg("sleep", None, 0.1), Msg("close_run")])
+        bad = session.start([Msg("open_run"), Msg("aardvark")])
         outcomes = await asyncio.gather(good, bad, return_exceptions=True)
         return good, bad, outcomes
 
@@ -564,9 +564,9 @@ def test_a_setting_reaches_the_next_plan_and_not_the_running_one():
         # copy of a setting to fall out of step with this one.
         assert not hasattr(session, "env") and not hasattr(session, "_env")
 
-        already_built = session.make_executor([Msg("null")])
+        already_built = session.start([Msg("null")])
         session.strict_pre_declare = True
-        built_after = session.make_executor([Msg("null")])
+        built_after = session.start([Msg("null")])
 
         # Frozen for its plan.
         assert already_built._env.strict_pre_declare is False
@@ -591,18 +591,18 @@ def test_metadata_is_snapshotted_and_the_session_keeps_its_own_store():
         session = PlanSession()
         store = {"from_the_store": True}
         session.md = store
-        executor = session.make_executor([Msg("null")])
+        runner = session.start([Msg("null")])
 
-        assert executor._env.md == {"from_the_store": True}
+        assert runner._env.md == {"from_the_store": True}
         # A copy of the contents, not the store.
-        assert executor._env.md is not store
+        assert runner._env.md is not store
 
         session.md["written_after_launch"] = True
-        assert "written_after_launch" not in executor._env.md
+        assert "written_after_launch" not in runner._env.md
         # And the session still holds what it was given.
         assert session.md is store
 
-        await executor
+        await runner
 
     asyncio.run(main())
 
@@ -611,7 +611,7 @@ def test_the_environment_describes_only_what_a_running_plan_reads():
     """Construction-only settings are arguments, not environment."""
     fields = {f.name for f in dataclasses.fields(PlanEnvironment)}
     # Both are consumed once, in __init__ -- preprocessors wrap the plan and
-    # rewindable seeds a flag the plan then owns -- so an executor reading
+    # rewindable seeds a flag the plan then owns -- so a runner reading
     # either of them back from its environment would be reading a stale value.
     assert "preprocessors" not in fields
     assert "rewindable" not in fields
@@ -635,18 +635,18 @@ def test_a_plan_installs_a_suspender_for_itself_only():
 
     async def main():
         session = PlanSession()
-        executor = session.make_executor([Msg("install_suspender", None, susp)])
-        await executor
-        return session, executor
+        runner = session.start([Msg("install_suspender", None, susp)])
+        await runner
+        return session, runner
 
-    session, executor = asyncio.run(main())
+    session, runner = asyncio.run(main())
 
-    # Installed on the executor, so it trips that plan's suspension and no
+    # Installed on the runner, so it trips that plan's suspension and no
     # other. A session-installed one would hold up every plan.
-    assert susp.installed_on is executor._suspension
+    assert susp.installed_on is runner._suspension
     assert susp.removed
     assert susp not in session.suspenders
-    assert susp not in executor.suspenders
+    assert susp not in runner.suspenders
 
 
 def test_a_durable_suspender_outlives_the_plan_it_held():
@@ -674,25 +674,25 @@ def test_a_durable_suspender_outlives_the_plan_it_held():
     async def main():
         session = PlanSession()
         session.install_suspender(susp)
-        executor = session.make_executor([Msg("null")])
-        await executor
+        runner = session.start([Msg("null")])
+        await runner
         # Trips after that plan ended. The session is still watching, so the
         # reason stands and the *next* plan is the one held for it.
         session._suspension.trip(susp, "beam is down")
 
         # Held before its first message rather than running and suspending:
         # there is no checkpoint yet to rewind to. Arranged when the plan
-        # starts rather than when the executor is built, so it is the running
+        # starts rather than when the runner is built, so it is the running
         # that has to be watched.
-        nxt = session.make_executor(next_plan())
+        nxt = session.start(next_plan())
         task = asyncio.ensure_future(nxt)
         await asyncio.sleep(0.2)
         held = not started
         session._suspension.clear(susp)
         await asyncio.wait_for(task, timeout=10)
-        return session, executor, held
+        return session, runner, held
 
-    session, executor, next_plan_was_held = asyncio.run(main())
+    session, runner, next_plan_was_held = asyncio.run(main())
 
     assert susp.installed_on is session._suspension
     # Never unsubscribed by the plan: it goes on watching its signal between
@@ -710,8 +710,8 @@ def test_one_durable_suspender_covers_every_running_plan():
 
     async def main():
         session = PlanSession()
-        first = session.make_executor([Msg("null")])
-        second = session.make_executor([Msg("null")])
+        first = session.start([Msg("null")])
+        second = session.start([Msg("null")])
         # Nothing points a suspender at a plan any more: both are waiting on
         # the one suspension, so one reason covers both by construction.
         assert first._suspension.tripped or not session._suspension.tripped
@@ -723,17 +723,17 @@ def test_one_durable_suspender_covers_every_running_plan():
     asyncio.run(main())
 
 
-def test_executor_starts_empty():
-    """Building an executor is how the caches are cleared, so a new one must
+def test_runner_starts_empty():
+    """Building a runner is how the caches are cleared, so a new one must
     not carry anything over from the plan before it."""
 
     async def main():
         session = PlanSession()
-        first = session.make_executor([Msg("open_run"), Msg("close_run")])
+        first = session.start([Msg("open_run"), Msg("close_run")])
         await first
         # Read before yielding: building the second one started its plan, and
         # what is being asserted is what it was *born* with.
-        second = session.make_executor([])
+        second = session.start([])
         try:
             return (
                 first,
@@ -757,28 +757,28 @@ def test_executor_starts_empty():
     assert not born["_msg_cache"]
     assert not born["_objs_seen"]
     assert not run_bundlers
-    # The plan stack is not empty, and must not be: an executor is built for a
+    # The plan stack is not empty, and must not be: a runner is built for a
     # plan, so its own plan is on the stack from construction. What matters is
     # that the *previous* plan left nothing behind, which is what the emptied
     # caches above show.
     assert plan_stack_depth == 1
 
 
-def test_run_engine_keeps_its_executor_after_the_plan(RE):
+def test_run_engine_keeps_its_runner_after_the_plan(RE):
     """A finished plan can still be inspected through the RunEngine."""
     RE([Msg("open_run"), Msg("close_run")])
     assert len(RE._run_start_uids) == 1
     assert RE._exit_status == "success"
-    # ...and the next plan gets a fresh executor
-    previous = RE._executor
+    # ...and the next plan gets a fresh runner
+    previous = RE._runner
     RE([Msg("open_run"), Msg("close_run")])
-    assert RE._executor is not previous
+    assert RE._runner is not previous
     assert len(RE._run_start_uids) == 1
 
 
-def test_registered_commands_survive_a_new_executor(RE):
+def test_registered_commands_survive_a_new_runner(RE):
     """register_command is remembered by the session, so it outlives the
-    executor that happened to be current when it was called."""
+    runner that happened to be current when it was called."""
     seen = []
 
     async def custom(msg):
@@ -844,25 +844,25 @@ def test_ignore_callback_exceptions_is_read_live_by_a_plan(RE):
     well as every plan after it.
     """
     RE.ignore_callback_exceptions = True
-    # The engine's own route to a new executor: built on the loop, and held at
+    # The engine's own route to a new runner: built on the loop, and held at
     # `hooks.start` so its plan cannot run while the flag is read off it.
-    RE._new_executor([Msg("null")])
-    assert RE._executor._dispatcher.ignore_exceptions is True
+    RE._new_runner([Msg("null")])
+    assert RE._runner._dispatcher.ignore_exceptions is True
 
     RE.ignore_callback_exceptions = False
-    assert RE._executor._dispatcher.ignore_exceptions is False
+    assert RE._runner._dispatcher.ignore_exceptions is False
 
-    # Nothing is going to run that plan: put an idle executor back in its
+    # Nothing is going to run that plan: put an idle runner back in its
     # place, which is what discards the one held here.
-    RE._new_executor()
+    RE._new_runner()
 
 
 def test_re_class_answers_for_whoever_is_driving(RE):
-    """``Msg('RE_class')`` reports the class of the executor's ``identity``.
+    """``Msg('RE_class')`` reports the class of the runner's ``identity``.
 
     A ``RunEngine`` names itself, so a plan asking what is running it gets the
-    RunEngine rather than the executor that happens to be executing it. With
-    nothing driving, an executor answers for itself, which is what a headless
+    RunEngine rather than the runner that happens to be executing it. With
+    nothing driving, a runner answers for itself, which is what a headless
     caller wants. The same value names the subject of a state change in the
     log.
     """
@@ -876,7 +876,7 @@ def test_re_class_answers_for_whoever_is_driving(RE):
 
     async def headless():
         seen.clear()
-        await PlanSession().make_executor(note())
+        await PlanSession().start(note())
 
     asyncio.run(headless())
-    assert seen == [PlanExecutor]
+    assert seen == [PlanRunner]

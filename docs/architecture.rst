@@ -1,6 +1,6 @@
 .. _architecture:
 
-Architecture: session, executor, suspension
+Architecture: session, runner, suspension
 ===========================================
 
 This page describes what the objects behind the `RunEngine` are, and which of
@@ -21,12 +21,12 @@ them::
             ├── Suspension         permission to run
             ├── Dispatcher     subscribers that outlive any plan
             ├── PlanHooks      where progress is watched from
-            └── make_executor(plan) -> PlanExecutor
+            └── start(plan) -> PlanRunner
                                        ├── Suspension      child of the session's
                                        ├── Dispatcher  child of the session's
                                        └── PlanEnvironment (frozen)
 
-The session builds one executor per plan and keeps no reference to it, which is
+The session builds one runner per plan and keeps no reference to it, which is
 what lets code that is already inside an event loop run more than one plan at
 once. A `RunEngine` drives exactly one, and enforces that itself, because a
 terminal has one main thread to block. See :ref:`headless` for driving a session
@@ -64,16 +64,16 @@ Which thread
 ------------
 
 The `RunEngine` is the thread-safe object. Everything it drives -- the session,
-the executor, the suspension, the dispatchers -- runs on the event loop, and calling
+the runner, the suspension, the dispatchers -- runs on the event loop, and calling
 into them from another thread is a bug rather than a slow path. That is why
-`test_executor_holds_no_threading_primitives` and `test_source_takes_no_locks`
+`test_runner_holds_no_threading_primitives` and `test_source_takes_no_locks`
 pass: single-threaded by construction needs no locks.
 
 Three boundaries are real, because something outside bluesky picks the thread:
 
 * a user calls the `RunEngine` from their own thread;
 * ophyd completes a status on whichever thread finished the move, and the
-  executor attached that callback;
+  runner attached that callback;
 * a signal calls a suspender back on whichever thread it likes.
 
 At each one, the object that owns the boundary owns the hop, and does it with
@@ -129,50 +129,50 @@ A constructor argument means a setting nothing changes once the session exists:
 ``md``, ``loop`` and ``log``, which are consumed while it is built, and
 ``run_bundler_cls`` and ``identity``, which whoever constructs it decides once.
 Everything else is a plain attribute, because changing it later is part of the
-interface -- a `RunEngine` has a property for each of them. ``make_executor``
+interface -- a `RunEngine` has a property for each of them. ``start``
 reads those into a frozen
-:class:`~bluesky.plan_executor.PlanEnvironment` for each plan, so changing one
+:class:`~bluesky.plan_runner.PlanEnvironment` for each plan, so changing one
 takes effect for the next plan and never the one already running, and the
 session never holds a second copy of a setting to keep in step. Nothing appears
 in both halves except ``md``, which has to, because the versions are stamped
 into it as the session is built and ``RE.md`` can still be reassigned.
 
-.. autoclass:: bluesky.plan_executor.PlanHooks
+.. autoclass:: bluesky.plan_runner.PlanHooks
     :members:
     :undoc-members:
 
 The hooks are the exception to the rule above: one mutable record, shared by
-reference with every executor, so that setting ``RE.msg_hook`` mid-plan reaches
+reference with every runner, so that setting ``RE.msg_hook`` mid-plan reaches
 the plan already running. They are debugging and display attachments rather than
 anything a plan's meaning depends on.
 
 What belongs to one plan
 ------------------------
 
-.. autoclass:: bluesky.plan_executor.PlanEnvironment
+.. autoclass:: bluesky.plan_runner.PlanEnvironment
     :members:
     :undoc-members:
 
-Frozen on purpose. An executor is given one of these instead of the session that
+Frozen on purpose. A runner is given one of these instead of the session that
 built it, so it can be constructed and tested without a session, and so that it
 has no route back to one.
 
-Settings that are consumed once at construction are arguments to the executor
+Settings that are consumed once at construction are arguments to the runner
 rather than part of the environment -- ``preprocessors``, which wrap the plan
 once, and the ``rewindable`` default, which seeds a flag the plan then owns.
 Reading either back from the environment would be reading a stale value.
 
-.. autoclass:: bluesky.plan_executor.PlanExecutor
+.. autoclass:: bluesky.plan_runner.PlanRunner
     :members: run, state, resumable, rewindable, suspenders, clear_suspenders,
               pause, resume, stop, emit, deferred_pause_requested
 
 ``run_start_uids`` lists every run the plan has opened, and ``interrupted`` says
 whether it was stopped before it finished.
 
-An executor runs one plan, once. ``identity`` is what its state changes are
+A runner runs one plan, once. ``identity`` is what its state changes are
 logged as having happened to, and what ``Msg('RE_class')`` reports the class of:
 a `RunEngine` names itself, because that is what a user recognises in a log,
-while a headless executor answers for itself.
+while a headless runner answers for itself.
 
 Where documents go
 ------------------
@@ -184,7 +184,7 @@ Ordering is the dispatcher's own business rather than the emitter's: a plan's
 dispatcher gives a document to its parent's subscribers before its own, which is
 the order a single shared registry gave by construction. Making the lifetime
 structural means tearing down a plan's subscriptions is nothing more than
-dropping its executor, and it gives plan tokens a namespace of their own, so a
+dropping its runner, and it gives plan tokens a namespace of their own, so a
 plan cannot unsubscribe a session callback by guessing an integer.
 
 Emission is synchronous and happens on whichever thread produced the document.
