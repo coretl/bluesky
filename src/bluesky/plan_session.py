@@ -137,7 +137,7 @@ class PlanSession:
         log: LoggerAdapter | None = None,
         run_bundler_cls: type[RunBundler] = RunBundler,
         identity: typing.Any = None,
-    ):
+    ) -> None:
         if loop is None:
             loop = _default_event_loop()
         self._loop = loop
@@ -241,7 +241,7 @@ class PlanSession:
         """
         return self._suspension.reasons
 
-    def register_command(self, name, func):
+    def register_command(self, name: str, func: typing.Callable) -> None:
         """Register a new Message command.
 
         The session remembers it, so that it survives being composed over a
@@ -256,7 +256,7 @@ class PlanSession:
         self._registered_commands[name] = func
         self._unregistered_commands.discard(name)
 
-    def unregister_command(self, name):
+    def unregister_command(self, name: str) -> None:
         """Unregister a Message command.
 
         Parameters
