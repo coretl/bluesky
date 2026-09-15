@@ -41,7 +41,7 @@ from .protocols import (
     check_supports,
 )
 from .suspenders import SuspenderBase
-from .suspensions import Suspension, SuspensionReason, join_justifications
+from .suspensions import PlanLike, Suspension, SuspensionReason, join_justifications
 from .tracing import tracer
 from .utils import (
     AsyncInput,
@@ -157,7 +157,7 @@ class RunEngineStateMachine(StateMachine):
         PANICKED = "panicked"
 
         @classmethod
-        def states(cls):
+        def states(cls) -> list[str]:
             return [state.value for state in cls]
 
     class Meta:
@@ -201,10 +201,10 @@ class LoggingPropertyMachine(PropertyMachine):
     :func:`announce_state_change`.
     """
 
-    def __init__(self, machine_type):
+    def __init__(self, machine_type) -> None:
         super().__init__(machine_type)
 
-    def __set__(self, obj, value):
+    def __set__(self, obj, value) -> None:
         own = type(obj)
         old_value = self.__get__(obj, own)
         super().__set__(obj, value)
@@ -240,7 +240,7 @@ def _default_event_loop() -> asyncio.AbstractEventLoop:
         ) from None
 
 
-def _called(plan):
+def _called(plan: PlanLike) -> typing.Iterable[Msg]:
     """A pre- or post-plan may be given as a generator function or an iterable."""
     return plan() if callable(plan) else plan
 
@@ -471,7 +471,7 @@ class PlanRunner:
         without_commands: typing.Collection[str] = (),
         preprocessors: typing.Sequence[Callable] = (),
         initially_rewindable: bool = True,
-    ):
+    ) -> None:
         self._env = env
         self._hooks = hooks
         self._identity = identity if identity is not None else self
@@ -679,7 +679,7 @@ class PlanRunner:
             raise RuntimeError("No plan is running, so there is no task to interrupt.")
         return self._task
 
-    async def _supervise_suspension(self, tripped_at_start=False):
+    async def _supervise_suspension(self, tripped_at_start=False) -> None:
         """Suspend the plan whenever its suspension is tripped.
 
         One suspension per episode, however many conditions are standing: a
@@ -831,7 +831,7 @@ class PlanRunner:
             if isinstance(obj, Pausable):
                 await maybe_await(obj.resume())
 
-    async def _stop_movable_objects(self, *, success=True):
+    async def _stop_movable_objects(self, *, success=True) -> None:
         "Call obj.stop() for all objects we have moved. Log any exceptions."
         for obj in self._movable_objs_touched:
             if isinstance(obj, Stoppable):
@@ -842,13 +842,13 @@ class PlanRunner:
             else:
                 self._env.log.debug("No 'stop' method available on %r", obj)
 
-    def _destroy_open_run_tracing_spans(self):
+    def _destroy_open_run_tracing_spans(self) -> None:
         while len(self._run_tracing_spans):
             _span = self._run_tracing_spans.pop()
             _span.set_attribute("exit_status", "aborted")
             _span.end()
 
-    def __await__(self):
+    def __await__(self) -> typing.Generator[typing.Any, None, typing.Any]:
         """Wait for the plan, and give back what it returned.
 
         The plan is already under way, so this waits for it rather than
@@ -1205,7 +1205,7 @@ class PlanRunner:
             raise stashed_exception
         return plan_return
 
-    def _close_run_trace(self, msg: Msg):
+    def _close_run_trace(self, msg: Msg) -> None:
         exit_status = msg.kwargs.get("exit_status", self.exit_status)
         reason = msg.kwargs.get("reason", self._reason)
         try:
@@ -1216,7 +1216,14 @@ class PlanRunner:
         except IndexError:
             logger.warning("No open traces left to close!")
 
-    def _status_object_completed(self, ret, fut: asyncio.Future, pardon_failures, obj=None, action=None):
+    def _status_object_completed(
+        self,
+        ret,
+        fut: asyncio.Future,
+        pardon_failures: asyncio.Event,
+        obj: typing.Any = None,
+        action: str | None = None,
+    ) -> None:
         """
         Task to run when a status object is finished.
 
@@ -1304,7 +1311,7 @@ class PlanRunner:
 
         return new_plan
 
-    async def pause(self, defer=False):
+    async def pause(self, defer: bool = False) -> None:
         """Bring the plan to rest at a resting point. Must be called on the loop.
 
         The gate this closes is not touched here: the run loop closes it itself
@@ -1331,7 +1338,7 @@ class PlanRunner:
 
         self._run_task.cancel()
 
-    async def resume(self):
+    async def resume(self) -> None:
         """Continue a paused plan from its last checkpoint. On the loop.
 
         Rewinds, tells devices, then releases the plan.
@@ -1946,7 +1953,7 @@ class PlanRunner:
                         watch_futs.update(self._groups.get(w, set()))
                     watch_task = asyncio.create_task(wait_for_first_exception(watch_futs))
 
-                    def cancel_status_task_if_error(fut: asyncio.Future[list[asyncio.Future]]):
+                    def cancel_status_task_if_error(fut: asyncio.Future[list[asyncio.Future]]) -> None:
                         # If _wait_for raised an exception, or if any of the status
                         # objects in the watch groups failed, cancel the status_task.
                         if fut.exception() or any(f.exception() for f in fut.result()):
@@ -2253,7 +2260,7 @@ class PlanRunner:
         # message.
         joined: list[SuspensionReason] = []
 
-        async def a_change():
+        async def a_change() -> None:
             """Park until the suspension clears, or a reason outside ``seen`` joins it."""
             while True:
                 reasons = self._suspension.reasons
@@ -2264,7 +2271,7 @@ class PlanRunner:
                 # joiner nobody has run.
                 await self._suspension.wait_changed()
 
-        def suspension():
+        def suspension() -> typing.Generator[Msg, typing.Any, None]:
             # None of this is replayed: rewinding is what happens after it.
             yield Msg("rewindable", None, False)
             # The openers' pre-plans, after the rewind and after movable
@@ -2368,7 +2375,7 @@ class PlanRunner:
         return registry
 
 
-def _set_span_msg_attributes(span, msg):
+def _set_span_msg_attributes(span: Span, msg: Msg) -> None:
     span.set_attribute("msg.command", msg.command)
     span.set_attribute("msg.args", sanitize_np(msg.args))
     span.set_attribute("msg.kwargs", json.dumps(msg.kwargs, default=repr))
