@@ -73,6 +73,10 @@ that goes on the RunStop document of every run the plan opened.
 if the plan was paused, stopped, aborted or halted rather than reaching its own
 end. ``run_start_uids`` lists every run it opened.
 
+``done()`` says whether the plan has finished at all, which ``state`` cannot:
+an executor reports ``'idle'`` both before its plan reaches the first message
+and after the plan has ended.
+
 There is no result object to build. :class:`~bluesky.run_engine.RunEngineResult`
 is what a `RunEngine` returns from ``__call__``, assembled out of exactly these
 attributes; a caller that is not a `RunEngine` reads them directly.

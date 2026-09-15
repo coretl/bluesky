@@ -580,6 +580,14 @@ class PlanExecutor:
         # Load the plan last, so that a preprocessor seeing a half-built
         # executor is not a thing that can happen.
         self._plan = plan  # this ref is just used for metadata introspection
+        if plan is None:
+            # Nothing to run, so nothing runs: no plan on the stack and no
+            # task. The one caller who wants this is a `RunEngine`, which keeps
+            # an executor between plans to answer for the state of a plan it
+            # does not have. Giving that one a task would park a coroutine for
+            # the life of the engine and leave an object holding a plan that
+            # never ran, which is exactly what this class must not do.
+            return
         if metadata:
             self._metadata_per_call.update(metadata)
         gen = ensure_generator(plan)
@@ -587,20 +595,12 @@ class PlanExecutor:
             gen = wrapper_func(gen)
         self._push_plan(gen)
 
-    def _begin(self) -> None:
-        """Set this plan going, as the session does the moment it is built.
-
-        Creating the task is what makes this object a handle to a plan under
-        way rather than a plan waiting to be started: `run` awaits it, `pause`
-        and `stop` steer it. It cannot reach the plan's first message before
-        the loop next yields, and `PlanHooks.start` holds it there for anyone
-        who needs that moment -- a `RunEngine` has a signal handler to install.
-
-        Separate from ``__init__`` for the one caller that wants an executor
-        with nothing running: a `RunEngine` keeps one between plans, to answer
-        for the state of a plan it does not have, and a task parked forever
-        would make that an object holding a plan that never ran.
-        """
+        # Last of all: there is a plan, the executor is whole, so it goes.
+        # Creating the task here is what makes this object a handle to a plan
+        # under way rather than one waiting to be started -- `run` awaits it,
+        # `pause` and `stop` steer it. It cannot reach the plan's first message
+        # before the loop next yields, and `PlanHooks.start` holds it there for
+        # anyone who needs that moment: a `RunEngine` has a handler to install.
         self._task = asyncio.create_task(self._run())
 
     # The hooks are the session's; firing one, and checking whether it is set
@@ -862,6 +862,14 @@ class PlanExecutor:
         run to completion.
         """
         return await self._task
+
+    def done(self) -> bool:
+        """Whether the plan has finished, however it finished.
+
+        `state` cannot answer this: it reports 'idle' both for a plan that has
+        not reached its first message and for one that ended an hour ago.
+        """
+        return self._task is not None and self._task.done()
 
     async def _run(self):
         """Run the plan, as the task built for it in ``__init__``.

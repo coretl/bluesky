@@ -295,6 +295,31 @@ def test_the_start_hook_holds_the_plan_before_its_first_message():
     assert state_after == "idle"
 
 
+def test_done_says_what_idle_cannot():
+    """'idle' means both "not started" and "finished"; ``done`` separates them."""
+    seen = {}
+
+    async def main():
+        session = PlanSession()
+        held = asyncio.Event()
+        session.hooks.start = held.wait
+        executor = session.make_executor([Msg("null")])
+
+        await asyncio.sleep(0.05)
+        # Held before its first message: idle, and not done.
+        seen["held"] = (str(executor.state), executor.done())
+
+        held.set()
+        await executor.run()
+        # Finished: idle again, and this time done.
+        seen["finished"] = (str(executor.state), executor.done())
+
+    asyncio.run(main())
+
+    assert seen["held"] == ("idle", False)
+    assert seen["finished"] == ("idle", True)
+
+
 def test_a_synchronous_start_hook_is_allowed():
     """The hook may be a plain callable; only the default does nothing."""
     called = []
