@@ -1607,6 +1607,38 @@ def test_no_rewindable_msg(RE):
     assert msg_lst[7:] == plan[4:]
 
 
+def test_rewindable_false_clears_msg_cache(RE):
+    """Characterization test: ``Msg('rewindable', None, False)`` discards
+    the checkpoint replay cache. RE._rewindable assigns ``self.rewindable``,
+    and that property setter calls ``self._reset_checkpoint_state()``
+    whenever the RunEngine is resumable and the value actually changes.
+    This is what stops a later pause from replaying through devices that
+    must not be re-triggered.
+    """
+    cache_lengths = []
+
+    def track_cache(msg):
+        cache_lengths.append((msg.command, len(RE._msg_cache)))
+
+    RE.msg_hook = track_cache
+
+    plan = [
+        Msg("checkpoint"),
+        Msg("null"),
+        Msg("null"),
+        Msg("null"),
+        Msg("rewindable", None, False),
+    ]
+    RE(plan)
+
+    # Just before 'rewindable' is processed, the cache holds the three
+    # cacheable 'null' messages accumulated since the checkpoint.
+    assert cache_lengths[-1] == ("rewindable", 3)
+
+    # Once 'rewindable' has been processed, the cache has been reset.
+    assert len(RE._msg_cache) == 0
+
+
 @pytest.mark.parametrize("start_state", [True, False])
 def test_rewindable_state_retrival(RE, start_state):
     RE.rewindable = start_state
@@ -2698,6 +2730,29 @@ def test_async_scan_id_source(RE):
     RE.scan_id_source = async_scan_source
     RE([Msg("open_run")])
     assert RE.md["scan_id"] == 42
+
+
+def test_scan_id_increments_per_run(RE):
+    """Characterization test: ``scan_id`` is (re)assigned on every
+    'open_run' message, not once per plan. A single plan containing three
+    open_run/close_run pairs must therefore produce three consecutive
+    scan_ids, and RE.md['scan_id'] must end up holding the last of them.
+    """
+    scan_ids = []
+
+    def collect_start(name, doc):
+        if name == "start":
+            scan_ids.append(doc["scan_id"])
+
+    RE.subscribe(collect_start, "start")
+
+    plan = [Msg("open_run"), Msg("close_run")] * 3
+    RE(plan)
+
+    assert len(scan_ids) == 3
+    assert scan_ids[1] == scan_ids[0] + 1
+    assert scan_ids[2] == scan_ids[1] + 1
+    assert RE.md["scan_id"] == scan_ids[-1]
 
 
 @requires_ophyd
