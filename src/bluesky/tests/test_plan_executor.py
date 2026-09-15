@@ -225,6 +225,21 @@ def test_plan_return_value_without_a_run_engine():
     assert asyncio.run(main()) == 42
 
 
+def test_a_malformed_plan_raises_on_the_calling_thread(RE):
+    """Loading the plan as the executor is built is what puts it here.
+
+    The `RunEngine` builds its executor on the loop, so this is the property
+    that says the crossing waits and re-raises rather than leaving the failure
+    in a future on the loop thread. The engine is left usable.
+    """
+    with pytest.raises(TypeError):
+        RE(42)
+
+    # Not left mid-plan by the failure.
+    assert RE._executor.state.is_idle
+    RE([Msg("null")])
+
+
 def test_the_start_hook_holds_the_plan_before_its_first_message():
     """`hooks.start` is awaited before anything the plan can observe.
 

@@ -439,7 +439,7 @@ class RunEngine:
         # headless caller may keep several. Built empty here rather than left
         # None so that "no plan yet" is not a third state every caller has to
         # reason about: it reports 'idle', which is what it means.
-        self._executor = self._session.make_executor([])
+        self._executor = self.__on_loop(partial(self._session.make_executor, []))
 
         # aliases for back-compatibility
         self.subscribe_lossless = self.dispatcher.subscribe
@@ -728,7 +728,11 @@ class RunEngine:
                 f"{self._executor!r} is still running a plan, in the "
                 f"'{self._executor.state}' state. A RunEngine runs one plan at a time."
             )
-        self._executor = self._session.make_executor(plan, metadata=metadata, subs=subs)
+        # Built on the loop, like every other session call this engine makes.
+        # `__on_loop` re-raises on this thread, so a malformed plan still raises
+        # where the caller can catch it -- which is the whole reason the plan is
+        # loaded before the run begins rather than inside it.
+        self._executor = self.__on_loop(partial(self._session.make_executor, plan, metadata=metadata, subs=subs))
         self._task_fut = None
 
     def reset(self):
