@@ -83,9 +83,11 @@ class _RunEnginePanic(Exception): ...
 def _panicked_state() -> ProxyString:
     """The value `RunEngine.state` reports once this engine has panicked.
 
-    Callers ask a state for more than its text: `bluesky.suspenders` reads
-    ``RE.state.is_running``. A ProxyString over a machine forced to 'panicked'
-    answers every ``is_*`` correctly, where a bare str answers none of them.
+    Callers ask a state for more than its text: this engine tests
+    ``state.is_idle`` before it builds a runner and ``state.is_paused`` before
+    it resumes one, and whatever is reported here has to answer those the same
+    way. A ProxyString over a machine forced to 'panicked' answers every
+    ``is_*`` correctly, where a bare str answers none of them.
     """
     machine = RunEngineStateMachine()
     machine.set_("panicked")
