@@ -95,6 +95,10 @@ class PlanSession:
     scan_id_source
         A (possibly async) function used to calculate ``scan_id``.
 
+    ignore_exceptions
+        Whether a raising subscriber is warned about rather than raised. One
+        setting for the session and every plan running under it.
+
     hooks
         The `PlanHooks` record shared with every executor this session builds.
         One mutable record rather than a copy per plan, so setting a hook on it
@@ -382,6 +386,29 @@ class PlanSession:
         :meth:`PlanSession.subscribe`
         """
         self._dispatcher.unsubscribe(token)
+
+    def unsubscribe_all(self) -> None:
+        """Unregister every callback registered on this session.
+
+        A plan's own subscribers are not reached: they belong to its executor
+        and end with it.
+        """
+        self._dispatcher.unsubscribe_all()
+
+    @property
+    def ignore_exceptions(self) -> bool:
+        """Whether a raising subscriber is warned about rather than raised.
+
+        One setting for the session and every plan running under it: a plan's
+        subscribers must not behave differently from the ones that outlive it,
+        so setting this reaches the plans already running as well as the ones
+        after them.
+        """
+        return self._dispatcher.ignore_exceptions
+
+    @ignore_exceptions.setter
+    def ignore_exceptions(self, val: bool) -> None:
+        self._dispatcher.ignore_exceptions = val
 
     def install_suspender(self, suspender: SuspenderBase) -> None:
         """Install a durable suspender, given to every executor built after it.
