@@ -288,6 +288,13 @@ service that wants any of it must attach something:
 ``hooks.state``
     Called ``f(new_state, old_state)`` on every state change.
 
+``hooks.start``
+    Awaited before the plan's first message, and may be a coroutine. A
+    `RunEngine` uses it to hold the plan until its signal handler is installed;
+    a headless caller has none to install and can leave it unset. It is the one
+    hook the executor waits on rather than tells, so a hook that returns late
+    holds the plan late.
+
 ``hooks.pause``
     Called with no arguments when an executor comes to rest paused. A
     `RunEngine` uses it to release the main thread; a headless caller has no

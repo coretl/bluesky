@@ -225,6 +225,57 @@ def test_plan_return_value_without_a_run_engine():
     assert asyncio.run(main()) == 42
 
 
+def test_the_start_hook_holds_the_plan_before_its_first_message():
+    """`hooks.start` is awaited before anything the plan can observe.
+
+    The hook the executor waits on rather than tells. A `RunEngine` will hold
+    the plan here until its signal handler is installed.
+    """
+    seen = []
+
+    async def main():
+        session = PlanSession()
+        held = asyncio.Event()
+
+        async def hold():
+            seen.append("hook")
+            await held.wait()
+
+        session.hooks.start = hold
+        executor = session.make_executor([Msg("null")])
+        running = asyncio.ensure_future(executor.run())
+
+        # Long enough for the plan to have run had nothing held it.
+        await asyncio.sleep(0.1)
+        # The hook was reached, and the plan has not started behind it.
+        state_while_held = str(executor.state)
+        seen.append("released")
+        held.set()
+        await running
+        return state_while_held, str(executor.state)
+
+    state_while_held, state_after = asyncio.run(main())
+
+    assert seen == ["hook", "released"]
+    # Still idle: the hook is awaited before the state leaves 'idle'.
+    assert state_while_held == "idle"
+    assert state_after == "idle"
+
+
+def test_a_synchronous_start_hook_is_allowed():
+    """The hook may be a plain callable; only the default does nothing."""
+    called = []
+
+    async def main():
+        session = PlanSession()
+        session.hooks.start = lambda: called.append("start")
+        await session.make_executor([Msg("null")]).run()
+
+    asyncio.run(main())
+
+    assert called == ["start"]
+
+
 def test_the_executor_says_how_the_plan_finished():
     """The outcome is readable off the executor, by whoever ran it.
 

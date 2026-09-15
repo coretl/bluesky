@@ -348,6 +348,14 @@ class PlanHooks:
         `RunEngine` does. Separate from `announce` because how a user
         interrupts a suspended plan depends on what is driving it, so the
         wording is the caller's.
+    start
+        Awaited before the plan's first message, and may be a coroutine. A
+        `RunEngine` uses this to hold the plan until its signal handler is
+        installed; a headless caller has none to install and can leave it unset.
+
+        The only hook the executor *waits* on rather than tells: one that
+        returns late holds the plan late, and one that never returns never
+        starts it.
     pause
         Called with no arguments when an executor comes to rest paused. A
         `RunEngine` uses this to release the main thread; a headless caller has
@@ -359,6 +367,7 @@ class PlanHooks:
     state: Callable = do_nothing
     announce: Callable[[str], None] = do_nothing
     suspend: Callable[[typing.Mapping[typing.Hashable, SuspensionReason]], None] = do_nothing
+    start: Callable[[], SyncOrAsync[None]] = do_nothing
     pause: Callable[[], None] = do_nothing
 
     def __setattr__(self, name: str, value) -> None:
@@ -861,6 +870,12 @@ class PlanExecutor:
         # that acts as a proxy that does not have the correct behavior
         # when `.cancel` is called on it.
         self._task = asyncio.current_task(self._env.loop)
+        # Before the permission is arranged and before the state leaves 'idle',
+        # so that whoever is holding the plan here is holding an executor that
+        # has not started, and a suspender tripping meanwhile is arranged for
+        # when it does. Outside the try below: a cancel while waiting here ends
+        # a plan that never ran, and must not be reported as one that aborted.
+        await maybe_await(self._hooks.start())
         self._arrange_permission()
         stashed_exception = None
         debug = msg_logger.debug
