@@ -199,6 +199,18 @@ see only its own documents while the session's see everything; each gets a
 ``scan_id`` of its own; and one plan failing does not disturb the other. What
 they do share is the session's suspenders, which is the next section.
 
+.. warning::
+
+    Two plans running at once must not touch the same hardware. Nothing stops
+    them: a runner knows what its own plan has staged, set and triggered, and
+    knows nothing at all about anybody else's. Two plans moving one motor, or
+    staging one detector, will interleave their messages and leave the device
+    in a state neither plan asked for.
+
+    Keeping them apart is the caller's job, and there is no mechanism here to
+    help -- so if two plans might reach the same device, run them one after
+    another. This restriction belongs to the plans, not to the runners.
+
 Suspending
 ----------
 
