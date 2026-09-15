@@ -95,9 +95,6 @@ class PlanSession:
     scan_id_source
         A (possibly async) function used to calculate ``scan_id``.
 
-    dispatcher
-        The `Dispatcher` documents are emitted through.
-
     hooks
         The `PlanHooks` record shared with every executor this session builds.
         One mutable record rather than a copy per plan, so setting a hook on it
@@ -208,8 +205,8 @@ class PlanSession:
         self._registered_commands: dict[str, typing.Callable] = {}
         self._unregistered_commands: set[str] = set()
 
-        # public dispatcher for callbacks
-        self.dispatcher = Dispatcher()
+        # Documents go out through this; `subscribe` is the way in from outside.
+        self._dispatcher = Dispatcher()
 
     async def _next_scan_id(self) -> int:
         """Compute the ``scan_id`` for a run that is opening, and return it.
@@ -344,7 +341,7 @@ class PlanSession:
             # A dispatcher of this plan's own, under the session's, so that a
             # plan's subscribers end with it and its documents still reach the
             # session's. The chain is what makes those one mechanism.
-            Dispatcher(parent=self.dispatcher),
+            Dispatcher(parent=self._dispatcher),
             preprocessors=self.preprocessors,
             initially_rewindable=self.rewindable,
             metadata=metadata,
@@ -353,6 +350,38 @@ class PlanSession:
             commands=dict(self._registered_commands),
             without_commands=self._unregistered_commands,
         )
+
+    def subscribe(self, func: typing.Callable, name: str = "all") -> int:
+        """Register a callback to consume documents from every plan.
+
+        Parameters
+        ----------
+        func : callable
+            Expecting a signature like ``f(name, document)``, where name is a
+            string and document is a dict.
+        name : {'all', 'start', 'descriptor', 'event', 'stop'}, optional
+            The type of document this function should receive ('all' by
+            default).
+
+        Returns
+        -------
+        token : int
+            An integer ID that can be passed to :meth:`unsubscribe`.
+
+        See Also
+        --------
+        :meth:`PlanSession.unsubscribe`
+        """
+        return self._dispatcher.subscribe(func, name)
+
+    def unsubscribe(self, token: int) -> None:
+        """Unregister a callback by the integer ID :meth:`subscribe` returned.
+
+        See Also
+        --------
+        :meth:`PlanSession.subscribe`
+        """
+        self._dispatcher.unsubscribe(token)
 
     def install_suspender(self, suspender: SuspenderBase) -> None:
         """Install a durable suspender, given to every executor built after it.

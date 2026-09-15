@@ -198,7 +198,7 @@ def test_run_a_plan_without_a_run_engine():
 
     async def main():
         session = PlanSession(md={"beamline": "test"})
-        session.dispatcher.subscribe(lambda name, doc: collected.append(name))
+        session.subscribe(lambda name, doc: collected.append(name))
         executor = session.make_executor([Msg("open_run"), Msg("close_run")])
         plan_return = await executor.run()
         return executor, plan_return
@@ -251,7 +251,7 @@ def test_session_outlives_its_executors():
 
     async def main():
         session = PlanSession(md={"beamline": "test"})
-        session.dispatcher.subscribe(lambda name, doc: names.append(name))
+        session.subscribe(lambda name, doc: names.append(name))
         uids = []
         for _ in range(3):
             executor = session.make_executor([Msg("open_run"), Msg("close_run")])
@@ -277,7 +277,7 @@ def test_two_plans_run_at_once_on_one_session():
 
     async def main():
         session = PlanSession(md={"beamline": "test"})
-        session.dispatcher.subscribe(lambda name, doc: starts.append(doc) if name == "start" else None)
+        session.subscribe(lambda name, doc: starts.append(doc) if name == "start" else None)
         plan = [Msg("open_run"), Msg("sleep", None, 0.05), Msg("close_run")]
         first = session.make_executor(list(plan))
         second = session.make_executor(list(plan))
@@ -377,9 +377,7 @@ def test_two_plans_documents_reach_the_session_and_only_their_own_subscribers():
         session = PlanSession()
         session_starts: list[str] = []
         first_starts: list[str] = []
-        session.dispatcher.subscribe(
-            lambda name, doc: session_starts.append(doc["uid"]) if name == "start" else None
-        )
+        session.subscribe(lambda name, doc: session_starts.append(doc["uid"]) if name == "start" else None)
 
         plan = [Msg("open_run"), Msg("sleep", None, 0.05), Msg("close_run")]
         first = session.make_executor(

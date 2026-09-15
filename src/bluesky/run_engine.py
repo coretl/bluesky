@@ -464,7 +464,10 @@ class RunEngine:
 
     @property
     def dispatcher(self):
-        return self._session.dispatcher
+        # The session keeps its dispatcher private and offers subscribe /
+        # unsubscribe instead. A `RunEngine` has published the object itself
+        # since long before there was a session, so it reaches for it here.
+        return self._session._dispatcher
 
     @property
     def preprocessors(self):

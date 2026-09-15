@@ -120,7 +120,7 @@ Subscribe on the session and you see every document from every plan it runs:
     >>> async def main():
     ...     session = PlanSession()
     ...     names = []
-    ...     session.dispatcher.subscribe(lambda name, doc: names.append(name))
+    ...     session.subscribe(lambda name, doc: names.append(name))
     ...     await session.make_executor(scan()).run()
     ...     await session.make_executor(scan()).run()
     ...     return names
@@ -135,7 +135,7 @@ Subscribe for one plan and the subscription is discarded with its executor:
     >>> async def main():
     ...     session = PlanSession()
     ...     durable, just_this_plan = [], []
-    ...     session.dispatcher.subscribe(lambda name, doc: durable.append(name))
+    ...     session.subscribe(lambda name, doc: durable.append(name))
     ...     first = session.make_executor(scan(), subs={"start": lambda n, d: just_this_plan.append(n)})
     ...     await first.run()
     ...     await session.make_executor(scan()).run()
@@ -144,7 +144,7 @@ Subscribe for one plan and the subscription is discarded with its executor:
     >>> asyncio.run(main())
     (['start', 'stop', 'start', 'stop'], ['start'])
 
-A plan's dispatcher holds the session's as its parent, so a document reaches the
+A plan's subscribers sit under the session's, so a document reaches the
 subscribers that outlive the plan before the ones that arrived with it.
 
 Metadata
@@ -160,7 +160,7 @@ counter. Each plan is given a copy of it as the plan is launched, so writing to
     ...     session = PlanSession()
     ...     session.md["proposal"] = "p1234"
     ...     starts = []
-    ...     session.dispatcher.subscribe(lambda name, doc: starts.append(doc), "start")
+    ...     session.subscribe(lambda name, doc: starts.append(doc), "start")
     ...     await session.make_executor(scan()).run()
     ...     return starts[0]["proposal"], starts[0]["scan_id"]
     ...
