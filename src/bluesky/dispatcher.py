@@ -22,14 +22,14 @@ class Dispatcher:
     one dispatcher and the chain does the rest.
     """
 
-    def __init__(self, parent: "Dispatcher | None" = None, *, ignore_exceptions: bool = False):
+    def __init__(self, parent: "Dispatcher | None" = None, *, ignore_exceptions: bool = False) -> None:
         self._parent = parent
         self.cb_registry = CallbackRegistry(allowed_sigs=DocumentNames, ignore_exceptions=ignore_exceptions)
         self._counter = count()
         # public token -> the registry tokens it stands for
         self._token_mapping: dict[int, list[typing.Any]] = {}
 
-    def process(self, name, doc):
+    def process(self, name: DocumentNames, doc) -> None:
         """
         Dispatch document ``doc`` of type ``name`` to the callback registry.
 
@@ -56,7 +56,7 @@ class Dispatcher:
                 "and run again." % (exc, name.name)
             )
 
-    def subscribe(self, func, name="all"):
+    def subscribe(self, func, name="all") -> int:
         """
         Register a callback function to consume documents.
 
@@ -117,7 +117,7 @@ class Dispatcher:
         self._token_mapping[public_token] = [private_token]
         return public_token
 
-    def unsubscribe(self, token):
+    def unsubscribe(self, token: int) -> None:
         """
         Unregister a callback function using its integer ID.
 
@@ -133,13 +133,13 @@ class Dispatcher:
         for private_token in self._token_mapping.pop(token, []):
             self.cb_registry.disconnect(private_token)
 
-    def unsubscribe_all(self):
+    def unsubscribe_all(self) -> None:
         """Unregister all callbacks from the dispatcher."""
         for public_token in list(self._token_mapping.keys()):
             self.unsubscribe(public_token)
 
     @property
-    def ignore_exceptions(self):
+    def ignore_exceptions(self) -> bool:
         """Whether a raising subscriber is warned about rather than raised.
 
         A child answers for its parent: there is one setting, and a plan's
@@ -150,7 +150,7 @@ class Dispatcher:
         return self.cb_registry.ignore_exceptions
 
     @ignore_exceptions.setter
-    def ignore_exceptions(self, val):
+    def ignore_exceptions(self, val: bool) -> None:
         if self._parent is not None:
             self._parent.ignore_exceptions = val
         else:
