@@ -64,9 +64,8 @@ def test_trips_while_a_plan_is_running(RE, hw):
     sig.put(0)
     RE.install_suspender(SuspendBoolHigh(sig))
     commands = []
-    RE.msg_hook = lambda msg: commands.append(msg.command)
 
-    _at(0.1, sig.put, 1)
+    _at_message(RE, commands, sleep=lambda: sig.put(1))
     _at(0.5, sig.put, 0)
     start = ttime.time()
     RE(SCAN)
@@ -84,8 +83,9 @@ def test_releases_while_a_plan_is_suspended(RE, hw):
     sig = hw.bool_sig
     sig.put(0)
     RE.install_suspender(SuspendBoolHigh(sig, sleep=0.3))
+    commands = []
 
-    _at(0.1, sig.put, 1)
+    _at_message(RE, commands, sleep=lambda: sig.put(1))
     _at(0.4, sig.put, 0)
     start = ttime.time()
     RE(SCAN)
@@ -173,8 +173,9 @@ def test_a_retrip_within_the_settle_time_stays_tripped(RE, hw):
     sig = hw.bool_sig
     sig.put(0)
     RE.install_suspender(SuspendBoolHigh(sig, sleep=0.4))
+    commands = []
 
-    _at(0.1, sig.put, 1)
+    _at_message(RE, commands, sleep=lambda: sig.put(1))
     _at(0.3, sig.put, 0)  # schedules a release for 0.7
     _at(0.4, sig.put, 1)  # trips again before it comes due
     _at(0.9, sig.put, 0)
@@ -219,8 +220,9 @@ def test_no_checkpoint_mid_plan_aborts(RE, hw):
     sig = hw.bool_sig
     sig.put(0)
     RE.install_suspender(SuspendBoolHigh(sig))
+    commands = []
 
-    _at(0.1, sig.put, 1)
+    _at_message(RE, commands, sleep=lambda: sig.put(1))
     with pytest.raises(RunEngineInterrupted):
         RE([Msg("clear_checkpoint"), Msg("sleep", None, 0.5)])
     assert RE.state == "idle"
@@ -240,8 +242,9 @@ def test_no_checkpoint_abort_raises_nothing_into_the_loop(RE, hw):
     sig = hw.bool_sig
     sig.put(0)
     RE.install_suspender(SuspendBoolHigh(sig))
+    commands = []
 
-    _at(0.1, sig.put, 1)
+    _at_message(RE, commands, sleep=lambda: sig.put(1))
     with pytest.raises(RunEngineInterrupted):
         RE([Msg("clear_checkpoint"), Msg("sleep", None, 0.5)])
     assert RE.state == "idle"
@@ -268,7 +271,8 @@ def test_clear_suspenders_reaches_a_plans_own_from_the_prompt(RE, hw):
         yield Msg("checkpoint")
         yield Msg("sleep", None, 0.4)
 
-    _at(0.2, clear_from_another_thread)
+    commands = []
+    _at_message(RE, commands, sleep=clear_from_another_thread)
     RE(plan())
 
     # Repr(raised[0].
@@ -364,8 +368,11 @@ def test_a_condition_joining_a_suspension_runs_its_pre_plan(RE):
     RE.install_suspender(SuspendBoolHigh(first, pre_plan=pre("first")))
     RE.install_suspender(SuspendBoolHigh(second, pre_plan=pre("second")))
 
-    _at(0.1, first.put, 1)
-    _at(0.3, second.put, 1)
+    commands = []
+    # First trips as the plan sleeps; second joins only once that suspension
+    # has actually opened, which is what "joining" means -- not a guess about
+    # which side of 0.3s a loaded machine lands on.
+    _at_message(RE, commands, sleep=lambda: first.put(1), _start_suspender=lambda: second.put(1))
     _at(0.6, lambda: (first.put(0), second.put(0)))
     RE([Msg("checkpoint")] + [Msg("sleep", None, 0.2)] * 5)
 
@@ -394,8 +401,8 @@ def test_a_joining_pre_plan_that_raises_reaches_the_plan(RE):
     RE.install_suspender(SuspendBoolHigh(first, pre_plan=fine))
     RE.install_suspender(SuspendBoolHigh(second, pre_plan=raises))
 
-    _at(0.1, first.put, 1)
-    _at(0.3, second.put, 1)
+    commands = []
+    _at_message(RE, commands, sleep=lambda: first.put(1), _start_suspender=lambda: second.put(1))
     # A safety net, so a failure to propagate shows up as a failed assertion
     # rather than as a hung suite.
     _at(1.5, lambda: (first.put(0), second.put(0)))
@@ -440,7 +447,8 @@ def test_a_suspension_reaches_both_hooks(RE):
     susp = SuspendBoolHigh(sig)
     RE.install_suspender(susp)
 
-    _at(0.1, sig.put, 1)
+    commands = []
+    _at_message(RE, commands, sleep=lambda: sig.put(1))
     _at(0.5, sig.put, 0)
     RE([Msg("checkpoint")] + [Msg("sleep", None, 0.2)] * 4)
 
@@ -543,10 +551,7 @@ def test_pre_plans_run_in_fire_order_and_post_plans_in_reverse(RE, hw):
         )
     )
     commands = []
-    RE.msg_hook = lambda msg: commands.append(msg.command)
-
-    _at(0.1, beam.put, 1)
-    _at(0.3, shutter.put, 1)
+    _at_message(RE, commands, sleep=lambda: beam.put(1), _start_suspender=lambda: shutter.put(1))
     _at(0.6, beam.put, 0)
     _at(0.6, shutter.put, 0)
     RE(SCAN)
