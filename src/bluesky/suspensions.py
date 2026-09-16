@@ -52,15 +52,20 @@ class Suspension:
     is tripped exactly when none stands. Two conditions tripping at once are two
     reasons and one suspension, rather than two suspensions.
 
+    Suspensions chain. One with a ``parent`` is tripped whenever its parent
+    is, which is how a suspender installed somewhere long-lived holds up every
+    plan run under it while one installed by a plan holds up only that plan.
+
     `trip` and `clear` must be called on the loop, and do not check that.
     `tripped` and `reasons` answer on any thread: the reasons are an immutable
     mapping, swapped rather than mutated, so a reader sees one snapshot or the
     next and never a mapping mid-change.
     """
 
-    def __init__(self, name: str, loop: asyncio.AbstractEventLoop) -> None:
+    def __init__(self, name: str, loop: asyncio.AbstractEventLoop, parent: Suspension | None = None) -> None:
         self.name = name
         self._loop = loop
+        self._parent = parent
         # Immutable, and replaced wholesale rather than mutated in place.
         # A reader off the loop -- `RunEngine.suspenders` and
         # `PlanSession.suspensions` are read from whatever thread asks -- then
@@ -72,8 +77,13 @@ class Suspension:
         # recovers and trips again inside the settle-down time has the older
         # release come due and drop the newer reason.
         self._releases: dict[Hashable, asyncio.TimerHandle] = {}
-        # Set-and-cleared on every change, to wake whatever is waiting.
-        self._changed: asyncio.Event = asyncio.Event()
+        # Set-and-cleared on every change anywhere in the chain. Shared with
+        # the parent rather than owned, because this suspension is tripped by its
+        # own reasons *or* its parent's, so a waiter here has to be woken by a
+        # change up there. Sharing gets that without the parent holding any
+        # reference to its children: a child reaches up, as it already does for
+        # `tripped` and `reasons`, and nothing reaches down.
+        self._changed: asyncio.Event = parent._changed if parent is not None else asyncio.Event()
 
     @property
     def loop(self) -> asyncio.AbstractEventLoop:
@@ -90,7 +100,7 @@ class Suspension:
 
     @property
     def tripped(self) -> bool:
-        """Whether anything is holding the plan up.
+        """Whether anything is holding the plan up, here or above.
 
         Derived from `reasons` rather than tracked, so the two cannot disagree.
         """
@@ -100,11 +110,13 @@ class Suspension:
     def reasons(self) -> Mapping[Hashable, SuspensionReason]:
         """Every reason this suspension is tripped, keyed by whoever tripped it.
 
-        In the order the reasons were raised, because that is the order a
-        suspension runs pre-plans in and the reverse of the order it runs
-        post-plans in. Empty exactly when nothing is tripped.
+        Includes the chain above, outermost suspension first, because that is the
+        order a suspension runs pre-plans in and the reverse of the order it
+        runs post-plans in. Empty exactly when nothing is tripped.
         """
-        return self._reasons
+        if self._parent is None:
+            return self._reasons
+        return MappingProxyType({**self._parent.reasons, **self._reasons})
 
     def trip(
         self,
@@ -140,18 +152,18 @@ class Suspension:
         self._notify_changed()
 
     def _notify_changed(self) -> None:
-        """Wake everything waiting on this suspension. Loop thread only.
+        """Wake everything waiting on this chain. Loop thread only.
 
         `set` wakes every waiter parked right now, and `clear` immediately after
-        leaves the flag down for the next one -- so waking means "something
-        moved" and nothing more, and every waiter re-tests the condition it
-        actually cares about.
+        leaves the flag down for the next one -- so waking means "something in
+        the chain moved" and nothing more, and every waiter re-tests the
+        condition it actually cares about.
         """
         self._changed.set()
         self._changed.clear()
 
     async def wait_changed(self) -> None:
-        """Wait until a reason is raised or dropped.
+        """Wait until a reason is raised or dropped, anywhere in the chain.
 
         Callers must not await between testing their condition and calling
         this, or they can miss the edge that would have woken them. Every
@@ -162,6 +174,6 @@ class Suspension:
         await self._changed.wait()
 
     async def wait_cleared(self) -> None:
-        """Wait until no reason stands."""
+        """Wait until no reason stands in the chain."""
         while self.tripped:
             await self.wait_changed()

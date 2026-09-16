@@ -1,5 +1,6 @@
 """Dispatch documents to the callbacks that consume them."""
 
+import typing
 from itertools import count
 from warnings import warn
 
@@ -11,22 +12,45 @@ __all__ = ["Dispatcher", "DocumentNames"]
 
 
 class Dispatcher:
-    """Dispatch documents to user-defined consumers on the main thread."""
+    """Dispatch documents to user-defined consumers on the main thread.
 
-    def __init__(self):
-        self.cb_registry = CallbackRegistry(allowed_sigs=DocumentNames)
+    Dispatchers chain, the way suspensions do. A plan's subscribers go in one of
+    these with the session's as its ``parent``, so that a document reaches the
+    subscribers outliving the plan before the ones that arrived with it -- the
+    order a single shared registry gave by construction -- and so that dropping
+    the runner drops its subscriptions. Whoever emits a document hands it to
+    one dispatcher and the chain does the rest.
+    """
+
+    def __init__(self, parent: "Dispatcher | None" = None, *, ignore_exceptions: bool = False) -> None:
+        self._parent = parent
+        self.cb_registry = CallbackRegistry(allowed_sigs=DocumentNames, ignore_exceptions=ignore_exceptions)
         self._counter = count()
-        self._token_mapping = dict()  # noqa: C408
+        # public token -> the registry tokens it stands for
+        self._token_mapping: dict[int, list[typing.Any]] = {}
 
-    def process(self, name, doc):
+    def process(self, name: DocumentNames, doc) -> None:
         """
         Dispatch document ``doc`` of type ``name`` to the callback registry.
+
+        May be called from a thread that is not the event loop's: a sync ophyd
+        signal fires its monitor callback on the device's own thread, and that
+        path reaches here. Subscribers are therefore invoked on whichever thread
+        dispatched, which is not always the loop.
 
         Parameters
         ----------
         name : {'start', 'descriptor', 'event', 'stop'}
         doc : dict
         """
+        if self._parent is not None:
+            self._parent.process(name, doc)
+            # Read live rather than copied at construction, so that setting
+            # `RE.ignore_callback_exceptions` reaches the plan already running.
+            # The registry is what actually decides, so it is what has to be
+            # told; one attribute write per document is nothing beside calling
+            # the subscribers.
+            self.cb_registry.ignore_exceptions = self._parent.ignore_exceptions
         exceptions = self.cb_registry.process(name, name.name, doc)
         for exc, traceback in exceptions:  # noqa: B007
             warn(  # noqa: B028
@@ -37,7 +61,7 @@ class Dispatcher:
                 "and run again." % (exc, name.name)
             )
 
-    def subscribe(self, func, name="all"):
+    def subscribe(self, func, name="all") -> int:
         """
         Register a callback function to consume documents.
 
@@ -98,7 +122,7 @@ class Dispatcher:
         self._token_mapping[public_token] = [private_token]
         return public_token
 
-    def unsubscribe(self, token):
+    def unsubscribe(self, token: int) -> None:
         """
         Unregister a callback function using its integer ID.
 
@@ -114,15 +138,25 @@ class Dispatcher:
         for private_token in self._token_mapping.pop(token, []):
             self.cb_registry.disconnect(private_token)
 
-    def unsubscribe_all(self):
+    def unsubscribe_all(self) -> None:
         """Unregister all callbacks from the dispatcher."""
         for public_token in list(self._token_mapping.keys()):
             self.unsubscribe(public_token)
 
     @property
-    def ignore_exceptions(self):
+    def ignore_exceptions(self) -> bool:
+        """Whether a raising subscriber is warned about rather than raised.
+
+        A child answers for its parent: there is one setting, and a plan's
+        subscribers must not behave differently from the ones that outlive it.
+        """
+        if self._parent is not None:
+            return self._parent.ignore_exceptions
         return self.cb_registry.ignore_exceptions
 
     @ignore_exceptions.setter
-    def ignore_exceptions(self, val):
-        self.cb_registry.ignore_exceptions = val
+    def ignore_exceptions(self, val: bool) -> None:
+        if self._parent is not None:
+            self._parent.ignore_exceptions = val
+        else:
+            self.cb_registry.ignore_exceptions = val
