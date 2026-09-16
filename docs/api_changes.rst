@@ -156,6 +156,13 @@ Changed
   calling the `RunEngine` does.  (Tom Caswell has ruled on the blocking resume;
   the rest of this entry is his tentative position and is still to be
   confirmed.)
+- ``RunEngine.emit`` is synchronous.  There was a synchronous ``emit_sync`` and
+  a coroutine ``emit`` doing the same work; awaiting the latter never
+  suspended.  ``RunBundler`` therefore takes one ``emit`` argument rather than
+  the pair, which matters to anyone passing a custom ``run_bundler_cls``.
+  Code that wrote ``await RE.emit(...)`` -- the only way to call the coroutine
+  -- must drop the ``await``; there is no deprecation period for that spelling,
+  because a synchronous function cannot be awaited.
 
 Removed
 -------
@@ -171,6 +178,11 @@ Removed
   is tripped is ``SuspenderBase.tripped``; a suspender no longer knows what it
   is holding up, which is what lets the same one be installed on a session or
   on a single plan.
+
+Deprecated
+----------
+- ``RunEngine.emit_sync``.  There is one ``emit`` now, and it is synchronous.
+
 
 v1.15.1 (2026-05-05)
 ====================

@@ -1996,7 +1996,6 @@ class RunEngine:
             validated,
             self.record_interruptions,
             self.emit,
-            self.emit_sync,
             self.log,
             strict_pre_declare=self._require_stream_declaration,
         )
@@ -2781,14 +2780,19 @@ class RunEngine:
         async_input = functools.partial(async_input, end="", flush=True)
         return await async_input(prompt)
 
-    def emit_sync(self, name, doc):
-        "Process blocking callbacks and schedule non-blocking callbacks."
-
-        # Process the doc, already validated against the schema in event-model
+    def emit(self, name, doc):
+        """Give a document to every subscriber."""
+        # Already validated against the schema in event-model.
         self.dispatcher.process(name, doc)
 
-    async def emit(self, name, doc):
-        self.emit_sync(name, doc)
+    def emit_sync(self, name, doc):
+        """Deprecated. Use :meth:`emit`, which is synchronous."""
+        warn(  # noqa: B028
+            "RunEngine.emit_sync is deprecated. There is one emit now, and it "
+            "is synchronous: call RunEngine.emit.",
+            DeprecationWarning,
+        )
+        self.emit(name, doc)
 
 
 PAUSE_MSG = """

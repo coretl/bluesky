@@ -2868,3 +2868,18 @@ def test_verbose_round_trips_and_actually_silences(RE):
         RE.verbose = True
     assert RE.verbose is True
     assert RE.log.isEnabledFor(logging.ERROR)
+
+
+def test_emit_is_synchronous_and_emit_sync_is_deprecated(RE):
+    """One ``emit``, and it is synchronous; ``emit_sync`` warns and forwards."""
+    docs = []
+    RE.subscribe(lambda name, doc: docs.append((name, doc)), "start")
+    doc = {"uid": "a-uid", "time": 0.0, "scan_id": 1}
+
+    # No await: emit is an ordinary function now.
+    assert RE.emit(DocumentNames.start, doc) is None
+    assert docs == [("start", doc)]
+
+    with pytest.warns(DeprecationWarning, match="emit_sync is deprecated"):
+        RE.emit_sync(DocumentNames.start, doc)
+    assert docs == [("start", doc), ("start", doc)]
