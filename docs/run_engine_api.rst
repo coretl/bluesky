@@ -68,7 +68,6 @@ directly.
    :toctree: generated
 
    RunEngine.request_pause
-   RunEngine.request_suspend
 
 These methods may be used to register custom commands to supplement or
 replace the built-in commands recognized by the RunEngine.

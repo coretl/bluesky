@@ -393,12 +393,6 @@ processed. It can also be called by user-defined agents. See the next example.
 .. automethod:: bluesky.run_engine.RunEngine.request_pause
     :noindex:
 
-This method is used by the ``PVSuspend*`` classes above. It can also be called
-by user-defined agents.
-
-.. automethod:: bluesky.run_engine.RunEngine.request_suspend
-    :noindex:
-
 
 Example: Requesting a pause from the asyncio event loop
 -------------------------------------------------------
