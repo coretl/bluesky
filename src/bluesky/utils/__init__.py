@@ -404,6 +404,14 @@ class CallbackRegistry:
         self.callbacks = dict()  # noqa: C408
         self._cid = 0
         self._func_cid_map = {}
+        # The one thing below the RunEngine that has to be thread-safe rather
+        # than confined to the loop, and not by choice: `_remove_proxy` is a
+        # weakref destroy callback, so it runs on whichever thread drops the
+        # last reference to a subscriber. That cannot be scheduled onto the
+        # loop, so the registry takes a lock instead. Reentrant because
+        # dropping a dead key from a WeakKeyDictionary inside a locked section
+        # can finalise another proxy and call back in here.
+        self._lock = threading.RLock()
 
     def __getstate__(self):
         # We cannot currently pickle the callables in the registry, so
@@ -442,18 +450,26 @@ class CallbackRegistry:
         #   when the class object is destroyed and this is the main purpose of
         #   BoundMethodProxy.
         proxy = _BoundMethodProxy(func)
-        if proxy in self._func_cid_map[sig]:
-            return self._func_cid_map[sig][proxy]
+        with self._lock:
+            if proxy in self._func_cid_map[sig]:
+                return self._func_cid_map[sig][proxy]
 
-        proxy.add_destroy_callback(self._remove_proxy)
-        self._cid += 1
-        cid = self._cid
-        self._func_cid_map[sig][proxy] = cid
-        self.callbacks.setdefault(sig, dict())  # noqa: C408
-        self.callbacks[sig][cid] = proxy
-        return cid
+            proxy.add_destroy_callback(self._remove_proxy)
+            # Under the lock because this is a read-modify-write: two threads
+            # subscribing at once could otherwise be issued the same id, and
+            # the second would evict the first from `callbacks[sig]`.
+            self._cid += 1
+            cid = self._cid
+            self._func_cid_map[sig][proxy] = cid
+            self.callbacks.setdefault(sig, dict())  # noqa: C408
+            self.callbacks[sig][cid] = proxy
+            return cid
 
     def _remove_proxy(self, proxy):
+        with self._lock:
+            self._remove_proxy_locked(proxy)
+
+    def _remove_proxy_locked(self, proxy):
         # need the list because `del self._func_cid_map[sig]` mutates the dict
         for sig, proxies in list(self._func_cid_map.items()):
             try:
@@ -477,19 +493,20 @@ class CallbackRegistry:
         cid : int
             The callback index and return value from ``connect``
         """
-        for eventname, callbackd in self.callbacks.items():  # noqa: B007
-            try:
-                # This may or may not remove entries in 'self._func_cid_map'.
-                del callbackd[cid]
-            except KeyError:
-                continue
-            else:
-                # Look for cid in 'self._func_cid_map' as well. It may still be there.
-                for sig, functions in self._func_cid_map.items():  # noqa: B007
-                    for function, value in list(functions.items()):
-                        if value == cid:
-                            del functions[function]
-                return
+        with self._lock:
+            for eventname, callbackd in list(self.callbacks.items()):  # noqa: B007
+                try:
+                    # This may or may not remove entries in 'self._func_cid_map'.
+                    del callbackd[cid]
+                except KeyError:
+                    continue
+                else:
+                    # Look for cid in 'self._func_cid_map' as well. It may still be there.
+                    for sig, functions in list(self._func_cid_map.items()):  # noqa: B007
+                        for function, value in list(functions.items()):
+                            if value == cid:
+                                del functions[function]
+                    return
 
     def process(self, sig, *args, **kwargs):
         """Process ``sig``
@@ -507,8 +524,13 @@ class CallbackRegistry:
             if sig not in self.allowed_sigs:
                 raise ValueError(f"Allowed signals are {self.allowed_sigs}")
         exceptions = []
-        if sig in self.callbacks:
-            for cid, func in list(self.callbacks[sig].items()):  # noqa: B007
+        # Snapshot under the lock, then call outside it. Subscribers are
+        # arbitrary user code -- one that subscribes, unsubscribes or blocks
+        # would deadlock against a lock held across the call.
+        with self._lock:
+            registered = list(self.callbacks.get(sig, {}).items())
+        if registered:
+            for cid, func in registered:  # noqa: B007
                 try:
                     func(*args, **kwargs)
                 except ReferenceError:

@@ -94,10 +94,12 @@ class SuspenderBase(metaclass=ABCMeta):
         ----------
 
         suspension : `bluesky.suspensions.Suspension`
-            What this suspender trips while the signal reads as bad. Nothing
-            hands one out, so this is reached through
-            `RunEngine.install_suspender` or ``Msg('install_suspender')``
-            rather than called directly.
+            What this suspender trips, and what decides how far the suspension
+            reaches: a session's holds up every plan it runs, a plan's holds up
+            that plan alone. Nothing hands one out, so this is reached through
+            `RunEngine.install_suspender`,
+            `bluesky.plan_session.PlanSession.install_suspender`, or
+            ``Msg('install_suspender')`` rather than called directly.
 
         event_type : str, optional
             The event type (subscription type) to watch. Only meaningful for a

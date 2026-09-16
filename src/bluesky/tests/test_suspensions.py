@@ -10,13 +10,14 @@ import concurrent.futures
 import gc
 import threading
 import time as ttime
+from collections.abc import Hashable, Mapping
 
 import pytest
 from ophyd.signal import Signal
 
 from bluesky import Msg
 from bluesky.suspenders import SuspendBoolHigh
-from bluesky.suspensions import Suspension, join_justifications
+from bluesky.suspensions import Suspension, SuspensionReason, join_justifications
 from bluesky.tests import ophyd_async, requires_ophyd_async
 from bluesky.utils import FailedPause, RunEngineInterrupted
 
@@ -152,7 +153,7 @@ def test_two_conditions_are_one_suspension(RE):
         shutter.set(1)
 
     def look_then_release():
-        seen.append(join_justifications(RE._suspension.reasons))
+        seen.append(join_justifications(RE._session.suspensions))
         beam.set(0)
         shutter.set(0)
 
@@ -204,7 +205,7 @@ def test_trips_while_paused_suspends_on_resume(RE, hw):
     sig.put(1)
     _settle(RE)
     # The reason stands while paused.
-    assert RE._suspension.reasons
+    assert RE._session.suspensions
 
     _at(0.5, sig.put, 0)
     start = ttime.time()
@@ -287,7 +288,7 @@ def test_removing_a_suspender_settles_before_it_returns(RE, hw):
     suspender = SuspendBoolHigh(sig)
 
     RE.install_suspender(suspender)
-    suspension = RE._suspension
+    suspension = RE._session._suspension
     # Installed on a bad signal, so it is holding.
     assert suspension.tripped
 
@@ -420,12 +421,51 @@ def test_a_suspension_arriving_after_the_plan_ends_does_nothing(RE):
     'idle'.
     """
     RE([Msg("null")])
-    assert RE._state.is_idle
+    runner = RE._runner
+    assert runner.state.is_idle
 
     force_suspension(RE, justification="too late").result(timeout=10)
 
     # And it left the state alone.
-    assert RE._state.is_idle
+    assert runner.state.is_idle
+
+
+def test_a_suspension_reaches_both_hooks(RE):
+    """The event goes to the suspend hook; everything else to the announce hook.
+
+    The suspend hook is handed the reasons, not prose about them. A headless
+    consumer needs to know *what* tripped, which a joined string has already
+    thrown away; joining is `RunEngine`'s business, because printing is.
+    """
+    said: list[str] = []
+    suspensions: list[Mapping[Hashable, SuspensionReason]] = []
+    RE._session.hooks.announce = said.append
+    RE._session.hooks.suspend = suspensions.append
+
+    sig = Signal(value=0, name="s")
+    sig.put(0)
+    susp = SuspendBoolHigh(sig)
+    RE.install_suspender(susp)
+
+    commands = []
+    _at_message(RE, commands, sleep=lambda: sig.put(1))
+    _at(0.5, sig.put, 0)
+    RE([Msg("checkpoint")] + [Msg("sleep", None, 0.2)] * 4)
+
+    # The suspension was reported as an event.
+    assert suspensions
+    # Keyed by whoever raised it, so a consumer can tell which condition it was
+    # rather than having to parse a sentence.
+    (reasons,) = suspensions
+    assert list(reasons) == [susp]
+    # And the justification is still reachable, by joining it here.
+    assert join_justifications(reasons) == "Signal s is high"
+    # And nothing announced a key to press.
+    assert "Ctrl" not in "".join(said)
+
+
+# --------------------------------------------------------------------------
+# The suspension itself
 
 
 def test_a_permit_is_read_from_any_thread():
@@ -454,6 +494,32 @@ def test_a_permit_is_read_from_any_thread():
     loop.close()
 
     assert seen == {"tripped": True, "why": "beam is down"}
+
+
+def test_a_child_suspension_is_tripped_whenever_its_parent_is():
+    """The chain, which is what makes durable and plan-local one mechanism."""
+
+    async def check():
+        loop = asyncio.get_running_loop()
+        parent = Suspension("session", loop=loop)
+        child = Suspension("plan", loop=loop, parent=parent)
+
+        parent.trip("beam", "beam is down")
+        # Held up by its parent.
+        assert child.tripped
+        assert join_justifications(child.reasons) == "beam is down"
+
+        child.trip("shutter", "shutter is closed")
+        parent.clear("beam")
+        # Still holding its own reason.
+        assert child.tripped
+        # Which is not the parent's business.
+        assert not parent.tripped
+
+        child.clear("shutter")
+        assert not child.tripped
+
+    asyncio.run(check())
 
 
 def test_pre_plans_run_in_fire_order_and_post_plans_in_reverse(RE, hw):
@@ -538,6 +604,49 @@ def test_two_conditions_tripping_in_one_turn_each_run_their_plans(RE):
     assert commands.count("_start_suspender") == 1
 
 
+def test_a_trip_between_building_the_plan_and_running_it_still_holds():
+    """The window between `start` and the plan's first message.
+
+    Whether the suspension is tripped is read when the plan starts, not when the
+    runner is built. It used to be read at both, and the two could disagree:
+    a condition going bad in between left the plan with nothing holding it and
+    a supervisor that believed it was already being held, so the plan ran to
+    completion through a tripped suspender.
+
+    A headless caller can hold a runner for as long as it likes before
+    awaiting it, so the window is as wide as it chooses.
+    """
+    from bluesky.plan_session import PlanSession
+
+    steps = []
+
+    def plan():
+        yield Msg("checkpoint")
+        for _ in range(3):
+            steps.append("step")
+            yield Msg("sleep", None, 0.05)
+
+    async def main():
+        session = PlanSession()
+        runner = session.start(plan())
+        # Nothing had tripped when this was built.
+        assert not runner._suspension.tripped
+
+        session._suspension.trip("beam", "beam is down")
+        task = asyncio.ensure_future(runner)
+        await asyncio.sleep(0.3)
+        held = list(steps)
+
+        session._suspension.clear("beam")
+        await asyncio.wait_for(task, timeout=10)
+        return held
+
+    ran_while_tripped = asyncio.run(main())
+
+    assert ran_while_tripped == []
+    assert steps == ["step"] * 3
+
+
 def test_a_trip_just_after_the_plan_starts_still_suspends(RE, hw):
     """The window between the plan starting and the supervisor's first turn.
 
@@ -584,7 +693,7 @@ def test_installing_a_suspender_on_the_run_engine_still_works(RE, hw):
     sig.put(1)
     _settle(RE)
     # And it holds up the engine.
-    assert RE._suspension.reasons
+    assert RE._session.suspensions
     sig.put(0)
     _settle(RE)
-    assert not RE._suspension.reasons
+    assert not RE._session.suspensions
