@@ -565,17 +565,15 @@ def test_two_conditions_make_one_suspension(RE):
     RE.install_suspender(susp_a)
     RE.install_suspender(susp_b)
 
-    m_coll = MsgCollector()
-    RE.msg_hook = m_coll
-
-    threading.Timer(0.2, sig_a.put, (1,)).start()
-    threading.Timer(0.25, sig_b.put, (1,)).start()
+    commands = []
+    # sig_b must join the suspension sig_a's trip opens, not race it: tying
+    # both to messages makes that true by construction instead of by timing.
+    _at_message(RE, commands, sleep=lambda: sig_a.put(1), _start_suspender=lambda: sig_b.put(1))
     threading.Timer(0.8, sig_a.put, (0,)).start()
     threading.Timer(0.85, sig_b.put, (0,)).start()
 
     RE([Msg("checkpoint"), Msg("sleep", None, 0.5), Msg("null")])
 
-    commands = [msg.command for msg in m_coll.msgs]
     # One suspension for both conditions.
     assert commands.count("_start_suspender") == 1
     # And it is released once: one continuous hold, however many times the plan
@@ -609,6 +607,11 @@ def test_trip_while_paused_holds_the_plan_on_resume(RE, hw):
     m_coll = MsgCollector()
     RE.msg_hook = m_coll
 
+    # request_pause blocks waiting for the loop (RunEngine.__on_loop), so it
+    # must be called from a thread that is not the loop's -- a msg_hook runs
+    # on the loop itself, and calling it from there deadlocks. A real thread,
+    # racing the 1s sleep with a wide margin, is the correct fix here, not
+    # _at_message.
     threading.Timer(0.2, RE.request_pause).start()
     with pytest.raises(RunEngineInterrupted):
         RE([Msg("checkpoint"), Msg("sleep", None, 1), Msg("null")])
@@ -719,6 +722,9 @@ def test_clear_suspenders_while_paused_then_resume(RE, hw):
     m_coll = MsgCollector()
     RE.msg_hook = m_coll
 
+    # request_pause blocks on RunEngine.__on_loop, so it must come from a
+    # thread that is not the loop's; the hold here has no bounded sleep to
+    # race in the first place; see test_trip_while_paused_holds_the_plan_on_resume.
     threading.Timer(0.5, RE.request_pause).start()
     with pytest.raises(RunEngineInterrupted):
         RE([Msg("checkpoint"), Msg("null")])
