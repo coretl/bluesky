@@ -73,6 +73,12 @@ Fixed
   outright, so a durable suspender that a plan re-installed was still listed by
   ``RunEngine.suspenders`` and could never suspend anything again.  Remove it
   before installing it somewhere else.
+- A plan aborted while parked in a ``wait_for`` cancels the tasks that wait was
+  running.  Nothing else held a reference to them, and ``asyncio.wait`` does not
+  cancel what it was waiting on when it is itself cancelled, so they outlived
+  the plan and asyncio reported them as destroyed-while-pending at some
+  unrelated later moment.  A ``wait`` that times out still leaves them alone, so
+  waiting on the same group again finds them in flight.
 
 Changed
 -------
@@ -163,6 +169,15 @@ Changed
   Code that wrote ``await RE.emit(...)`` -- the only way to call the coroutine
   -- must drop the ``await``; there is no deprecation period for that spelling,
   because a synchronous function cannot be awaited.
+- The runner no longer prints.  Two new hooks carry what it used to say:
+  ``hooks.announce``, called with a line about what happened, and
+  ``hooks.suspend``, called as a suspension begins with the reasons standing,
+  keyed by whoever raised them.  A ``RunEngine`` wires the first to ``print``
+  and joins and renders the second itself, so nothing changes at a prompt.  A headless ``PlanSession`` leaves
+  both unset and is silent unless it sets them, which is what lets a service
+  route them somewhere that is not a terminal: nothing the runner says now
+  tells anyone which key to press, since only a ``RunEngine`` and
+  ``SigintHandler`` know a keyboard is attached.
 
 Removed
 -------
