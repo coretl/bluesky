@@ -1325,9 +1325,14 @@ class RunEngine:
         return True
 
     async def _pause_objects(self):
-        """Tell every object the plan has touched that it is being held."""
+        """Tell every object the plan has touched that it is being held.
+
+        `bluesky.protocols.Pausable` and not ``hasattr(obj, "pause")``: the
+        protocol requires ``resume`` too, and something told a hold had begun
+        must be something that can be told it has ended.
+        """
         for obj in self._objs_seen:
-            if hasattr(obj, "pause"):
+            if isinstance(obj, Pausable):
                 try:
                     await maybe_await(obj.pause())
                 except NoReplayAllowed:
@@ -1625,12 +1630,7 @@ class RunEngine:
                     await self._stop_movable_objects(success=True)
                     # Notify Devices of the pause in case they want to
                     # clean up.
-                    for obj in self._objs_seen:
-                        if isinstance(obj, Pausable):
-                            try:
-                                await maybe_await(obj.pause())
-                            except NoReplayAllowed:
-                                self._reset_checkpoint_state_meth()
+                    await self._pause_objects()
                     # Whether the plan was already waiting on the suspension
                     # when it came to rest. If it was, the run loop re-sends
                     # that message on the way out and the plan holds itself; if
