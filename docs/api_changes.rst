@@ -34,6 +34,9 @@ Fixed
   one -- and assigning put it on the adapter, where the logging machinery never
   looks, so turning it off silenced nothing.  Both halves now go to the logger
   the adapter wraps.
+- A suspension no longer duplicates the documents from a monitored signal.
+  Resuming from one re-subscribed monitors that were never unsubscribed, so
+  each later Event was emitted twice.
 
 Changed
 -------
