@@ -88,6 +88,18 @@ Changed
   ``subscribe`` to ``subscribe_reading``; users of ophyd-async need at
   least v0.13.5.
 
+Removed
+-------
+- ``RunEngine.request_suspend``, with no replacement.  Suspension is raised by
+  installing a suspender, and by nothing else.  ``request_suspend`` was a second
+  route to the same place that bypassed the suspension, so a suspension raised
+  through it did not merge with one raised by a suspender, and two overlapping
+  conditions arriving by the two routes rewound the plan twice -- the thing the
+  suspension exists to prevent.  Any condition worth suspending on can be written as
+  a suspender, which composes; to stop a plan yourself and decide yourself when
+  it goes on, use ``RunEngine.pause``.
+
+
 v1.15.1 (2026-05-05)
 ====================
 
