@@ -19,6 +19,17 @@ Added
   event types, so a caller asking for one would otherwise get a suspender
   watching something else with nothing said.
 
+Fixed
+-----
+- ``CallbackRegistry`` is safe to use from more than one thread.  ``connect``,
+  ``disconnect`` and ``_remove_proxy`` are read-modify-writes over two
+  dictionaries that have to agree, and ``_remove_proxy`` is a weakref destroy
+  callback, so it runs on whichever thread happened to drop the last reference
+  to a subscriber -- which can be any thread, at any point in another one's
+  update.  A reentrant lock now covers each of them.  ``process`` takes a
+  snapshot under that lock and calls the subscribers outside it, so a callback
+  that subscribes, unsubscribes or blocks cannot deadlock against it.
+
 Changed
 -------
 

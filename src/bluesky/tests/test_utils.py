@@ -1,6 +1,7 @@
 import asyncio
 import gc
 import operator
+import threading
 import time
 import warnings
 from functools import reduce
@@ -743,3 +744,36 @@ def test_async_input_does_not_block_event_loop(RE, capsys):
             pytest.fail("Should have timed out waiting for input")
 
     RE(plan())
+
+
+def test_CallbackRegistry_does_not_hold_its_lock_across_a_callback():
+    """Subscribers are arbitrary user code, so the lock is dropped to call them.
+
+    A callback that blocks on another thread, and that thread subscribing,
+    would deadlock against a lock held for the length of the call.
+    """
+    reg = CallbackRegistry()
+    calling = threading.Event()
+    release = threading.Event()
+    subscribed = threading.Event()
+
+    def blocks_until_told():
+        calling.set()
+        release.wait(5)
+
+    reg.connect("start", blocks_until_told)
+    processing = threading.Thread(target=reg.process, args=("start",), daemon=True)
+    processing.start()
+    assert calling.wait(5)
+
+    def subscribe_from_another_thread():
+        reg.connect("start", lambda: None)
+        subscribed.set()
+
+    threading.Thread(target=subscribe_from_another_thread, daemon=True).start()
+    # If this times out, `process` is holding the lock while it calls.
+    assert subscribed.wait(5)
+
+    release.set()
+    processing.join(5)
+    assert not processing.is_alive()
