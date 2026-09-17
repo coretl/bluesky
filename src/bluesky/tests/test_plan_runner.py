@@ -21,7 +21,7 @@ from bluesky import Msg
 from bluesky.plan_runner import PlanEnvironment, PlanRunner
 from bluesky.plan_session import PlanSession
 from bluesky.suspenders import SuspendBoolHigh
-from bluesky.utils import InvalidCommand
+from bluesky.utils import InvalidCommand, RunEngineInterrupted
 
 
 class _RecordingSignal:
@@ -679,3 +679,207 @@ def test_runner_starts_empty():
     # that the *previous* plan left nothing behind, which is what the emptied
     # caches above show.
     assert plan_stack_depth == 1
+
+
+def test_the_old_import_location_still_works():
+    """Both classes were defined in run_engine before they moved here, and it
+    goes on re-exporting them for code written against that."""
+    from bluesky import run_engine
+
+    assert run_engine.PlanSession is PlanSession
+    assert run_engine.PlanRunner is PlanRunner
+
+
+def _crossings(module_name):
+    """The innermost function around every hop onto the loop in a module."""
+    import ast
+
+    source = pathlib.Path(bluesky.__file__).parent / module_name
+    tree = ast.parse(source.read_text())
+    crossing = {"call_soon_threadsafe", "run_coroutine_threadsafe"}
+    found = set()
+
+    def walk(node, enclosing):
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                walk(child, child.name)
+            else:
+                if (
+                    isinstance(child, ast.Call)
+                    and isinstance(child.func, ast.Attribute)
+                    and child.func.attr in crossing
+                ):
+                    found.add(enclosing)
+                walk(child, enclosing)
+
+    walk(tree, None)
+    return found
+
+
+def test_every_hop_onto_the_loop_is_one_of_the_few_we_mean():
+    """Where a foreign thread reaches the loop, and why each one is allowed.
+
+    Two rules, and every crossing here is one or the other.
+
+    A caller's own thread reaches the loop only through the `RunEngine`. It is
+    the thread-safe facade, so it may hop wherever it likes -- and nothing it
+    calls hops for itself. `SuspenderBase.install` and `remove` are ordinary
+    loop-side methods, and a suspension is written on the loop by whoever crossed
+    to get there.
+
+    A thread bluesky did not choose reaches the loop where the callback it
+    calls is defined. ophyd completes a status on whichever thread finished the
+    move, and calls a suspender back on whichever thread it likes, so
+    `done_callback` and `SuspenderBase.__call__` each own that crossing and do
+    nothing else on that thread but hand the value over.
+
+    If this fails, either a new boundary is real and belongs in this list with
+    a reason, or a hop has been hidden inside something that should have left
+    the crossing to its caller.
+    """
+    # A suspension is written on the loop; its caller crosses.
+    assert _crossings("suspensions.py") == set()
+    # Only the ophyd status callback.
+    assert _crossings("plan_runner.py") == {"done_callback"}
+    # Only the signal's own callback.
+    assert _crossings("suspenders.py") == {"__call__"}
+    # The facade crosses for everyone, which is why it may cross at all -- and
+    # now through one implementation with no exceptions, so that "where does a
+    # thread reach the loop" has a one-word answer. `_build_task` used to be
+    # the second, because it wanted the future rather than the result; the plan
+    # task is built on the loop with the rest of the runner now, and the
+    # future the main thread reads is filled in from its done callback.
+    assert _crossings("run_engine.py") == {"_run_on"}
+
+
+def test_a_malformed_plan_raises_on_the_calling_thread(RE):
+    """Loading the plan as the runner is built is what puts it here.
+
+    The `RunEngine` builds its runner on the loop, so this is the property
+    that says the crossing waits and re-raises rather than leaving the failure
+    in a future on the loop thread. The engine is left usable.
+    """
+    with pytest.raises(TypeError):
+        RE(42)
+
+    # Not left mid-plan by the failure.
+    assert RE._runner.state.is_idle
+    RE([Msg("null")])
+
+
+def test_run_engine_keeps_its_runner_after_the_plan(RE):
+    """A finished plan can still be inspected through the RunEngine."""
+    RE([Msg("open_run"), Msg("close_run")])
+    assert len(RE._run_start_uids) == 1
+    assert RE._exit_status == "success"
+    # ...and the next plan gets a fresh runner
+    previous = RE._runner
+    RE([Msg("open_run"), Msg("close_run")])
+    assert RE._runner is not previous
+    assert len(RE._run_start_uids) == 1
+
+
+def test_registered_commands_survive_a_new_runner(RE):
+    """register_command is remembered by the session, so it outlives the
+    runner that happened to be current when it was called."""
+    seen = []
+
+    async def custom(msg):
+        seen.append(msg.command)
+
+    RE.register_command("custom-command", custom)
+    for _ in range(2):
+        RE([Msg("custom-command")])
+    assert seen == ["custom-command"] * 2
+
+    RE.unregister_command("custom-command")
+    with pytest.raises(KeyError):
+        RE([Msg("custom-command")])
+
+
+def test_request_pause_coro_survives_for_queueserver(RE):
+    """bluesky-queueserver drives a non-blocking pause through this coroutine.
+
+    Its worker cannot call the public ``request_pause``, which blocks and
+    never returns if the loop is wedged, so it reaches for the private
+    coroutine instead. There is no public equivalent yet, so this has to keep
+    working.
+    """
+
+    def pause_from_another_thread():
+        asyncio.run_coroutine_threadsafe(RE._request_pause_coro(False), loop=RE.loop).result()
+
+    def plan():
+        yield Msg("checkpoint")
+        threading.Timer(0.1, pause_from_another_thread).start()
+        yield Msg("sleep", None, 2)
+        yield Msg("null")
+
+    with pytest.raises(RunEngineInterrupted):
+        RE(plan())
+    assert RE.state == "paused"
+    RE.stop()
+
+
+def test_session_subscribers_see_a_document_before_the_plan_s(RE):
+    """Ordering is the dispatcher chain's business, not the emitter's.
+
+    A plan's dispatcher holds the session's as its parent, so a document
+    reaches subscriptions that outlive the plan before the ones that arrived
+    with it -- the order a single shared registry gave by construction.
+    """
+    seen = []
+    RE.subscribe(lambda name, doc: seen.append(("session", name)), "start")
+
+    RE(
+        [Msg("open_run"), Msg("close_run")],
+        {"start": lambda name, doc: seen.append(("plan", name))},
+    )
+
+    assert [who for who, _ in seen] == ["session", "plan"]
+
+
+def test_ignore_callback_exceptions_is_read_live_by_a_plan(RE):
+    """One setting, not one per dispatcher.
+
+    A plan's dispatcher answers for its parent rather than copying the value
+    when it is built, so setting the flag reaches the plan already running as
+    well as every plan after it.
+    """
+    RE.ignore_callback_exceptions = True
+    # The engine's own route to a new runner: built on the loop, and held at
+    # `hooks.start` so its plan cannot run while the flag is read off it.
+    RE._new_runner([Msg("null")])
+    assert RE._runner._dispatcher.ignore_exceptions is True
+
+    RE.ignore_callback_exceptions = False
+    assert RE._runner._dispatcher.ignore_exceptions is False
+
+    # Nothing is going to run that plan: put an idle runner back in its
+    # place, which is what discards the one held here.
+    RE._new_runner()
+
+
+def test_re_class_answers_for_whoever_is_driving(RE):
+    """``Msg('RE_class')`` reports the class of the runner's ``identity``.
+
+    A ``RunEngine`` names itself, so a plan asking what is running it gets the
+    RunEngine rather than the runner that happens to be executing it. With
+    nothing driving, a runner answers for itself, which is what a headless
+    caller wants. The same value names the subject of a state change in the
+    log.
+    """
+    seen = []
+
+    def note():
+        seen.append((yield Msg("RE_class")))
+
+    RE(note())
+    assert seen == [type(RE)]
+
+    async def headless():
+        seen.clear()
+        await PlanSession().start(note())
+
+    asyncio.run(headless())
+    assert seen == [PlanRunner]

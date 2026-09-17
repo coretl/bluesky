@@ -196,9 +196,12 @@ def test_suspender_plans_async_signal(RE):
     start = ttime.time()
     RE([Msg("install_suspender", None, my_suspender)] + scan)
     assert ttime.time() - start > 0.4 + 0.2 + 0.2
-    assert my_suspender in RE.suspenders
+    # and it is gone once that plan ends: installing from inside a plan is
+    # ephemeral now, so it does not carry into the next one. See
+    # test_suspender_installed_by_a_plan_ends_with_it for the lifetime itself.
+    assert my_suspender not in RE.suspenders
 
-    # removed from inside a plan, it no longer does
+    # Removing it from inside a plan takes it out of the next plan too.
     trip_then_clear()
     start = ttime.time()
     RE([Msg("remove_suspender", None, my_suspender)] + scan)
@@ -500,9 +503,21 @@ def test_suspender_plans(RE, hw):
 
     putter(0)
 
-    # Do the messages work?
-    RE([Msg("install_suspender", None, my_suspender)])
-    assert my_suspender in RE.suspenders
+    # Do the messages work? A suspender a plan installs is that plan's: it
+    # trips that plan's suspension and is unsubscribed when the plan ends,
+    # so it is gone by the time RE(...) returns.
+    seen = []
+
+    def note_while_running():
+        yield Msg("install_suspender", None, my_suspender)
+        seen.append(my_suspender in RE.suspenders)
+        yield Msg("remove_suspender", None, my_suspender)
+
+    RE(note_while_running())
+    # Installed while its own plan ran.
+    assert seen == [True]
+    # And gone once that plan ended.
+    assert my_suspender not in RE.suspenders
     RE([Msg("remove_suspender", None, my_suspender)])
     assert my_suspender not in RE.suspenders
 
@@ -778,6 +793,33 @@ def test_retrip_inside_sleep_does_not_release_early(RE, hw):
     # The release scheduled by the first recovery must not free the plan: that
     # one comes due at +0.7, and the plan replays its 0.1s sleep after either.
     assert elapsed > 1.3
+
+
+def test_suspender_installed_by_a_plan_ends_with_it(RE, hw):
+    """A suspender a plan installs for itself is visible while that plan runs
+    and gone once it ends.
+
+    It trips the plan's own suspension and is released with the plan.
+    ``RE.suspenders`` reports it meanwhile, being the union of the durable
+    suspenders and the running plan's.
+    """
+    sig = hw.bool_sig
+    sig.put(0)
+    susp = SuspendBoolHigh(sig)
+    seen = []
+
+    def note():
+        yield Msg("install_suspender", None, susp)
+        seen.append(("after install", susp in RE.suspenders))
+        yield Msg("remove_suspender", None, susp)
+        seen.append(("after remove", susp in RE.suspenders))
+        yield Msg("install_suspender", None, susp)
+
+    RE(note())
+
+    assert seen == [("after install", True), ("after remove", False)]
+    # The plan's own suspenders end with the plan.
+    assert susp not in RE.suspenders
 
 
 def test_clear_suspenders_while_paused_then_resume(RE, hw):

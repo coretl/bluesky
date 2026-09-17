@@ -79,6 +79,14 @@ Fixed
   the plan and asyncio reported them as destroyed-while-pending at some
   unrelated later moment.  A ``wait`` that times out still leaves them alone, so
   waiting on the same group again finds them in flight.
+- A plan is held when a condition goes bad between the runner being built and
+  the plan starting.  Whether the suspension was tripped was read twice, once when
+  the runner was built and once when the plan started, and the two readings
+  could disagree: a condition tripping in between left the plan with nothing
+  holding it and a supervisor that believed it was already being held, so the
+  plan ran to completion through a tripped suspender.  One reading now decides
+  both.  The window is brief through ``RunEngine.__call__`` and as wide as it
+  likes for a caller holding a runner of its own.
 
 Changed
 -------
@@ -185,6 +193,12 @@ Changed
   counter is durable and two plans must never be handed the same id.  Whatever
   mapping ``RE.md`` is -- a ``PersistentDict``, say -- stays where it is; only
   its contents are copied.
+- A suspender a plan installs with ``Msg('install_suspender')`` now holds up
+  that plan alone, and is uninstalled when the plan ends.  Previously the
+  message was the same call as ``RunEngine.install_suspender``, so the
+  suspender outlived the plan and had to be removed by hand.
+  ``RunEngine.suspenders`` reports the durable suspenders together with the
+  running plan's, and ``RunEngine.clear_suspenders`` clears both.
 
 Removed
 -------

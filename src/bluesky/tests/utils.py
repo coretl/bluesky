@@ -128,7 +128,7 @@ def suspend_until(RE, fut, *, pre_plan=None, post_plan=None, justification=None)
     key = object()
 
     async def begin():
-        suspension = RE._suspension
+        suspension = RE._runner._suspension
         suspension.trip(key, justification or "", pre_plan=pre_plan, post_plan=post_plan)
 
         async def release():
@@ -167,6 +167,6 @@ def force_suspension(RE, *, pre_plan=None, post_plan=None, justification=None):
     opening = {object(): SuspensionReason(justification or "", pre_plan, post_plan)}
 
     async def begin():
-        RE._begin_suspension(opening)
+        RE._runner._begin_suspension(opening)
 
     return asyncio.run_coroutine_threadsafe(begin(), RE.loop)
