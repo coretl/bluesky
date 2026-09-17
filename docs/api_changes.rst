@@ -48,6 +48,12 @@ Fixed
   the protocol -- and ``Pausable`` requires ``resume`` as well, so a device with
   only ``pause`` was told a suspension had begun and never told it had ended.
   Both paths now ask the same question.
+- A suspension no longer duplicates the documents from a monitored signal.
+  Resuming from one re-subscribed every monitor, having never unsubscribed
+  them: monitors run throughout a suspension, and only a *pause* stops them.
+  One suspension therefore left each monitored signal subscribed twice, and
+  every Event it produced afterwards was emitted twice, compounding with each
+  further suspension.
 
 Changed
 -------
