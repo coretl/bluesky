@@ -54,6 +54,25 @@ Fixed
   One suspension therefore left each monitored signal subscribed twice, and
   every Event it produced afterwards was emitted twice, compounding with each
   further suspension.
+- A suspender that trips while the plan is paused now holds it when it
+  resumes.  Previously the trip was dropped, and no later trip could suspend
+  that plan either.
+- A suspender that recovers and trips again within its ``sleep`` period stays
+  tripped.  Previously the release scheduled by the recovery could come due and
+  clear the newer condition.
+- A suspension requested with no checkpoint to rewind to now arranges nothing
+  before aborting.  It queued the suspension onto the plan stack it had already
+  begun tearing down, then attempted an ``'aborting'`` to ``'suspending'``
+  transition the state machine forbids.  The error was raised inside a
+  fire-and-forget task, so asyncio reported it as an unretrieved task exception
+  whenever that task was finally collected, against unrelated work.
+- Installing a suspender that is already installed raises ``RuntimeError``
+  rather than silently reassigning it.  A suspender trips one suspension, so the
+  second install orphaned the first -- leaving it tripped with nothing able to
+  clear it -- and when the second scope ended the suspender was cleared
+  outright, so a durable suspender that a plan re-installed was still listed by
+  ``RunEngine.suspenders`` and could never suspend anything again.  Remove it
+  before installing it somewhere else.
 
 Changed
 -------
@@ -87,6 +106,56 @@ Changed
   Devices that implemented the old ``Subscribable`` protocol should rename
   ``subscribe`` to ``subscribe_reading``; users of ophyd-async need at
   least v0.13.5.
+- A plan has one ``Suspension``, tripped while anything has a reason to trip it.
+  Reasons are keyed by whoever raised them, so two conditions going bad at once
+  are one suspension that ends when the last of them clears.  The object itself
+  is internal; installing a
+  suspender is how a suspension is raised, and ``RunEngine.install_suspender``
+  is unchanged.  Calling a `RunEngine` while a suspender is already tripped
+  prints what is holding it up, as it did before.  ``install`` waits for the
+  subscription to be in place, so a suspender installed on an already-bad
+  signal has tripped the suspension by the time the call returns.  Such a plan is
+  *held* at its first message rather than suspended, so a condition already bad
+  when it starts runs neither its pre-plan nor its post-plan.  That is what
+  happened before as well, and is now deliberate: a pre-plan reverses something
+  a plan did, and no plan has run yet, so there is nothing to reverse -- and
+  since a post-plan undoes its pre-plan, skipping one has to skip the other, or
+  the plan would begin by opening a shutter it never closed.
+- ``SuspenderBase.install`` takes the ``Suspension`` to trip rather than a
+  ``RunEngine``.  Passing a ``RunEngine`` still works, with a
+  ``DeprecationWarning``, and does a durable install on it as before.
+- ``SuspenderBase.install`` and ``SuspenderBase.remove`` must be called on the
+  RunEngine's event loop, and raise ``RuntimeError`` otherwise.  A suspender no
+  longer crosses onto the loop for itself: ``RunEngine.install_suspender``,
+  ``remove_suspender`` and ``clear_suspenders`` cross for you, and are what to
+  call from the prompt.  Removing a suspender that was never installed still
+  works from anywhere, since there is nothing to write and nothing to
+  unsubscribe.
+- ``SuspenderBase.tripped`` reports what the event loop has applied, so it may
+  lag a ``put`` by a loop iteration.  A signal calls back on whatever thread it
+  pleases and the reading is carried to the loop and decided there, which is
+  what lets an install, a removal and a reading be one sequence on one thread
+  rather than three racing ones -- and lets a suspender hold no lock.  Code
+  that trips a signal and then starts a plan is unaffected, because everything
+  reaches the loop in order; code that trips a signal and *inspects* the
+  suspender immediately must let the loop catch up.
+- Two conditions going bad at once are now one suspension carrying both
+  justifications, rather than one suspension each.  The plan rewinds once.
+  Each suspender still runs its own pre-plan when its condition fires, and
+  post-plans run in the reverse order, so **pre- and post-plans should be
+  idempotent**.
+- Returning from a pause is now like returning from idle.  While a plan is
+  paused the runner arranges nothing: a condition going bad trips the
+  suspension and does no more, and no pre-plan runs, because control has gone back
+  to the user and something else may be using the beamline.  On ``resume`` the
+  plan then *waits* for every condition to clear rather than suspending around
+  them, and runs no pre-plans on the way back in -- a pre-plan reverses
+  something a plan did, and across a pause it cannot know what the user did
+  instead.  ``RunEngine.resume`` therefore blocks until the conditions clear,
+  where before it returned at once, and prints what is holding it up the way
+  calling the `RunEngine` does.  (Tom Caswell has ruled on the blocking resume;
+  the rest of this entry is his tentative position and is still to be
+  confirmed.)
 
 Removed
 -------
@@ -98,7 +167,10 @@ Removed
   suspension exists to prevent.  Any condition worth suspending on can be written as
   a suspender, which composes; to stop a plan yourself and decide yourself when
   it goes on, use ``RunEngine.pause``.
-
+- ``SuspenderBase.get_futures`` and ``SuspenderBase.RE``.  Whether a suspender
+  is tripped is ``SuspenderBase.tripped``; a suspender no longer knows what it
+  is holding up, which is what lets the same one be installed on a session or
+  on a single plan.
 
 v1.15.1 (2026-05-05)
 ====================

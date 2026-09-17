@@ -5,6 +5,7 @@ import time as ttime
 from functools import partial
 
 import pytest
+from ophyd.signal import Signal
 
 from bluesky import Msg
 from bluesky.preprocessors import suspend_wrapper
@@ -23,7 +24,7 @@ from bluesky.suspenders import (
 from bluesky.tests import ophyd_async, requires_ophyd_async
 from bluesky.tests.utils import MsgCollector
 
-from .utils import _fabricate_asycio_event, suspend_until
+from .utils import _at_message, force_suspension
 
 if ophyd_async:
     from ophyd_async.core import soft_signal_rw
@@ -52,7 +53,7 @@ def _check_suspender(klass, sc_args, sig, putter, start_val, fail_val, resume_va
             my_suspender = klass(sig, *sc_args, sleep=wait_time)
     else:
         my_suspender = klass(sig, *sc_args, sleep=wait_time)
-    my_suspender.install(RE)
+    RE.install_suspender(my_suspender)
 
     # make sure we start at good value!
     putter(start_val)
@@ -112,8 +113,9 @@ def test_subscribes_on_run_engine_thread(RE, via_plan):
         # install/remove are reached from the event loop thread this way
         RE([Msg("install_suspender", None, susp), Msg("remove_suspender", None, susp)])
     else:
-        susp.install(RE)
-        susp.remove()
+        # Reached from this thread, so the RunEngine does the crossing.
+        RE.install_suspender(susp)
+        RE.remove_suspender(susp)
 
     loop_thread = _loop_thread_ident(RE)
     assert sig.threads == {"subscribe_reading": loop_thread, "clear_sub": loop_thread}
@@ -213,8 +215,12 @@ def test_event_type_is_rejected_for_a_subscribable_signal(RE):
     with pytest.raises(RuntimeError, match="event_type"):
         susp.install(RE, event_type="value")
 
-    # A rejected install leaves the suspender uninstalled.
-    assert susp.RE is None
+    # The rejected install recorded nothing, so a valid one still goes through.
+    # Asserted through the public route rather than an attribute, because what
+    # a half-installed suspender would be holding differs between the RunEngine
+    # this test was written against and the suspension it holds now.
+    RE.install_suspender(susp)
+    RE.remove_suspender(susp)
 
 
 @requires_ophyd_async
@@ -371,11 +377,11 @@ def test_pre_suspend_plan(RE, pre_plan, post_plan, expected_list, hw):
 
     RE.remove_suspender(susp)
     RE(scan)
-    assert susp.RE is None
+    assert susp not in RE.suspenders
 
     RE.install_suspender(susp)
     RE.clear_suspenders()
-    assert susp.RE is None
+    assert susp not in RE.suspenders
     assert not RE.suspenders
 
 
@@ -476,9 +482,7 @@ def test_unresumable_suspend_fail(RE):
     m_coll = MsgCollector()
     RE.msg_hook = m_coll
 
-    ev = _fabricate_asycio_event(RE.loop)
-    threading.Timer(0.1, partial(suspend_until, RE, ev.wait)).start()
-    threading.Timer(1, ev.set).start()
+    threading.Timer(0.1, partial(force_suspension, RE)).start()
     start = time.time()
     with pytest.raises(RunEngineInterrupted):
         RE(scan)
@@ -652,3 +656,167 @@ def test_a_suspension_does_not_duplicate_a_monitored_signals_documents(RE, hw):
     # And so one Event per reading, not one per subscription per reading.
     assert dev.fires > 0
     assert len(events) == dev.fires
+
+
+def test_two_conditions_make_one_suspension(RE):
+    """Two conditions going bad at once suspend the plan once, not once each.
+
+    The reasons accumulate on one suspension, so the plan rewinds once while each
+    condition's pre-plan runs as it fires -- which is why pre- and post-plans
+    must be idempotent.
+    """
+    sig_a = Signal(value=0, name="sig_a")
+    sig_b = Signal(value=0, name="sig_b")
+    susp_a = SuspendBoolHigh(sig_a, pre_plan=[Msg("null")], post_plan=[Msg("null")])
+    susp_b = SuspendBoolHigh(sig_b, pre_plan=[Msg("null")], post_plan=[Msg("null")])
+    RE.install_suspender(susp_a)
+    RE.install_suspender(susp_b)
+
+    commands = []
+    # sig_b must join the suspension sig_a's trip opens, not race it: tying
+    # both to messages makes that true by construction instead of by timing.
+    _at_message(RE, commands, sleep=lambda: sig_a.put(1), _start_suspender=lambda: sig_b.put(1))
+    threading.Timer(0.8, sig_a.put, (0,)).start()
+    threading.Timer(0.85, sig_b.put, (0,)).start()
+
+    RE([Msg("checkpoint"), Msg("sleep", None, 0.5), Msg("null")])
+
+    # One suspension for both conditions.
+    assert commands.count("_start_suspender") == 1
+    # And it is released once: one continuous hold, however many times the plan
+    # wakes inside it to take a joining condition in.
+    assert commands.count("_resume_from_suspender") == 1
+    RE.clear_suspenders()
+
+
+def test_trip_while_paused_holds_the_plan_on_resume(RE, hw):
+    """A condition that goes bad while the plan is paused holds it on resume.
+
+    Held, not suspended. A pause hands control back to the user, so returning
+    from one is like returning from idle: the plan waits for permission and runs
+    no pre-plans, because the user may well have opened the shutter themselves
+    and there is nothing a pre-plan should be reversing.
+    """
+    sig = hw.bool_sig
+    sig.put(0)
+    ran = []
+
+    def note(tag):
+        def plan():
+            ran.append(tag)
+            yield Msg("null")
+
+        return plan
+
+    susp = SuspendBoolHigh(sig, pre_plan=note("pre"), post_plan=note("post"))
+    RE.install_suspender(susp)
+
+    m_coll = MsgCollector()
+    RE.msg_hook = m_coll
+
+    # request_pause blocks waiting for the loop (RunEngine.__on_loop), so it
+    # must be called from a thread that is not the loop's -- a msg_hook runs
+    # on the loop itself, and calling it from there deadlocks. A real thread,
+    # racing the 1s sleep with a wide margin, is the correct fix here, not
+    # _at_message.
+    threading.Timer(0.2, RE.request_pause).start()
+    with pytest.raises(RunEngineInterrupted):
+        RE([Msg("checkpoint"), Msg("sleep", None, 1), Msg("null")])
+    assert RE.state == "paused"
+
+    sig.put(1)
+    ttime.sleep(0.3)
+    # The condition really is bad.
+    assert susp.tripped
+    # And nothing ran while the user had control.
+    assert ran == []
+
+    threading.Timer(0.5, sig.put, (0,)).start()
+    start = ttime.time()
+    RE.resume()
+    elapsed = ttime.time() - start
+
+    # Resuming waited for the condition to clear.
+    assert elapsed > 0.4
+    commands = [msg.command for msg in m_coll.msgs]
+    # Held, rather than suspended.
+    assert "_start_suspender" not in commands
+    # And neither plan ran on the way back in.
+    assert ran == []
+    RE.clear_suspenders()
+
+
+def test_retrip_inside_sleep_does_not_release_early(RE, hw):
+    """Characterization test: a condition that recovers and goes bad again
+    inside the suspender's ``sleep`` window holds the plan until the *second*
+    recovery has settled.
+
+    This one must keep passing. The release a recovery schedules is a timer,
+    and the risk when suspension state is shared rather than per-suspension is
+    that the older timer comes due and drops the newer condition's hold.
+    """
+    sig = hw.bool_sig
+    sig.put(0)
+    susp = SuspendBoolHigh(sig, sleep=0.5)
+    RE.install_suspender(susp)
+
+    def goes_bad():
+        sig.put(1)
+        # Every later instant is measured from this one rather than from the
+        # start of the plan, so the sequence cannot begin before the plan is
+        # running however coarse the machine's timers are.
+        threading.Timer(0.2, sig.put, (0,)).start()  # recovers: release due at +0.7
+        threading.Timer(0.3, sig.put, (1,)).start()  # bad again, inside the window
+        threading.Timer(0.9, sig.put, (0,)).start()  # recovers for good: due at +1.4
+
+    _at_message(RE, [], sleep=goes_bad)
+
+    start = ttime.time()
+    RE([Msg("checkpoint"), Msg("sleep", None, 0.1), Msg("null")])
+    elapsed = ttime.time() - start
+
+    # The release scheduled by the first recovery must not free the plan: that
+    # one comes due at +0.7, and the plan replays its 0.1s sleep after either.
+    assert elapsed > 1.3
+
+
+def test_clear_suspenders_while_paused_then_resume(RE, hw):
+    """Characterization test: the escape hatch beamline staff actually use.
+
+    Beam goes down, the plan suspends, the user interrupts to get a prompt,
+    clears the suspenders and resumes::
+
+        RE(my_plan())
+        C-c
+        RE.clear_suspenders()
+        RE.resume()
+
+    Clearing must both uninstall the suspender and release the hold it has on
+    the plan, or the resumed plan waits forever with nothing left to free it.
+    """
+    sig = hw.bool_sig
+    sig.put(1)  # beam is already down
+    susp = SuspendBoolHigh(sig)
+    RE.install_suspender(susp)
+
+    m_coll = MsgCollector()
+    RE.msg_hook = m_coll
+
+    # request_pause blocks on RunEngine.__on_loop, so it must come from a
+    # thread that is not the loop's; the hold here has no bounded sleep to
+    # race in the first place; see test_trip_while_paused_holds_the_plan_on_resume.
+    threading.Timer(0.5, RE.request_pause).start()
+    with pytest.raises(RunEngineInterrupted):
+        RE([Msg("checkpoint"), Msg("null")])
+    assert RE.state == "paused"
+    # Still held by the condition.
+    assert susp.tripped
+
+    RE.clear_suspenders()
+    assert RE.suspenders == ()
+
+    RE.resume()
+    # The plan ran to the end rather than waiting forever.
+    assert RE.state == "idle"
+    assert [msg.command for msg in m_coll.msgs][-1] == "null"
+    sig.put(0)

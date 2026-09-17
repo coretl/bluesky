@@ -1560,7 +1560,7 @@ def test_exception_cascade_REside(RE):
         RE(pausing_plan())
     ev = _fabricate_asycio_event(RE.loop)
     ev.set()
-    suspend_until(RE, ev.wait, pre_plan=pre_plan())
+    force_suspension(RE, pre_plan=pre_plan())
     with pytest.raises(KeyError):
         RE.resume()
     assert except_hit
@@ -1591,7 +1591,7 @@ def test_exception_cascade_planside(RE):
         RE(pausing_plan())
     ev = _fabricate_asycio_event(RE.loop)
     ev.set()
-    suspend_until(RE, ev.wait, pre_plan=pre_plan())
+    force_suspension(RE, pre_plan=pre_plan())
     with pytest.raises(RuntimeError):
         RE.resume()
     assert except_hit
