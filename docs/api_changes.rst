@@ -29,6 +29,12 @@ Fixed
   update.  A reentrant lock now covers each of them.  ``process`` takes a
   snapshot under that lock and calls the subscribers outside it, so a callback
   that subscribes, unsubscribes or blocks cannot deadlock against it.
+- A plan aborted while parked in a ``wait_for`` cancels the tasks that wait was
+  running.  Nothing else held a reference to them, and ``asyncio.wait`` does not
+  cancel what it was waiting on when it is itself cancelled, so they outlived
+  the plan and asyncio reported them as destroyed-while-pending at some
+  unrelated later moment.  A ``wait`` that times out still leaves them alone, so
+  waiting on the same group again finds them in flight.
 
 Changed
 -------
