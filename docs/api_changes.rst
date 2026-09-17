@@ -42,6 +42,12 @@ Fixed
   one -- and assigning put it on the adapter, where the logging machinery never
   looks, so turning it off silenced nothing.  Both halves now go to the logger
   the adapter wraps.
+- A device is told a suspension has started only if it satisfies
+  `bluesky.protocols.Pausable`.  A suspension used to call ``pause()`` on
+  anything that had the attribute, where ``RunEngine.pause`` has always required
+  the protocol -- and ``Pausable`` requires ``resume`` as well, so a device with
+  only ``pause`` was told a suspension had begun and never told it had ended.
+  Both paths now ask the same question.
 
 Changed
 -------
