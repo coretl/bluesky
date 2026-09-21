@@ -210,48 +210,32 @@ def cleanup_any_figures(request):
     plt.close("all")
 
 
-class DeterministicSigint:
-    """Sends SIGINT signals with a fake monotonic clock so that every signal
-    deterministically clears the 100ms debounce in SigintHandler.
+class SigintOwner:
+    """Owns SIGINT for a ``with`` block, and sends hits that block until handled.
 
-    The fake clock advances by 0.2s per ``send()`` call, and each call blocks
-    until the signal handler has finished, so ``_count`` increments reliably
-    regardless of real wall-clock jitter.
-
-    SIGINT belongs to this object for the whole ``with`` block.  While the
-    RunEngine holds it, signals go to the RunEngine's handler and are counted
-    in ``delivered``; once the RunEngine gives it back, they are counted in
-    ``absorbed`` and discarded, the way an interactive prompt would swallow a
-    Ctrl+C typed after a plan has already stopped.  Sender threads are started
-    through ``send_after`` and joined before the real disposition is restored,
-    so no signal can outlive the block and reach pytest.
+    Hits arriving after the RunEngine releases SIGINT are absorbed.  On exit
+    the sender threads are joined, sending is refused, and only then is the
+    real disposition restored, so no hit can reach pytest.
     """
 
     def __init__(self):
-        self._fake_time = 0.0
         self._handler_done = threading.Event()
         self._senders: list[threading.Thread] = []
-        self.delivered = 0
-        self.absorbed = 0
+        self._lock = threading.Lock()
+        self._closed = False
         self._orig_enter = SigintHandler.__enter__
         self._orig_exit = SigintHandler.__exit__
         self._enter_patcher = patch.object(SigintHandler, "__enter__", self._patched_enter)
         self._exit_patcher = patch.object(SigintHandler, "__exit__", self._patched_exit)
 
-    def _monotonic(self):
-        return self._fake_time
-
     def _patched_enter(self, sigint_handler):
-        with patch("bluesky.utils.time.monotonic", self._monotonic):
-            result = self._orig_enter(sigint_handler)
+        result = self._orig_enter(sigint_handler)
         installed = signal.getsignal(signal.SIGINT)
 
         def synced_handler(signum, frame):
             try:
-                with patch("bluesky.utils.time.monotonic", self._monotonic):
-                    installed(signum, frame)
+                installed(signum, frame)
             finally:
-                self.delivered += 1
                 self._handler_done.set()
 
         signal.signal(signal.SIGINT, synced_handler)
@@ -263,41 +247,42 @@ class DeterministicSigint:
         return result
 
     def _absorb(self, signum, frame):
-        """Record a signal that arrived after the RunEngine released SIGINT.
+        """Discard a signal that arrived after the RunEngine released SIGINT.
 
-        Only ever installed by ``_patched_exit``: installing it earlier would
-        make it the disposition ``SigintHandler`` captures as
-        ``_original_handler``, and the escape hatch would have nothing to
-        raise ``KeyboardInterrupt`` into.
+        Installed only by ``_patched_exit``: earlier, and it would be the
+        disposition ``SigintHandler`` captures as ``_original_handler``.
         """
-        self.absorbed += 1
         self._handler_done.set()
 
     def send(self):
         """Send one SIGINT to the main thread and wait for the handler to finish."""
         self._handler_done.clear()
-        self._fake_time += 0.2
-        # Sent to the main thread rather than to the process: if a
-        # process-directed signal arrives just as the main thread is entering
-        # the untimed wait in DuringTask.block, the C-level handler sets the
-        # flag but nothing interrupts the wait, and the Python-level handler
-        # does not run until the plan ends for some other reason.
-        signal.pthread_kill(threading.main_thread().ident, signal.SIGINT)
+        # Sent to the main thread rather than to the process.  A real Ctrl+C is
+        # process-directed and the kernel picks the thread; Python runs the
+        # handler on the main thread either way, but only a signal delivered to
+        # the main thread interrupts the untimed wait in DuringTask.block, so a
+        # process-directed hit can sit unhandled until the plan ends for some
+        # other reason.  Deterministic here, at the cost of not exercising the
+        # kernel's choice.
+        # The lock spans the check and the signal, and __exit__ takes it before
+        # restoring the real disposition, so a sender cannot pass the check and
+        # then fire into pytest's handler.
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("SIGINT sent after the owner gave the signal back")
+            signal.pthread_kill(threading.main_thread().ident, signal.SIGINT)
         if not self._handler_done.wait(timeout=10):
             raise RuntimeError("SIGINT was never handled")
 
-    def send_after(self, event, count, timeout=5):
-        """Send ``count`` SIGINTs from a background thread once ``event`` is set."""
+    def background(self, func):
+        """Run ``func`` in a thread joined before SIGINT is handed back.
 
-        def sim_kill():
-            event.wait(timeout=timeout)
-            for _ in range(count):
-                self.send()
-
-        thread = threading.Thread(target=sim_kill, daemon=True)
+        Every sender belongs to the owner, so that the block cannot end with
+        one still running.
+        """
+        thread = threading.Thread(target=func, daemon=True)
         self._senders.append(thread)
         thread.start()
-        return thread
 
     def __enter__(self):
         self._true_original = signal.getsignal(signal.SIGINT)
@@ -307,12 +292,29 @@ class DeterministicSigint:
 
     def __exit__(self, *exc):
         try:
+            # Join first, so that hits still on their way are absorbed rather
+            # than refused; close afterwards, so that a sender the join gave up
+            # on cannot fire once pytest's disposition is back.
             for thread in self._senders:
                 thread.join(timeout=30)
+            with self._lock:
+                self._closed = True
         finally:
             self._exit_patcher.stop()
             self._enter_patcher.stop()
             signal.signal(signal.SIGINT, self._true_original)
+
+
+class SteppedClock:
+    """A monotonic clock that advances one step on every read."""
+
+    def __init__(self, step=0.2):
+        self.step = step
+        self._now = 0.0
+
+    def __call__(self):
+        self._now += self.step
+        return self._now
 
 
 @pytest.fixture
@@ -345,12 +347,21 @@ def blocking_motor():
 
 
 @pytest.fixture
-def deterministic_sigint():
-    """Fixture providing the ``DeterministicSigint`` class.  Tests should use
-    it as a context manager around the code that runs the RE::
+def stepped_clock():
+    """A clock that puts 0.2s between the handler's reads, for hammering tests::
 
-        with deterministic_sigint() as sigint:
-            ...
-            sigint.send()
+    RE.context_managers = [partial(SigintHandler, clock=stepped_clock)]
     """
-    return DeterministicSigint
+    return SteppedClock()
+
+
+@pytest.fixture
+def sigint_owner():
+    """The ``SigintOwner`` class, entered around the code that sends hits::
+
+    with sigint_owner() as sigint:
+        sigint.background(send_sigints)
+        RE(plan())
+    # every hit has landed, and no further one can be sent
+    """
+    return SigintOwner

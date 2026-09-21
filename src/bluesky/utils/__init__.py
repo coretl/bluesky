@@ -296,11 +296,15 @@ class SigintHandler:
     Each SIGINT must be spaced by at least 100ms to count (to represent intentional human input).
 
     The count will reset after 10 seconds since the last SIGINT processed.
+
+    The ``clock`` those timings are measured against may be replaced, so that
+    a test can drive the debounce and the carry-over without sleeping.
     """
 
-    def __init__(self, RE):
+    def __init__(self, RE, clock=time.monotonic):
         self._RE = RE
-        self._last_sigint_time = time.monotonic()
+        self._clock = clock
+        self._last_sigint_time = self._clock()
         self._request = PauseRequest.NONE
         self._released = True
         self._request_event = threading.Event()
@@ -350,7 +354,7 @@ class SigintHandler:
     def __enter__(self):
         # Setup internal state tracking
         self._count = 0
-        self._last_sigint_time = time.monotonic()
+        self._last_sigint_time = self._clock()
         self._released = False
         self._request = PauseRequest.NONE
         self._original_handler = signal.getsignal(signal.SIGINT)
@@ -371,7 +375,7 @@ class SigintHandler:
             if self._released:
                 self._restore_and_reraise(signum, frame)
                 return
-            now = time.monotonic()
+            now = self._clock()
             time_diff = now - self._last_sigint_time
 
             if time_diff > 10 or self._count == 0:

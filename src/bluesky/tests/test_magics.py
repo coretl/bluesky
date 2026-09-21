@@ -1,4 +1,5 @@
 import threading
+from functools import partial
 from types import SimpleNamespace
 
 import pytest
@@ -10,6 +11,7 @@ import bluesky.plans as bp
 from bluesky.magics import BlueskyMagics, _print_positioners
 from bluesky.protocols import Status
 from bluesky.tests import uses_os_kill_sigint
+from bluesky.utils import SigintHandler
 
 from .conftest import MovableSignal
 
@@ -169,7 +171,7 @@ def test_magics_missing_ns_key(RE, hw):
 
 
 @uses_os_kill_sigint
-def test_interrupted(deterministic_sigint):
+def test_interrupted(sigint_owner, stepped_clock):
 
     class PendingStatus(Status):
         """A Status that never completes on its own."""
@@ -205,9 +207,15 @@ def test_interrupted(deterministic_sigint):
             running.set()
 
     sm.RE.msg_hook = hook
+    sm.RE.context_managers = [partial(SigintHandler, clock=stepped_clock)]
 
-    with deterministic_sigint() as sigint:
-        sigint.send_after(running, 2)
+    def send_sigints():
+        running.wait(timeout=5)
+        for _ in range(2):
+            sigint.send()
+
+    with sigint_owner() as sigint:
+        sigint.background(send_sigints)
         sm.mov("motor 1")
 
     assert sm.RE.state == "idle"
