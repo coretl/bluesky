@@ -19,9 +19,10 @@ from bluesky.examples import (
     wait_multiple,
     wait_one,
 )
+from bluesky.suspenders import SuspendBoolHigh
 from bluesky.tests import uses_os_kill_sigint
 
-from .utils import _careful_event_set, _fabricate_asycio_event
+from .utils import CallbackSignal, _careful_event_set, _fabricate_asycio_event
 
 
 def test_msgs(hw):
@@ -242,7 +243,8 @@ def test_list_of_msgs(RE, hw):
 
 
 def test_suspend(RE, hw):
-    ev = _fabricate_asycio_event(RE.loop)
+    sig = CallbackSignal(name="suspend_sig")
+    RE.install_suspender(SuspendBoolHigh(sig))
 
     test_list = [
         Msg("open_run"),
@@ -259,13 +261,10 @@ def test_suspend(RE, hw):
     ]
     assert RE.state == "idle"
 
-    def resume_cb():
-        RE.loop.call_soon_threadsafe(_careful_event_set(ev))
-
     def local_suspend():
-        RE.request_suspend(ev.wait)
-        # wait a second and then resume
-        threading.Timer(1, resume_cb).start()
+        sig.put(1)
+        # wait a second and then let it recover
+        threading.Timer(1, sig.put, (0,)).start()
 
     out = []
 
