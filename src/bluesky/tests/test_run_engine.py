@@ -2811,6 +2811,38 @@ def test_abs_set_fails(RE, wait):
         RE(abs_set(device, 10, wait=wait))
 
 
+def test_monitor_documents_arrive_on_the_loop_thread(RE, hw):
+    """A monitored synchronous signal's documents reach subscribers on the loop thread."""
+    event_threads = []
+    loop_thread = []
+
+    async def note_loop_thread():
+        loop_thread.append(threading.current_thread().name)
+
+    def cb(name, doc):
+        if name == "event":
+            event_threads.append(threading.current_thread().name)
+
+    RE.subscribe(cb)
+    sig = hw.bool_sig
+    sig.put(0)
+
+    def plan():
+        yield Msg("wait_for", None, [note_loop_thread])
+        yield Msg("open_run")
+        yield Msg("monitor", sig, name="mon")
+        yield Msg("sleep", None, 0.3)
+        yield Msg("unmonitor", sig)
+        yield Msg("close_run")
+
+    threading.Timer(0.1, sig.put, (1,)).start()
+    RE(plan())
+
+    assert loop_thread == ["bluesky-run-engine"]
+    assert event_threads
+    assert set(event_threads) == {"bluesky-run-engine"}
+
+
 def test_verbose_round_trips_and_actually_silences(RE):
     """``RE.verbose`` reports the logger, and setting it really silences.
 

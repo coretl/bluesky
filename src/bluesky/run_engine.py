@@ -1967,7 +1967,7 @@ class RunEngine:
             validated,
             self.record_interruptions,
             self.emit,
-            self.emit_sync,
+            self._queue_emit,
             self.log,
             strict_pre_declare=self._require_stream_declaration,
         )
@@ -2755,6 +2755,13 @@ class RunEngine:
 
     async def emit(self, name, doc):
         self.emit_sync(name, doc)
+
+    def _queue_emit(self, name, doc):
+        """Dispatch a document on the loop, from any thread.
+
+        For a monitor callback, which a sync ophyd signal calls on its own thread.
+        """
+        call_soon_or_now(self.loop, self.emit_sync, name, doc)
 
 
 PAUSE_MSG = """
