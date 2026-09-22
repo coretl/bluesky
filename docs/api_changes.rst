@@ -47,6 +47,9 @@ Fixed
   that plan either.
 - Installing a suspender that is already installed raises ``RuntimeError``,
   rather than orphaning the first install.  Remove it first.
+- A plan aborted while parked in a ``wait_for`` cancels the tasks it was
+  waiting on, which otherwise outlived the plan.  A timeout still leaves them
+  running.
 
 Changed
 -------
@@ -100,6 +103,10 @@ Changed
   on a plan that is still tripped prints what is holding it up and waits for it
   to clear, without opening a new suspension; a plan paused inside a suspension
   goes back into it.
+- ``PlanRunner`` does not print.  It calls ``hooks.announce`` with a line,
+  ``hooks.suspended`` with the reasons as a suspension begins, and
+  ``hooks.held`` with the reasons when a plan starts or resumes while tripped.
+  Nothing changes at a prompt.
 
 Removed
 -------
