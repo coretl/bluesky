@@ -27,22 +27,23 @@ def join_justifications(reasons: Mapping[Hashable, SuspensionReason]) -> str:
 
 
 class Suspension:
-    """Tripped while any reason stands.
+    """Tripped while any reason stands, here or in a parent.
 
     Reasons are keyed, normally by the suspender that tripped them.
     `trip` and `clear` are loop-only and unchecked; `tripped` and `reasons`
     are safe on any thread.
     """
 
-    def __init__(self, name: str, loop: asyncio.AbstractEventLoop) -> None:
+    def __init__(self, name: str, loop: asyncio.AbstractEventLoop, parent: Suspension | None = None) -> None:
         self.name = name
         self._loop = loop
+        self._parent = parent
         # Immutable and swapped whole, so readers off the loop see a snapshot.
         self._reasons: Mapping[Hashable, SuspensionReason] = MappingProxyType({})
         # Pending delayed clears, cancelled if the key trips again first.
         self._releases: dict[Hashable, asyncio.TimerHandle] = {}
-        # Set-and-cleared on every change, to wake waiters.
-        self._changed: asyncio.Event = asyncio.Event()
+        # Shared with the parent, so a change up the chain wakes waiters here.
+        self._changed: asyncio.Event = parent._changed if parent is not None else asyncio.Event()
 
     @property
     def loop(self) -> asyncio.AbstractEventLoop:
@@ -55,13 +56,15 @@ class Suspension:
 
     @property
     def tripped(self) -> bool:
-        """Whether any reason stands."""
+        """Whether any reason stands, here or above."""
         return bool(self.reasons)
 
     @property
     def reasons(self) -> Mapping[Hashable, SuspensionReason]:
-        """Every standing reason, keyed, in the order raised."""
-        return self._reasons
+        """Every standing reason, keyed; the parent's first."""
+        if self._parent is None:
+            return self._reasons
+        return MappingProxyType({**self._parent.reasons, **self._reasons})
 
     def trip(
         self,
@@ -95,18 +98,18 @@ class Suspension:
         self._notify_changed()
 
     def _notify_changed(self) -> None:
-        """Wake every waiter on this suspension. Loop thread only."""
+        """Wake every waiter on this chain. Loop thread only."""
         self._changed.set()
         self._changed.clear()
 
     async def wait_changed(self) -> None:
-        """Wait until a reason is raised or dropped.
+        """Wait until a reason is raised or dropped anywhere in the chain.
 
         Do not await between testing a condition and calling this.
         """
         await self._changed.wait()
 
     async def wait_cleared(self) -> None:
-        """Wait until no reason stands."""
+        """Wait until no reason stands in the chain."""
         while self.tripped:
             await self.wait_changed()
