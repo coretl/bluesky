@@ -5,6 +5,7 @@ import re
 import threading
 import time
 import time as ttime
+from collections.abc import Hashable, Mapping
 
 import pytest
 from ophyd.signal import Signal
@@ -24,7 +25,7 @@ from bluesky.suspenders import (
     SuspendWhenChanged,
     SuspendWhenOutsideBand,
 )
-from bluesky.suspension import join_justifications
+from bluesky.suspension import SuspensionReason, join_justifications
 from bluesky.tests import ophyd_async, requires_ophyd_async
 from bluesky.tests.utils import MsgCollector
 from bluesky.utils import FailedPause
@@ -200,9 +201,9 @@ def test_suspender_plans_async_signal(RE):
     start = ttime.time()
     RE([Msg("install_suspender", None, my_suspender)] + scan)
     assert ttime.time() - start > 0.4 + 0.2 + 0.2
-    assert my_suspender in RE.suspenders
+    # and it ends with that plan; see test_suspender_installed_by_a_plan_ends_with_it.
+    assert my_suspender not in RE.suspenders
 
-    # removed from inside a plan, it no longer does
     trip_then_clear()
     start = ttime.time()
     RE([Msg("remove_suspender", None, my_suspender)] + scan)
@@ -561,9 +562,17 @@ def test_suspender_plans(RE, hw):
 
     putter(0)
 
-    # Do the messages work?
-    RE([Msg("install_suspender", None, my_suspender)])
-    assert my_suspender in RE.suspenders
+    # A suspender a plan installs ends with the plan.
+    seen = []
+
+    def note_while_running():
+        yield Msg("install_suspender", None, my_suspender)
+        seen.append(my_suspender in RE.suspenders)
+        yield Msg("remove_suspender", None, my_suspender)
+
+    RE(note_while_running())
+    assert seen == [True]
+    assert my_suspender not in RE.suspenders
     RE([Msg("remove_suspender", None, my_suspender)])
     assert my_suspender not in RE.suspenders
 
@@ -813,6 +822,26 @@ def test_a_retrip_inside_the_settle_window_keeps_the_hold(RE, hw):
     assert released - recovered[0] > 0.3
 
 
+def test_suspender_installed_by_a_plan_ends_with_it(RE, hw):
+    """A suspender a plan installs is in ``RE.suspenders`` while the plan runs, and gone after."""
+    sig = hw.bool_sig
+    sig.put(0)
+    susp = SuspendBoolHigh(sig)
+    seen = []
+
+    def note():
+        yield Msg("install_suspender", None, susp)
+        seen.append(("after install", susp in RE.suspenders))
+        yield Msg("remove_suspender", None, susp)
+        seen.append(("after remove", susp in RE.suspenders))
+        yield Msg("install_suspender", None, susp)
+
+    RE(note())
+
+    assert seen == [("after install", True), ("after remove", False)]
+    assert susp not in RE.suspenders
+
+
 def test_clear_suspenders_while_paused_then_resume(RE, hw):
     """Clearing suspenders while paused lets the resumed plan finish.
 
@@ -959,7 +988,7 @@ def test_two_conditions_in_one_turn_are_one_suspension(RE):
         shutter.set(1)
 
     def look_then_release():
-        seen.append(join_justifications(RE._suspension.reasons))
+        seen.append(join_justifications(RE._session.suspension_reasons))
         beam.set(0)
         shutter.set(0)
 
@@ -984,7 +1013,7 @@ def test_a_trip_while_paused_makes_resume_wait(RE, hw):
 
     sig.put(1)
     _settle(RE)
-    assert RE._suspension.reasons
+    assert RE._session.suspension_reasons
 
     _at(0.5, sig.put, 0)
     start = ttime.time()
@@ -1199,6 +1228,38 @@ def test_clear_suspenders_reaches_a_plans_own_from_the_prompt(RE, hw):
     assert RE.suspenders == ()
 
 
+def test_the_facade_refuses_to_be_called_from_its_own_loop(RE, hw):
+    """Reaching back into the `RunEngine` from loop-side code says so."""
+    raised = []
+
+    def clear_from_the_loop():
+        try:
+            RE.clear_suspenders()
+        except BaseException as exc:  # noqa: BLE001
+            raised.append(exc)
+
+    commands = []
+    # A msg_hook runs on the loop.
+    _at_message(RE, commands, sleep=clear_from_the_loop)
+    RE([Msg("checkpoint"), Msg("sleep", None, 0.1)])
+
+    assert [type(exc) for exc in raised] == [RuntimeError]
+    assert "called from the event loop it waits for" in str(raised[0])
+
+
+def test_a_plan_cannot_remove_a_suspender_it_did_not_install(RE, hw):
+    """``Msg('remove_suspender')`` reaches only the plan's own, and says so."""
+    sig = hw.bool_sig
+    sig.put(0)
+    durable = SuspendBoolHigh(sig)
+    RE.install_suspender(durable)
+
+    with pytest.warns(UserWarning, match="can only remove a suspender it installed itself"):
+        RE([Msg("remove_suspender", None, durable)])
+
+    assert durable in RE.suspenders
+
+
 def test_removing_a_suspender_settles_before_it_returns(RE, hw):
     """`remove` clears its reason before returning."""
     sig = hw.bool_sig
@@ -1206,7 +1267,7 @@ def test_removing_a_suspender_settles_before_it_returns(RE, hw):
     suspender = SuspendBoolHigh(sig)
 
     RE.install_suspender(suspender)
-    suspension = RE._suspension
+    suspension = RE._session._suspension
     assert suspension.tripped
 
     RE.remove_suspender(suspender)
@@ -1311,14 +1372,14 @@ def test_a_suspension_arriving_after_the_plan_ends_does_nothing(RE):
     RE.install_suspender(SuspendBoolHigh(sig, tripped_message="too late"))
 
     RE([Msg("null")])
-    assert RE._state.is_idle
+    assert RE._runner.state.is_idle
 
     sig.put(1)
     # Queued behind the trip, so the trip has landed when this returns.
     run_coro_on_loop(asyncio.sleep(0), RE._loop)
 
-    assert RE._state.is_idle
-    assert "too late" in join_justifications(RE._suspension.reasons)
+    assert RE._runner.state.is_idle
+    assert "too late" in join_justifications(RE._session.suspension_reasons)
 
 
 def test_pre_plans_run_in_fire_order_and_post_plans_in_reverse(RE, hw):
@@ -1421,10 +1482,39 @@ def test_installing_a_suspender_on_the_run_engine_still_works(RE, hw):
     assert susp in RE.suspenders
     sig.put(1)
     _settle(RE)
-    assert RE._suspension.reasons
+    assert RE._session.suspension_reasons
     sig.put(0)
     _settle(RE)
-    assert not RE._suspension.reasons
+    assert not RE._session.suspension_reasons
+
+
+def test_a_suspension_reaches_both_hooks(RE):
+    """A suspension goes to `PlanHooks.suspended` as reasons; other lines to `announce`."""
+    said: list[str] = []
+    suspensions: list[Mapping[Hashable, SuspensionReason]] = []
+    RE._session.hooks.announce = said.append
+    RE._session.hooks.suspended = suspensions.append
+
+    sig = Signal(value=0, name="s")
+    sig.put(0)
+    susp = SuspendBoolHigh(sig)
+    RE.install_suspender(susp)
+
+    commands = []
+    _at_message(RE, commands, sleep=lambda: sig.put(1))
+    _at(0.5, sig.put, 0)
+    RE([Msg("checkpoint")] + [Msg("sleep", None, 0.2)] * 4)
+
+    assert suspensions
+    (reasons,) = suspensions
+    assert list(reasons) == [susp]
+    assert join_justifications(reasons) == "Signal s is high"
+    # Nothing announced a key to press.
+    assert "Ctrl" not in "".join(said)
+
+
+# --------------------------------------------------------------------------
+# The suspension itself
 
 
 def test_a_condition_tripping_while_paused_joins_the_open_suspension(RE, hw):

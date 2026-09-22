@@ -50,6 +50,9 @@ Fixed
 - A plan aborted while parked in a ``wait_for`` cancels the tasks it was
   waiting on, which otherwise outlived the plan.  A timeout still leaves them
   running.
+- A plan is held when a condition goes bad between the runner being built and
+  the plan starting.  Previously it could run to completion through the
+  tripped suspender.
 
 Changed
 -------
@@ -107,6 +110,13 @@ Changed
   ``hooks.suspended`` with the reasons as a suspension begins, and
   ``hooks.held`` with the reasons when a plan starts or resumes while tripped.
   Nothing changes at a prompt.
+- A plan gets a copy of ``RunEngine.md`` as it is launched, so writing to it
+  mid-plan takes effect for the next plan.  ``scan_id`` still comes from
+  ``RE.md``, which is not replaced.
+- A suspender a plan installs with ``Msg('install_suspender')`` holds up only
+  that plan, and is removed when it ends.  ``Msg('remove_suspender')`` warns and
+  ignores a suspender the plan did not install.  ``RunEngine.suspenders`` and
+  ``RunEngine.clear_suspenders`` cover both kinds.
 
 Removed
 -------
