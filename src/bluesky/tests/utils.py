@@ -77,3 +77,50 @@ def _careful_event_set(ev):
             ...
 
     return inner
+
+
+class CallbackSignal:
+    """A `bluesky.protocols.Subscribable` signal that calls back synchronously on `put`.
+
+    Subscribing reports the current value before returning, as ophyd and
+    ophyd-async do.
+    """
+
+    def __init__(self, value=0, name="callback_signal"):
+        self.name = name
+        self._value = value
+        self._callbacks: list = []
+
+    def subscribe_reading(self, function) -> None:
+        self._callbacks.append(function)
+        function(self.read())
+
+    def clear_sub(self, function) -> None:
+        self._callbacks.remove(function)
+
+    def read(self) -> dict:
+        return {self.name: {"value": self._value, "timestamp": 0.0}}
+
+    def put(self, value) -> None:
+        """Set the value and report it, on the calling thread."""
+        self._value = value
+        for function in list(self._callbacks):
+            function(self.read())
+
+
+def _at_message(RE, commands, **at):
+    """Run a function the first time each named command is seen by ``msg_hook``.
+
+    First time only, because a suspension replays messages. Trips a condition
+    at a message rather than at a time.
+    """
+    seen = set()
+
+    def hook(msg):
+        commands.append(msg.command)
+        func = at.get(msg.command)
+        if func is not None and msg.command not in seen:
+            seen.add(msg.command)
+            func()
+
+    RE.msg_hook = hook

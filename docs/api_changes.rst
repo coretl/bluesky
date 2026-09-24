@@ -21,6 +21,11 @@ Added
 
 Fixed
 -----
+
+- A monitored signal's Event documents reach subscribers on the RunEngine's
+  event loop, rather than on the thread a synchronous ophyd signal calls back
+  on.
+
 - A device is told a suspension has started only if it satisfies
   `bluesky.protocols.Pausable`.  A suspension used to call ``pause()`` on
   anything that had the attribute, where ``RunEngine.pause`` has always required
@@ -34,6 +39,20 @@ Fixed
   one -- and assigning put it on the adapter, where the logging machinery never
   looks, so turning it off silenced nothing.  Both halves now go to the logger
   the adapter wraps.
+- A suspension no longer duplicates the documents from a monitored signal.
+  Resuming from one re-subscribed monitors that were never unsubscribed, so
+  each later Event was emitted twice.
+- A suspender that trips while the plan is paused now holds it when it
+  resumes.  Previously the trip was dropped, and no later trip could suspend
+  that plan either.
+- Installing a suspender that is already installed raises ``RuntimeError``,
+  rather than orphaning the first install.  Remove it first.
+- A plan aborted while parked in a ``wait_for`` cancels the tasks it was
+  waiting on, which otherwise outlived the plan.  A timeout still leaves them
+  running.
+- A plan is held when a condition goes bad between the runner being built and
+  the plan starting.  Previously it could run to completion through the
+  tripped suspender.
 
 Changed
 -------
@@ -67,6 +86,44 @@ Changed
   Devices that implemented the old ``Subscribable`` protocol should rename
   ``subscribe`` to ``subscribe_reading``; users of ophyd-async need at
   least v0.13.5.
+- A plan has one internal ``Suspension``, tripped while any suspender's reason
+  stands.  ``RunEngine.install_suspender`` is unchanged, and returns once a
+  suspender on an already-bad signal has tripped.  A plan started while tripped
+  is held at its first message, running neither pre- nor post-plan, as before.
+- ``SuspenderBase.install`` takes the ``Suspension`` to trip rather than a
+  ``RunEngine``.  Passing a ``RunEngine`` still installs on it, with a
+  ``DeprecationWarning``.
+- ``SuspenderBase.install`` and ``SuspenderBase.remove`` raise ``RuntimeError``
+  unless called on the RunEngine's event loop.  From the prompt, use
+  ``RunEngine.install_suspender``, ``remove_suspender`` and
+  ``clear_suspenders``.  Removing a suspender that is not installed still works
+  anywhere.
+- ``SuspenderBase.tripped`` may lag a ``put`` by a loop iteration, as readings
+  are decided on the event loop.  Starting a plan after a ``put`` is unaffected.
+- Two conditions going bad at once are now one suspension carrying both
+  justifications, not two.
+- Nothing runs while a plan is paused, including pre-plans.  ``RunEngine.resume``
+  on a plan that is still tripped prints what is holding it up and waits for it
+  to clear, without opening a new suspension; a plan paused inside a suspension
+  goes back into it.
+- ``PlanRunner`` does not print.  It calls ``hooks.announce`` with a line,
+  ``hooks.suspended`` with the reasons as a suspension begins, and
+  ``hooks.held`` with the reasons when a plan starts or resumes while tripped.
+  Nothing changes at a prompt.
+- A plan gets a copy of ``RunEngine.md`` as it is launched, so writing to it
+  mid-plan takes effect for the next plan.  ``scan_id`` still comes from
+  ``RE.md``, which is not replaced.
+- A suspender a plan installs with ``Msg('install_suspender')`` holds up only
+  that plan, and is removed when it ends.  ``Msg('remove_suspender')`` warns and
+  ignores a suspender the plan did not install.  ``RunEngine.suspenders`` and
+  ``RunEngine.clear_suspenders`` cover both kinds.
+
+Removed
+-------
+- ``RunEngine.request_suspend``, with no replacement.  Install a suspender,
+  which composes with other suspenders; or use ``RunEngine.request_pause``.
+- ``SuspenderBase.get_futures`` and ``SuspenderBase.RE``.  Use
+  ``SuspenderBase.tripped``.
 
 v1.15.1 (2026-05-05)
 ====================

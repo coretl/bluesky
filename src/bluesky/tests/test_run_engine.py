@@ -1,4 +1,5 @@
 import asyncio
+import gc
 import logging
 import os
 import signal
@@ -6,6 +7,7 @@ import sys
 import threading
 import time as ttime
 import types
+import warnings
 from collections import defaultdict
 from functools import partial
 from traceback import FrameSummary, extract_tb
@@ -54,7 +56,7 @@ from bluesky.tests import requires_ophyd, uses_os_kill_sigint
 from bluesky.tests.utils import DocCollector, MsgCollector
 from bluesky.utils import SigintHandler
 
-from .utils import _careful_event_set, _fabricate_asycio_event
+from .utils import CallbackSignal, _careful_event_set, _fabricate_asycio_event
 
 
 def test_states():
@@ -72,11 +74,12 @@ def test_states():
 
 
 def test_panic_trap(RE):
-    RE._state = "panicked"
+    # The state machine is the runner's; 'panicked' is the engine's own latch.
+    RE._runner._state = "panicked"
     for k in RunEngineStateMachine.States.states():
         if k != "panicked":
             with pytest.raises(TransitionError):
-                RE._state = k
+                RE._runner._state = k
 
 
 def test_state_is_readonly(RE):
@@ -657,7 +660,6 @@ def test_unrewindable_det_suspend(RE, plan, motor, det, msg_seq):
     from bluesky.utils import ts_msg_hook
 
     msgs = []
-    loop = RE.loop
 
     def collector(msg):
         ts_msg_hook(msg)
@@ -665,20 +667,18 @@ def test_unrewindable_det_suspend(RE, plan, motor, det, msg_seq):
 
     RE.msg_hook = collector
 
-    ev = _fabricate_asycio_event(loop)
+    sig = CallbackSignal(name="unrewindable_sig")
+    RE.install_suspender(SuspendBoolHigh(sig))
 
-    timer = threading.Timer(0.5, RE.request_suspend, kwargs=dict(fut=ev.wait))  # noqa: C408
+    timer = threading.Timer(0.5, sig.put, (1,))
     timer.start()
-
-    def verbose_set():
-        print("seting")
-        ev.set()
-
-    loop.call_soon_threadsafe(loop.call_later, 1, verbose_set)
+    release = threading.Timer(1.5, sig.put, (0,))
+    release.start()
 
     RE(plan(motor, det))
     assert [m.command for m in msgs] == msg_seq
     timer.join()
+    release.join()
 
 
 @pytest.mark.parametrize("unpause_func", [lambda RE: RE.stop(), lambda RE: RE.abort(), lambda RE: RE.resume()])
@@ -725,6 +725,169 @@ def test_exit_raise(RE, unpause_func, excp):
         RE(simple_plan())
     unpause_func(RE)
     assert flag
+
+
+@pytest.mark.parametrize(
+    "verb,expected",
+    [("stop", RequestStop), ("abort", RequestAbort), ("halt", PlanHalt)],
+)
+def test_ending_a_paused_plan_records_what_ended_it(verb, expected):
+    """`RunEngineResult.exception` is the exception thrown into a paused plan to end it."""
+    RE = RunEngine({}, call_returns_result=True)
+
+    def plan():
+        yield Msg("open_run")
+        yield Msg("pause")
+        yield Msg("close_run")
+
+    with pytest.raises(RunEngineInterrupted):
+        RE(plan())
+    exception = getattr(RE, verb)().exception
+
+    # An instance for all three verbs, as on main.
+    assert type(exception) is expected
+
+
+def test_ending_a_running_plan_records_no_exception():
+    """A plan that was not paused is cancelled, so there is nothing to record."""
+    RE = RunEngine({}, call_returns_result=True)
+    running = threading.Event()
+
+    def plan():
+        yield Msg("open_run")
+        for _ in range(200):
+            yield Msg("sleep", None, 0.01)
+        yield Msg("close_run")
+
+    # From another thread, since `stop` waits on the loop, and only once the
+    # plan is running: a stop while idle would raise unseen in the timer thread.
+    def stop_once_running():
+        running.wait(10)
+        RE.stop()
+
+    RE.msg_hook = lambda msg: running.set() if msg.command == "sleep" else None
+    stopper = threading.Thread(target=stop_once_running)
+    stopper.start()
+    try:
+        with pytest.raises(RunEngineInterrupted):
+            RE(plan())
+    finally:
+        running.set()
+        stopper.join()
+
+    assert RE._runner.exit_exception is None
+
+
+@pytest.mark.parametrize("verb", ["stop", "abort", "halt"])
+def test_ending_a_paused_plan_cleans_up_inside_the_context_managers(verb):
+    """The plan's cleanup and its RunStop happen with ``RE.context_managers`` entered."""
+    entered = []
+    ending = threading.Event()
+    moved = threading.Event()
+
+    class Flag:
+        def __init__(self, RE):
+            # As the plan is ended, enter only once it moves or 1 s passes.
+            if ending.is_set():
+                moved.wait(1)
+
+        def __enter__(self):
+            entered.append(True)
+
+        def __exit__(self, *exc):
+            entered.pop()
+
+    RE = RunEngine({}, call_returns_result=True, context_managers=[SigintHandler, Flag])
+    seen = []
+
+    def record(what):
+        seen.append((what, bool(entered)))
+        moved.set()
+
+    RE.subscribe(lambda name, doc: record("RunStop"), "stop")
+
+    def cleanup():
+        yield Msg("null")
+        yield Msg("null")
+
+    def plan():
+        yield Msg("open_run")
+        yield Msg("pause")
+        yield Msg("close_run")
+
+    with pytest.raises(RunEngineInterrupted):
+        RE(finalize_wrapper(plan(), cleanup()))
+    RE.msg_hook = lambda msg: record(msg.command)
+    ending.set()
+    getattr(RE, verb)()
+
+    assert ("RunStop", True) in seen
+    assert all(inside for _, inside in seen)
+
+
+@pytest.mark.parametrize("verb", ["stop", "abort"])
+def test_ending_a_paused_plan_reports_the_runs_it_had_opened(verb):
+    """A run the plan's cleanup opens is not in the result: that is read first."""
+    RE = RunEngine({}, call_returns_result=True)
+    interrupted_result = RE._interrupted_result
+    opened = threading.Event()
+    calls = []
+
+    def slow_to_read():
+        calls.append(verb)
+        # Read only once the cleanup's run is open, or 1 s passes.
+        opened.wait(1)
+        return interrupted_result()
+
+    RE._interrupted_result = slow_to_read
+    # At close_run, the run is open and its uid recorded.
+    RE.msg_hook = lambda msg: opened.set() if msg.command == "close_run" else None
+
+    def cleanup():
+        yield Msg("open_run")
+        yield Msg("close_run")
+
+    def plan():
+        yield Msg("pause")
+
+    with pytest.raises(RunEngineInterrupted):
+        RE(finalize_wrapper(plan(), cleanup()))
+    result = getattr(RE, verb)()
+
+    assert calls == [verb]
+    assert result.run_start_uids == ()
+
+
+def test_a_resume_whose_context_manager_fails_leaves_the_plan_paused():
+    """A context manager that raises on a resume leaves the plan paused, and nothing unawaited."""
+    failing = []
+
+    class Flaky:
+        def __init__(self, RE):
+            pass
+
+        def __enter__(self):
+            if failing:
+                raise ValueError("cannot enter")
+
+        def __exit__(self, *exc):
+            pass
+
+    RE = RunEngine({}, context_managers=[Flaky])
+    with pytest.raises(RunEngineInterrupted):
+        RE([Msg("checkpoint"), Msg("pause"), Msg("null")])
+    failing.append(True)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        with pytest.raises(ValueError):
+            RE.resume()
+        gc.collect()
+    assert RE.state == "paused"
+    assert [str(w.message) for w in caught if "never awaited" in str(w.message)] == []
+
+    failing.clear()
+    RE.resume()
+    assert RE.state == "idle"
 
 
 @uses_os_kill_sigint
@@ -1121,7 +1284,7 @@ def test_sigint_during_suspender_active(RE, hw):
 
     bool_signal = hw.bool_sig
     suspender = SuspendBoolHigh(bool_signal)
-    suspender.install(RE)
+    RE.install_suspender(suspender)
     bool_signal.put(False)
 
     def send_sigints():
@@ -1506,9 +1669,10 @@ def test_invalid_generator(RE, hw, capsys):
             yield from post
 
     def base_plan(motor):
+        yield Msg("checkpoint")
         for j in range(5):
             yield Msg("set", motor, j * 2 + 1)
-        yield Msg("pause")
+        yield Msg("sleep", None, 1.5)
 
     def post_plan(motor):
         yield Msg("set", motor, 500)
@@ -1520,20 +1684,21 @@ def test_invalid_generator(RE, hw, capsys):
     def make_plan():
         return patho_finalize_wrapper(base_plan(motor), post_plan(motor))
 
-    with pytest.raises(RunEngineInterrupted):
-        RE(make_plan())
-    RE.request_suspend(None, pre_plan=pre_suspend_plan())
-    capsys.readouterr()
-    try:
-        RE.resume()
-    except ValueError as sf:
-        assert sf.__cause__.args[0] == "this one"
+    sig = CallbackSignal(name="invalid_generator_sig")
+    RE.install_suspender(SuspendBoolHigh(sig, pre_plan=pre_suspend_plan))
+    threading.Timer(0.3, sig.put, (1,)).start()
 
-    actual_err, _ = capsys.readouterr()
-    expected_prefix = "The plan "
-    expected_postfix = (" tried to yield a value on close.  Please fix your plan.\n")[::-1]
-    assert actual_err[: len(expected_prefix)] == expected_prefix
-    assert actual_err[::-1][: len(expected_postfix)] == expected_postfix
+    capsys.readouterr()
+    with pytest.raises(ValueError) as info:
+        RE(make_plan())
+    assert info.value.__cause__.args[0] == "this one"
+
+    out, _ = capsys.readouterr()
+    # The suspension announces itself first, so pick out the line this is about.
+    complaints = [line for line in out.splitlines() if "yield a value on close" in line]
+    assert len(complaints) == 1
+    assert complaints[0].startswith("The plan ")
+    assert complaints[0].endswith(" tried to yield a value on close.  Please fix your plan.")
 
 
 def test_exception_cascade_REside(RE):
@@ -1549,32 +1714,21 @@ def test_exception_cascade_REside(RE):
             except_hit = True
             raise
 
-    def pre_plan():
-        yield Msg("aardvark")
-
-    def post_plan():
-        for j in range(5):  # noqa: B007
-            yield Msg("null")
-
     with pytest.raises(RunEngineInterrupted):
         RE(pausing_plan())
-    ev = _fabricate_asycio_event(RE.loop)
-    ev.set()
-    RE.request_suspend(ev.wait, pre_plan=pre_plan())
-    with pytest.raises(KeyError):
-        RE.resume()
+    # Ending a paused plan throws into it where it is parked.
+    RE.abort()
     assert except_hit
 
 
 def test_exception_cascade_planside(RE):
     except_hit = False
 
-    def pausing_plan():
+    def sleeping_plan():
         nonlocal except_hit
-        for j in range(5):  # noqa: B007
-            yield Msg("null")
+        yield Msg("checkpoint")
         try:
-            yield Msg("pause")
+            yield Msg("sleep", None, 1.5)
         except Exception:
             except_hit = True
             raise
@@ -1583,17 +1737,13 @@ def test_exception_cascade_planside(RE):
         yield Msg("null")
         raise RuntimeError()
 
-    def post_plan():
-        for j in range(5):  # noqa: B007
-            yield Msg("null")
+    sig = CallbackSignal(name="cascade_sig")
+    RE.install_suspender(SuspendBoolHigh(sig, pre_plan=pre_plan))
+    threading.Timer(0.3, sig.put, (1,)).start()
 
-    with pytest.raises(RunEngineInterrupted):
-        RE(pausing_plan())
-    ev = _fabricate_asycio_event(RE.loop)
-    ev.set()
-    RE.request_suspend(ev.wait, pre_plan=pre_plan())
+    # A suspender's pre-plan runs in the plan, so its exception is the plan's.
     with pytest.raises(RuntimeError):
-        RE.resume()
+        RE(sleeping_plan())
     assert except_hit
 
 
@@ -1664,6 +1814,32 @@ def test_no_rewindable_msg(RE):
     assert msg_lst[:4] == plan[:4]
     assert msg_lst[4:7] == plan[:3]
     assert msg_lst[7:] == plan[4:]
+
+
+def test_rewindable_false_clears_msg_cache(RE):
+    """Characterization test: ``Msg('rewindable', None, False)`` discards
+    the checkpoint replay cache, so a later pause does not replay through it.
+    """
+    cache_lengths = []
+
+    def track_cache(msg):
+        cache_lengths.append((msg.command, len(RE._msg_cache)))
+
+    RE.msg_hook = track_cache
+
+    plan = [
+        Msg("checkpoint"),
+        Msg("null"),
+        Msg("null"),
+        Msg("null"),
+        Msg("rewindable", None, False),
+    ]
+    RE(plan)
+
+    # The three 'null's since the checkpoint.
+    assert cache_lengths[-1] == ("rewindable", 3)
+
+    assert len(RE._msg_cache) == 0
 
 
 @pytest.mark.parametrize("start_state", [True, False])
@@ -2394,24 +2570,18 @@ def test_print_commands(RE):
     the changes made breaking past API)
     """
 
-    # testing the commands list
-    commands1 = list(RE._command_registry.keys())
-    commands2 = RE.commands
+    # Names in registration order, and every one of them resolvable.
+    assert RE.commands == list(RE._command_registry)
 
-    assert commands1 == commands2
-
-    # testing print commands
-    # copy and paste most of the code...
     verbose = False
-    print_command_reg1 = "List of available commands\n"
-    for command, func in RE._command_registry.items():
-        docstring = func.__doc__
+    expected = "List of available commands\n"
+    for command in RE.commands:
+        docstring = RE._command_registry[command].__doc__
         if verbose is False:
             docstring = docstring.split("\n")[0]
-        print_command_reg1 += f"{command} : {docstring}\n"
+        expected += f"{command} : {docstring}\n"
 
-    print_command_reg2 = RE.print_command_registry()
-    assert print_command_reg1 == print_command_reg2
+    assert RE.print_command_registry() == expected
 
 
 def test_broken_read_exception(RE):
@@ -2785,6 +2955,27 @@ def test_async_scan_id_source(RE):
     assert RE.md["scan_id"] == 42
 
 
+def test_scan_id_increments_per_run(RE):
+    """Characterization test: ``scan_id`` is assigned on every 'open_run',
+    and ``RE.md['scan_id']`` ends holding the last.
+    """
+    scan_ids = []
+
+    def collect_start(name, doc):
+        if name == "start":
+            scan_ids.append(doc["scan_id"])
+
+    RE.subscribe(collect_start, "start")
+
+    plan = [Msg("open_run"), Msg("close_run")] * 3
+    RE(plan)
+
+    assert len(scan_ids) == 3
+    assert scan_ids[1] == scan_ids[0] + 1
+    assert scan_ids[2] == scan_ids[1] + 1
+    assert RE.md["scan_id"] == scan_ids[-1]
+
+
 @requires_ophyd
 def test_descriptor_order(RE):
     from itertools import permutations
@@ -2825,6 +3016,64 @@ def test_abs_set_fails(RE, wait):
 
     with pytest.raises(FailedStatus):
         RE(abs_set(device, 10, wait=wait))
+
+
+def test_md_written_midplan_takes_effect_on_the_next_plan(RE, hw):
+    """A plan gets a copy of ``RE.md`` at launch; ``scan_id`` still comes from the session."""
+    starts = []
+    RE.subscribe(lambda name, doc: starts.append(doc), "start")
+
+    def plan():
+        yield Msg("open_run")
+        yield Msg("close_run")
+        RE.md["pinned_midplan"] = "written while the plan was running"
+        yield Msg("open_run")
+        yield Msg("close_run")
+
+    try:
+        RE(plan())
+
+        assert len(starts) == 2
+        assert "pinned_midplan" not in starts[0]
+        assert "pinned_midplan" not in starts[1]
+
+        RE([Msg("open_run"), Msg("close_run")])
+        assert starts[2]["pinned_midplan"] == "written while the plan was running"
+        assert starts[2]["scan_id"] == starts[1]["scan_id"] + 1
+    finally:
+        RE.md.pop("pinned_midplan", None)
+
+
+def test_monitor_documents_arrive_on_the_loop_thread(RE, hw):
+    """A monitored synchronous signal's documents reach subscribers on the loop thread."""
+    event_threads = []
+    loop_thread = []
+
+    async def note_loop_thread():
+        loop_thread.append(threading.current_thread().name)
+
+    def cb(name, doc):
+        if name == "event":
+            event_threads.append(threading.current_thread().name)
+
+    RE.subscribe(cb)
+    sig = hw.bool_sig
+    sig.put(0)
+
+    def plan():
+        yield Msg("wait_for", None, [note_loop_thread])
+        yield Msg("open_run")
+        yield Msg("monitor", sig, name="mon")
+        yield Msg("sleep", None, 0.3)
+        yield Msg("unmonitor", sig)
+        yield Msg("close_run")
+
+    threading.Timer(0.1, sig.put, (1,)).start()
+    RE(plan())
+
+    assert loop_thread == ["bluesky-run-engine"]
+    assert event_threads
+    assert set(event_threads) == {"bluesky-run-engine"}
 
 
 def test_verbose_round_trips_and_actually_silences(RE):
