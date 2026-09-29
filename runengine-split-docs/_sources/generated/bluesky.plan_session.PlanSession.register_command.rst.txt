@@ -1,0 +1,6 @@
+﻿bluesky.plan\_session.PlanSession.register\_command
+===================================================
+
+.. currentmodule:: bluesky.plan_session
+
+.. automethod:: PlanSession.register_command

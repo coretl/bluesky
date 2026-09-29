@@ -1,0 +1,6 @@
+﻿bluesky.plan\_runner.PlanRunner.done
+====================================
+
+.. currentmodule:: bluesky.plan_runner
+
+.. automethod:: PlanRunner.done

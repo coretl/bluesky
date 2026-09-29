@@ -1,0 +1,6 @@
+﻿bluesky.plan\_session.PlanSession.suspension\_reasons
+=====================================================
+
+.. currentmodule:: bluesky.plan_session
+
+.. autoproperty:: PlanSession.suspension_reasons

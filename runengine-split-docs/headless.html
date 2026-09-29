@@ -1,0 +1,993 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="./" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Running plans without a RunEngine &#8212; bluesky 1.15.2.dev235+g372dcc8c1 documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="_static/styles/theme.css?digest=55c26ed414f5f8a31ebb" rel="stylesheet" />
+<link href="_static/styles/pydata-sphinx-theme.css?digest=55c26ed414f5f8a31ebb" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=03e43079" />
+    <link rel="stylesheet" type="text/css" href="_static/plot_directive.css" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="_static/scripts/fontawesome.js?digest=55c26ed414f5f8a31ebb"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="_static/scripts/bootstrap.js?digest=55c26ed414f5f8a31ebb" />
+<link rel="preload" as="script" href="_static/scripts/pydata-sphinx-theme.js?digest=55c26ed414f5f8a31ebb" />
+
+    <script src="_static/documentation_options.js?v=fbac1362"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'headless';</script>
+    <script>
+        DOCUMENTATION_OPTIONS.theme_version = '0.17.1';
+        DOCUMENTATION_OPTIONS.theme_switcher_json_url = 'https://blueskyproject.io/bluesky/switcher.json';
+        DOCUMENTATION_OPTIONS.theme_switcher_version_match = '1.15.2.dev235+g372dcc8c1';
+        DOCUMENTATION_OPTIONS.show_version_warning_banner =
+            false;
+        </script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Debugging and Logging" href="debugging.html" />
+    <link rel="prev" title="Asynchronous Acquisition" href="async.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="1.15.2.dev235+g372dcc8c1" />
+  
+    
+    <script src="_static/searchtools.js"></script>
+    <script src="_static/language_data.js"></script>
+    <script src="searchindex.js"></script>
+  
+  </head>
+  <body data-default-mode="">
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="_static/bluesky-logo-dark.svg" class="logo__image only-light" alt=""/>
+    <img src="_static/bluesky-logo-dark.svg" class="logo__image only-dark pst-js-only" alt=""/>
+  
+  
+    <p class="title logo__title">bluesky</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item current active">
+  <a class="nav-link nav-internal" href="userindex.html">
+    User Documentation
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="devindex.html">
+    Developer Documentation
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-external" href="https://blueskyproject.io/bluesky">
+    bluesky
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-external" href="https://blueskyproject.io/ophyd">
+    ophyd
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-external" href="https://blueskyproject.io/tiled">
+    tiled
+  </a>
+</li>
+
+            <li class="nav-item dropdown">
+                <button class="btn dropdown-toggle nav-item" type="button"
+                data-bs-toggle="dropdown" aria-expanded="false"
+                aria-controls="pst-nav-more-links">
+                    More
+                </button>
+                <ul id="pst-nav-more-links" class="dropdown-menu">
+                    
+<li class=" ">
+  <a class="nav-link dropdown-item nav-external" href="https://blueskyproject.io/bluesky-tiled-plugins">
+    bluesky-tiled-plugins
+  </a>
+</li>
+
+
+<li class=" ">
+  <a class="nav-link dropdown-item nav-external" href="https://nsls-ii.github.io/amostra">
+    amostra
+  </a>
+</li>
+
+
+<li class=" ">
+  <a class="nav-link dropdown-item nav-external" href="https://nsls-ii.github.io/datamuxer">
+    datamuxer
+  </a>
+</li>
+
+
+<li class=" ">
+  <a class="nav-link dropdown-item nav-external" href="https://blueskyproject.io/suitcase">
+    suitcase
+  </a>
+</li>
+
+
+<li class=" ">
+  <a class="nav-link dropdown-item nav-external" href="https://github.com/NSLS-II/">
+    NSLS-II Repositories
+  </a>
+</li>
+
+
+<li class=" ">
+  <a class="nav-link dropdown-item nav-external" href="https://github.com/NSLS-II/Bug-Reports/issues">
+    Bug Reports
+  </a>
+</li>
+
+                </ul>
+            </li>
+            
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/bluesky/bluesky" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i>
+            <span class="sr-only">GitHub</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://pypi.org/project/bluesky" title="PyPI" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fas fa-cube fa-lg" aria-hidden="true"></i>
+            <span class="sr-only">PyPI</span></a>
+        </li>
+</ul></div>
+      
+        <div class="navbar-item">
+<div class="version-switcher__container dropdown pst-js-only">
+  <button id="pst-version-switcher-button-2"
+    type="button"
+    class="version-switcher__button btn btn-sm dropdown-toggle"
+    data-bs-toggle="dropdown"
+    aria-haspopup="listbox"
+    aria-controls="pst-version-switcher-list-2"
+    aria-label="Version switcher list"
+  >
+    Choose version  <!-- this text may get changed later by javascript -->
+    <span class="caret"></span>
+  </button>
+  <div id="pst-version-switcher-list-2"
+    class="version-switcher__menu dropdown-menu list-group-flush py-0"
+    role="listbox" aria-labelledby="pst-version-switcher-button-2">
+    <!-- dropdown will be populated by javascript on page load -->
+  </div>
+</div></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+    </div>
+  
+
+  
+    <button class="pst-navbar-icon sidebar-toggle secondary-toggle" aria-label="On this page">
+      <span class="fa-solid fa-outdent"></span>
+    </button>
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          
+          
+            <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item current active">
+  <a class="nav-link nav-internal" href="userindex.html">
+    User Documentation
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="devindex.html">
+    Developer Documentation
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-external" href="https://blueskyproject.io/bluesky">
+    bluesky
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-external" href="https://blueskyproject.io/ophyd">
+    ophyd
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-external" href="https://blueskyproject.io/tiled">
+    tiled
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-external" href="https://blueskyproject.io/bluesky-tiled-plugins">
+    bluesky-tiled-plugins
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-external" href="https://nsls-ii.github.io/amostra">
+    amostra
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-external" href="https://nsls-ii.github.io/datamuxer">
+    datamuxer
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-external" href="https://blueskyproject.io/suitcase">
+    suitcase
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-external" href="https://github.com/NSLS-II/">
+    NSLS-II Repositories
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-external" href="https://github.com/NSLS-II/Bug-Reports/issues">
+    Bug Reports
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+          
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/bluesky/bluesky" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i>
+            <span class="sr-only">GitHub</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://pypi.org/project/bluesky" title="PyPI" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fas fa-cube fa-lg" aria-hidden="true"></i>
+            <span class="sr-only">PyPI</span></a>
+        </li>
+</ul></div>
+        
+          <div class="navbar-item">
+<div class="version-switcher__container dropdown pst-js-only">
+  <button id="pst-version-switcher-button-3"
+    type="button"
+    class="version-switcher__button btn btn-sm dropdown-toggle"
+    data-bs-toggle="dropdown"
+    aria-haspopup="listbox"
+    aria-controls="pst-version-switcher-list-3"
+    aria-label="Version switcher list"
+  >
+    Choose version  <!-- this text may get changed later by javascript -->
+    <span class="caret"></span>
+  </button>
+  <div id="pst-version-switcher-list-3"
+    class="version-switcher__menu dropdown-menu list-group-flush py-0"
+    role="listbox" aria-labelledby="pst-version-switcher-button-3">
+    <!-- dropdown will be populated by javascript on page load -->
+  </div>
+</div></div>
+        
+      </div>
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item pst-sidebar-collapse"><button id="pst-collapse-sidebar-button" aria-expanded="true" aria-controls="pst-primary-sidebar"><svg class="pst-icon svg-inline--fa" role="img" aria-hidden="true" focusable="false" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">
+    <path fill="currentColor" d="M3 15.5C2.36232 15.5 1.74874 15.2564 1.28478 14.8189C0.820828 14.3815 0.541576 13.7832 0.504167 13.1467L0.5 13L0.5 3C0.499965 2.36232 0.743605 1.74874 1.18107 1.28478C1.61854 0.820828 2.21676 0.541576 2.85333 0.504167L3 0.5L13 0.5C13.6377 0.499965 14.2513 0.743605 14.7152 1.18107C15.1792 1.61854 15.4584 2.21676 15.4958 2.85333L15.5 3L15.5 13C15.5 13.6377 15.2564 14.2513 14.8189 14.7152C14.3815 15.1792 13.7832 15.4584 13.1467 15.4958L13 15.5L3 15.5ZM3 13.8333L10.5 13.8333L10.5 2.16667L3 2.16667C2.79589 2.16669 2.59889 2.24163 2.44636 2.37726C2.29383 2.5129 2.19638 2.69979 2.1725 2.9025L2.16667 3L2.16667 13C2.16669 13.2041 2.24163 13.4011 2.37726 13.5536C2.5129 13.7062 2.69979 13.8036 2.9025 13.8275L3 13.8333ZM6.65583 10.325L6.5775 10.2558L4.91083 8.58917C4.76735 8.44567 4.68116 8.25476 4.66843 8.05223C4.65569 7.84971 4.71729 7.6495 4.84167 7.48917L4.91083 7.41083L6.5775 5.74417C6.72747 5.59471 6.9287 5.50794 7.14032 5.50148C7.35194 5.49502 7.55809 5.56935 7.7169 5.70937C7.8757 5.8494 7.97525 6.04463 7.99533 6.25539C8.01541 6.46616 7.95451 6.67667 7.825 6.84417L7.75583 6.9225L6.67917 8L7.75583 9.0775C7.89931 9.22099 7.98551 9.41191 7.99824 9.61443C8.01097 9.81695 7.94938 10.0172 7.825 10.1775L7.75583 10.2558C7.61234 10.3993 7.42142 10.4855 7.2189 10.4982C7.01638 10.511 6.81617 10.4494 6.65583 10.325Z"/>
+  </svg>
+  <span class="pst-collapse-sidebar-label">Collapse Sidebar</span>
+  <span class="pst-expand-sidebar-label">Expand Sidebar</span>
+</button></div>
+        <div class="sidebar-primary-item">
+
+<nav class="bd-docs-nav bd-links"
+     aria-label="Section Navigation">
+  <p class="bd-links__title" role="heading" aria-level="1">Section Navigation</p>
+  <div class="bd-toc-item navbar-nav"><ul class="current nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="plans.html">Plans</a></li>
+<li class="toctree-l1"><a class="reference internal" href="documents.html">Documents</a></li>
+<li class="toctree-l1"><a class="reference internal" href="metadata.html">Recording Metadata</a></li>
+<li class="toctree-l1"><a class="reference internal" href="callbacks.html">Live Visualization and Processing</a></li>
+<li class="toctree-l1"><a class="reference internal" href="state-machine.html">Interruptions</a></li>
+<li class="toctree-l1"><a class="reference internal" href="simulation.html">Simulation and Error Checking</a></li>
+<li class="toctree-l1"><a class="reference internal" href="progress-bar.html">Progress Bar</a></li>
+<li class="toctree-l1"><a class="reference internal" href="event_descriptors.html">Event Descriptors</a></li>
+<li class="toctree-l1"><a class="reference internal" href="async.html">Asynchronous Acquisition</a></li>
+<li class="toctree-l1 current active"><a class="current reference internal" href="#">Running plans without a RunEngine</a></li>
+<li class="toctree-l1"><a class="reference internal" href="debugging.html">Debugging and Logging</a></li>
+<li class="toctree-l1"><a class="reference internal" href="run_engine_api.html">RunEngine API Documentation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="plan_session_api.html">PlanSession and PlanRunner API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="utils.html">Utility classes and functions</a></li>
+<li class="toctree-l1"><a class="reference internal" href="magics.html">IPython ‘Magics’ [Experimental]</a></li>
+<li class="toctree-l1"><a class="reference internal" href="otel-tracing.html">Tracing with Opentelemetry</a></li>
+<li class="toctree-l1"><a class="reference internal" href="from-pyepics-to-bluesky.html">Translating Direct PyEpics Code to Bluesky Code</a></li>
+<li class="toctree-l1"><a class="reference internal" href="comparison-with-spec.html">Comparison with SPEC</a></li>
+<li class="toctree-l1"><a class="reference internal" href="hardware-interfaces.html">Hardware Interface Packages</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tiled-writer.html">Integration with Tiled</a></li>
+<li class="toctree-l1"><a class="reference internal" href="appendix.html">Appendix</a></li>
+</ul>
+</div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="userindex.html" class="nav-link">User Documentation</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">Running plans without a RunEngine</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section id="running-plans-without-a-runengine">
+<span id="headless"></span><h1>Running plans without a RunEngine<a class="headerlink" href="#running-plans-without-a-runengine" title="Link to this heading">#</a></h1>
+<p>For code already inside an event loop, such as a data acquisition service.</p>
+<div class="admonition warning">
+<p class="admonition-title">Warning</p>
+<p>This API is provisional: names, signatures and behaviour may change without
+a deprecation period. <a class="reference internal" href="generated/bluesky.run_engine.RunEngine.html#bluesky.run_engine.RunEngine" title="bluesky.run_engine.RunEngine"><code class="xref py py-class docutils literal notranslate"><span class="pre">RunEngine</span></code></a> itself is not provisional.</p>
+</div>
+<p>A <a class="reference internal" href="generated/bluesky.plan_session.PlanSession.html#bluesky.plan_session.PlanSession" title="bluesky.plan_session.PlanSession"><code class="xref py py-class docutils literal notranslate"><span class="pre">PlanSession</span></code></a> holds what outlives any one plan:
+metadata, settings, subscribers and suspenders. A
+<a class="reference internal" href="generated/bluesky.plan_runner.PlanRunner.html#bluesky.plan_runner.PlanRunner" title="bluesky.plan_runner.PlanRunner"><code class="xref py py-class docutils literal notranslate"><span class="pre">PlanRunner</span></code></a> executes one plan. A <a class="reference internal" href="generated/bluesky.run_engine.RunEngine.html#bluesky.run_engine.RunEngine" title="bluesky.run_engine.RunEngine"><code class="xref py py-class docutils literal notranslate"><span class="pre">RunEngine</span></code></a> uses
+the same two.</p>
+<section id="running-one-plan">
+<h2>Running one plan<a class="headerlink" href="#running-one-plan" title="Link to this heading">#</a></h2>
+<div class="highlight-pycon notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="kn">from</span><span class="w"> </span><span class="nn">bluesky</span><span class="w"> </span><span class="kn">import</span> <span class="n">Msg</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="kn">from</span><span class="w"> </span><span class="nn">bluesky.plan_session</span><span class="w"> </span><span class="kn">import</span> <span class="n">PlanSession</span>
+<span class="gp">&gt;&gt;&gt;</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="k">def</span><span class="w"> </span><span class="nf">plan</span><span class="p">():</span>
+<span class="gp">... </span>    <span class="k">yield</span> <span class="n">Msg</span><span class="p">(</span><span class="s2">"null"</span><span class="p">)</span>
+<span class="gp">... </span>    <span class="k">return</span> <span class="s2">"a value the plan returned"</span>
+<span class="gp">...</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">():</span>
+<span class="gp">... </span>    <span class="n">session</span> <span class="o">=</span> <span class="n">PlanSession</span><span class="p">()</span>
+<span class="gp">... </span>    <span class="n">runner</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">start</span><span class="p">(</span><span class="n">plan</span><span class="p">())</span>
+<span class="gp">... </span>    <span class="k">return</span> <span class="k">await</span> <span class="n">runner</span>
+<span class="gp">...</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">main</span><span class="p">())</span>
+<span class="go">'a value the plan returned'</span>
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">start</span></code> builds a runner from the session’s current settings and starts
+the plan. A malformed plan raises from <code class="docutils literal notranslate"><span class="pre">start</span></code>. Awaiting the runner returns
+what the plan returned; awaiting it again returns the same.</p>
+</section>
+<section id="how-the-plan-ended">
+<h2>How the plan ended<a class="headerlink" href="#how-the-plan-ended" title="Link to this heading">#</a></h2>
+<div class="highlight-pycon notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="k">def</span><span class="w"> </span><span class="nf">scan</span><span class="p">():</span>
+<span class="gp">... </span>    <span class="k">yield</span> <span class="n">Msg</span><span class="p">(</span><span class="s2">"open_run"</span><span class="p">)</span>
+<span class="gp">... </span>    <span class="k">yield</span> <span class="n">Msg</span><span class="p">(</span><span class="s2">"close_run"</span><span class="p">)</span>
+<span class="gp">...</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">():</span>
+<span class="gp">... </span>    <span class="n">session</span> <span class="o">=</span> <span class="n">PlanSession</span><span class="p">()</span>
+<span class="gp">... </span>    <span class="n">runner</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">start</span><span class="p">(</span><span class="n">scan</span><span class="p">())</span>
+<span class="gp">... </span>    <span class="k">await</span> <span class="n">runner</span>
+<span class="gp">... </span>    <span class="k">return</span> <span class="n">runner</span><span class="o">.</span><span class="n">exit_status</span><span class="p">,</span> <span class="n">runner</span><span class="o">.</span><span class="n">exit_reason</span><span class="p">,</span> <span class="n">runner</span><span class="o">.</span><span class="n">interrupted</span>
+<span class="gp">...</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">main</span><span class="p">())</span>
+<span class="go">('success', '', False)</span>
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">exit_status</span></code> is <code class="docutils literal notranslate"><span class="pre">'success'</span></code>, <code class="docutils literal notranslate"><span class="pre">'abort'</span></code> or <code class="docutils literal notranslate"><span class="pre">'fail'</span></code>, as recorded on
+every RunStop. <code class="docutils literal notranslate"><span class="pre">exit_reason</span></code> says why. <code class="docutils literal notranslate"><span class="pre">interrupted</span></code> is True if the plan
+was paused, stopped, aborted or halted. <code class="docutils literal notranslate"><span class="pre">run_start_uids</span></code> lists the runs it
+opened. <code class="docutils literal notranslate"><span class="pre">done()</span></code> says whether the plan has finished; <code class="docutils literal notranslate"><span class="pre">state</span></code> is <code class="docutils literal notranslate"><span class="pre">'idle'</span></code>
+both before and after.</p>
+</section>
+<section id="when-a-plan-fails">
+<h2>When a plan fails<a class="headerlink" href="#when-a-plan-fails" title="Link to this heading">#</a></h2>
+<p>The runner cleans up, records how the plan ended, and the exception comes out
+of the await:</p>
+<div class="highlight-pycon notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="k">def</span><span class="w"> </span><span class="nf">falls_over</span><span class="p">():</span>
+<span class="gp">... </span>    <span class="k">yield</span> <span class="n">Msg</span><span class="p">(</span><span class="s2">"open_run"</span><span class="p">)</span>
+<span class="gp">... </span>    <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="s2">"the detector fell over"</span><span class="p">)</span>
+<span class="gp">...</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">():</span>
+<span class="gp">... </span>    <span class="n">session</span> <span class="o">=</span> <span class="n">PlanSession</span><span class="p">()</span>
+<span class="gp">... </span>    <span class="n">runner</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">start</span><span class="p">(</span><span class="n">falls_over</span><span class="p">())</span>
+<span class="gp">... </span>    <span class="k">try</span><span class="p">:</span>
+<span class="gp">... </span>        <span class="k">await</span> <span class="n">runner</span>
+<span class="gp">... </span>    <span class="k">except</span> <span class="ne">RuntimeError</span><span class="p">:</span>
+<span class="gp">... </span>        <span class="k">pass</span>
+<span class="gp">... </span>    <span class="k">return</span> <span class="n">runner</span><span class="o">.</span><span class="n">exit_status</span><span class="p">,</span> <span class="n">runner</span><span class="o">.</span><span class="n">exit_reason</span>
+<span class="gp">...</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">main</span><span class="p">())</span>
+<span class="go">('fail', 'the detector fell over')</span>
+</pre></div>
+</div>
+</section>
+<section id="what-awaiting-a-runner-does">
+<h2>What awaiting a runner does<a class="headerlink" href="#what-awaiting-a-runner-does" title="Link to this heading">#</a></h2>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>The plan…</p></th>
+<th class="head"><p><code class="docutils literal notranslate"><span class="pre">await</span> <span class="pre">runner</span></code></p></th>
+<th class="head"><p><code class="docutils literal notranslate"><span class="pre">RE(plan)</span></code></p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>ran to its end</p></td>
+<td><p>returns its return value</p></td>
+<td><p>returns</p></td>
+</tr>
+<tr class="row-odd"><td><p>raised</p></td>
+<td><p>raises</p></td>
+<td><p>raises</p></td>
+</tr>
+<tr class="row-even"><td><p>was stopped, aborted or halted</p></td>
+<td><p>returns <code class="docutils literal notranslate"><span class="pre">NO_PLAN_RETURN</span></code></p></td>
+<td><p>raises <code class="docutils literal notranslate"><span class="pre">RunEngineInterrupted</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p>is paused</p></td>
+<td><p>keeps waiting</p></td>
+<td><p>raises <code class="docutils literal notranslate"><span class="pre">RunEngineInterrupted</span></code></p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="highlight-pycon notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="kn">from</span><span class="w"> </span><span class="nn">bluesky.plan_runner</span><span class="w"> </span><span class="kn">import</span> <span class="n">NO_PLAN_RETURN</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="k">def</span><span class="w"> </span><span class="nf">parks</span><span class="p">():</span>
+<span class="gp">... </span>    <span class="k">yield</span> <span class="n">Msg</span><span class="p">(</span><span class="s2">"checkpoint"</span><span class="p">)</span>
+<span class="gp">... </span>    <span class="k">yield</span> <span class="n">Msg</span><span class="p">(</span><span class="s2">"pause"</span><span class="p">)</span>
+<span class="gp">... </span>    <span class="k">yield</span> <span class="n">Msg</span><span class="p">(</span><span class="s2">"null"</span><span class="p">)</span>
+<span class="gp">... </span>    <span class="k">return</span> <span class="s2">"never reached"</span>
+<span class="gp">...</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">():</span>
+<span class="gp">... </span>    <span class="n">session</span> <span class="o">=</span> <span class="n">PlanSession</span><span class="p">()</span>
+<span class="gp">... </span>    <span class="n">runner</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">start</span><span class="p">(</span><span class="n">parks</span><span class="p">())</span>
+<span class="gp">... </span>    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">500</span><span class="p">):</span>                    <span class="c1"># let it reach the pause</span>
+<span class="gp">... </span>        <span class="k">if</span> <span class="n">runner</span><span class="o">.</span><span class="n">state</span> <span class="o">==</span> <span class="s2">"paused"</span><span class="p">:</span>
+<span class="gp">... </span>            <span class="k">break</span>
+<span class="gp">... </span>        <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mf">0.01</span><span class="p">)</span>
+<span class="gp">... </span>    <span class="k">await</span> <span class="n">runner</span><span class="o">.</span><span class="n">stop</span><span class="p">()</span>
+<span class="gp">... </span>    <span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">runner</span>
+<span class="gp">... </span>    <span class="k">return</span> <span class="n">result</span> <span class="ow">is</span> <span class="n">NO_PLAN_RETURN</span><span class="p">,</span> <span class="n">runner</span><span class="o">.</span><span class="n">exit_status</span><span class="p">,</span> <span class="n">runner</span><span class="o">.</span><span class="n">interrupted</span>
+<span class="gp">...</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">main</span><span class="p">())</span>
+<span class="go">(True, 'success', True)</span>
+</pre></div>
+</div>
+<p>A paused plan’s await completes only when another task resumes or ends it.
+Watch <code class="docutils literal notranslate"><span class="pre">hooks.state_changed</span></code> to learn that it paused.</p>
+</section>
+<section id="documents">
+<h2>Documents<a class="headerlink" href="#documents" title="Link to this heading">#</a></h2>
+<p>Subscribe on the session to see every plan’s documents:</p>
+<div class="highlight-pycon notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">():</span>
+<span class="gp">... </span>    <span class="n">session</span> <span class="o">=</span> <span class="n">PlanSession</span><span class="p">()</span>
+<span class="gp">... </span>    <span class="n">names</span> <span class="o">=</span> <span class="p">[]</span>
+<span class="gp">... </span>    <span class="n">session</span><span class="o">.</span><span class="n">subscribe</span><span class="p">(</span><span class="k">lambda</span> <span class="n">name</span><span class="p">,</span> <span class="n">doc</span><span class="p">:</span> <span class="n">names</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">name</span><span class="p">))</span>
+<span class="gp">... </span>    <span class="k">await</span> <span class="n">session</span><span class="o">.</span><span class="n">start</span><span class="p">(</span><span class="n">scan</span><span class="p">())</span>
+<span class="gp">... </span>    <span class="k">await</span> <span class="n">session</span><span class="o">.</span><span class="n">start</span><span class="p">(</span><span class="n">scan</span><span class="p">())</span>
+<span class="gp">... </span>    <span class="k">return</span> <span class="n">names</span>
+<span class="gp">...</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">main</span><span class="p">())</span>
+<span class="go">['start', 'stop', 'start', 'stop']</span>
+</pre></div>
+</div>
+<p>Subscribe for one plan, and the subscription ends with its runner:</p>
+<div class="highlight-pycon notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">():</span>
+<span class="gp">... </span>    <span class="n">session</span> <span class="o">=</span> <span class="n">PlanSession</span><span class="p">()</span>
+<span class="gp">... </span>    <span class="n">durable</span><span class="p">,</span> <span class="n">just_this_plan</span> <span class="o">=</span> <span class="p">[],</span> <span class="p">[]</span>
+<span class="gp">... </span>    <span class="n">session</span><span class="o">.</span><span class="n">subscribe</span><span class="p">(</span><span class="k">lambda</span> <span class="n">name</span><span class="p">,</span> <span class="n">doc</span><span class="p">:</span> <span class="n">durable</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">name</span><span class="p">))</span>
+<span class="gp">... </span>    <span class="n">first</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">start</span><span class="p">(</span><span class="n">scan</span><span class="p">(),</span> <span class="n">subs</span><span class="o">=</span><span class="p">{</span><span class="s2">"start"</span><span class="p">:</span> <span class="k">lambda</span> <span class="n">n</span><span class="p">,</span> <span class="n">d</span><span class="p">:</span> <span class="n">just_this_plan</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">n</span><span class="p">)})</span>
+<span class="gp">... </span>    <span class="k">await</span> <span class="n">first</span>
+<span class="gp">... </span>    <span class="k">await</span> <span class="n">session</span><span class="o">.</span><span class="n">start</span><span class="p">(</span><span class="n">scan</span><span class="p">())</span>
+<span class="gp">... </span>    <span class="k">return</span> <span class="n">durable</span><span class="p">,</span> <span class="n">just_this_plan</span>
+<span class="gp">...</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">main</span><span class="p">())</span>
+<span class="go">(['start', 'stop', 'start', 'stop'], ['start'])</span>
+</pre></div>
+</div>
+<p>The session’s subscribers see each document before the plan’s own.</p>
+</section>
+<section id="metadata">
+<h2>Metadata<a class="headerlink" href="#metadata" title="Link to this heading">#</a></h2>
+<p>Each plan gets a copy of <code class="docutils literal notranslate"><span class="pre">session.md</span></code> as it is launched, so a write takes
+effect for the next plan:</p>
+<div class="highlight-pycon notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">():</span>
+<span class="gp">... </span>    <span class="n">session</span> <span class="o">=</span> <span class="n">PlanSession</span><span class="p">()</span>
+<span class="gp">... </span>    <span class="n">session</span><span class="o">.</span><span class="n">md</span><span class="p">[</span><span class="s2">"proposal"</span><span class="p">]</span> <span class="o">=</span> <span class="s2">"p1234"</span>
+<span class="gp">... </span>    <span class="n">starts</span> <span class="o">=</span> <span class="p">[]</span>
+<span class="gp">... </span>    <span class="n">session</span><span class="o">.</span><span class="n">subscribe</span><span class="p">(</span><span class="k">lambda</span> <span class="n">name</span><span class="p">,</span> <span class="n">doc</span><span class="p">:</span> <span class="n">starts</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">doc</span><span class="p">),</span> <span class="s2">"start"</span><span class="p">)</span>
+<span class="gp">... </span>    <span class="k">await</span> <span class="n">session</span><span class="o">.</span><span class="n">start</span><span class="p">(</span><span class="n">scan</span><span class="p">())</span>
+<span class="gp">... </span>    <span class="k">return</span> <span class="n">starts</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="s2">"proposal"</span><span class="p">],</span> <span class="n">starts</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="s2">"scan_id"</span><span class="p">]</span>
+<span class="gp">...</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">main</span><span class="p">())</span>
+<span class="go">('p1234', 1)</span>
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">scan_id</span></code> is allocated from the session as each run opens, so concurrent
+plans never share one.</p>
+</section>
+<section id="more-than-one-plan-at-once">
+<h2>More than one plan at once<a class="headerlink" href="#more-than-one-plan-at-once" title="Link to this heading">#</a></h2>
+<div class="highlight-pycon notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">():</span>
+<span class="gp">... </span>    <span class="n">session</span> <span class="o">=</span> <span class="n">PlanSession</span><span class="p">()</span>
+<span class="gp">... </span>    <span class="n">first</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">start</span><span class="p">(</span><span class="n">scan</span><span class="p">())</span>
+<span class="gp">... </span>    <span class="n">second</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">start</span><span class="p">(</span><span class="n">scan</span><span class="p">())</span>
+<span class="gp">... </span>    <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">gather</span><span class="p">(</span><span class="n">first</span><span class="p">,</span> <span class="n">second</span><span class="p">)</span>
+<span class="gp">... </span>    <span class="k">return</span> <span class="n">first</span><span class="o">.</span><span class="n">run_start_uids</span> <span class="o">!=</span> <span class="n">second</span><span class="o">.</span><span class="n">run_start_uids</span><span class="p">,</span> <span class="n">session</span><span class="o">.</span><span class="n">md</span><span class="p">[</span><span class="s2">"scan_id"</span><span class="p">]</span>
+<span class="gp">...</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">main</span><span class="p">())</span>
+<span class="go">(True, 2)</span>
+</pre></div>
+</div>
+<p>Each plan’s subscribers see only its documents, each run gets its own
+<code class="docutils literal notranslate"><span class="pre">scan_id</span></code>, and one plan failing does not disturb the other. The session’s
+suspenders hold both.</p>
+<div class="admonition warning">
+<p class="admonition-title">Warning</p>
+<p>Two plans running at once must not touch the same hardware. Nothing stops
+them, and their messages will interleave. If two plans might reach the same
+device, run them one after another.</p>
+</div>
+</section>
+<section id="suspending">
+<h2>Suspending<a class="headerlink" href="#suspending" title="Link to this heading">#</a></h2>
+<p>A suspender installed on the session holds up every plan it runs:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">session</span><span class="o">.</span><span class="n">install_suspender</span><span class="p">(</span><span class="n">suspender</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>One installed from inside a plan, with <code class="docutils literal notranslate"><span class="pre">Msg('install_suspender')</span></code>, holds up
+only that plan, and ends with it.</p>
+<p>Suspenders are the only way to raise a suspension, so that conditions compose:
+two at once are one suspension, which ends when the last clears. To hold plans
+on something else, such as a health endpoint, subclass
+<a class="reference internal" href="generated/bluesky.suspenders.SuspenderBase.html#bluesky.suspenders.SuspenderBase" title="bluesky.suspenders.SuspenderBase"><code class="xref py py-class docutils literal notranslate"><span class="pre">SuspenderBase</span></code></a>; it needs only something that calls
+it back when a value changes.</p>
+<p>A plan started while a suspender is tripped waits before its first message.</p>
+<p><code class="docutils literal notranslate"><span class="pre">session.suspension_reasons</span></code> maps whoever tripped each reason to it, and is
+empty when nothing is holding plans up:</p>
+<div class="highlight-pycon notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">():</span>
+<span class="gp">... </span>    <span class="n">session</span> <span class="o">=</span> <span class="n">PlanSession</span><span class="p">()</span>
+<span class="gp">... </span>    <span class="k">return</span> <span class="nb">dict</span><span class="p">(</span><span class="n">session</span><span class="o">.</span><span class="n">suspension_reasons</span><span class="p">)</span>
+<span class="gp">...</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">main</span><span class="p">())</span>
+<span class="go">{}</span>
+</pre></div>
+</div>
+</section>
+<section id="driving-a-running-plan">
+<h2>Driving a running plan<a class="headerlink" href="#driving-a-running-plan" title="Link to this heading">#</a></h2>
+<p>The lifecycle verbs are coroutines:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="k">await</span> <span class="n">runner</span><span class="o">.</span><span class="n">pause</span><span class="p">()</span>                                <span class="c1"># now</span>
+<span class="k">await</span> <span class="n">runner</span><span class="o">.</span><span class="n">pause</span><span class="p">(</span><span class="n">defer</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>                      <span class="c1"># at the next checkpoint</span>
+<span class="k">await</span> <span class="n">runner</span><span class="o">.</span><span class="n">resume</span><span class="p">()</span>
+
+<span class="k">await</span> <span class="n">runner</span><span class="o">.</span><span class="n">stop</span><span class="p">()</span>                                 <span class="c1"># RunEngine.stop</span>
+<span class="k">await</span> <span class="n">runner</span><span class="o">.</span><span class="n">stop</span><span class="p">(</span><span class="n">success</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>                    <span class="c1"># RunEngine.abort</span>
+<span class="k">await</span> <span class="n">runner</span><span class="o">.</span><span class="n">stop</span><span class="p">(</span><span class="n">success</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">finalize</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>    <span class="c1"># RunEngine.halt</span>
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">success</span></code> decides whether runs close as <code class="docutils literal notranslate"><span class="pre">'success'</span></code> or <code class="docutils literal notranslate"><span class="pre">'abort'</span></code>;
+<code class="docutils literal notranslate"><span class="pre">finalize</span></code> whether the plan may run its own cleanup.</p>
+</section>
+<section id="hooks">
+<h2>Hooks<a class="headerlink" href="#hooks" title="Link to this heading">#</a></h2>
+<p>Nothing here prints. What a <a class="reference internal" href="generated/bluesky.run_engine.RunEngine.html#bluesky.run_engine.RunEngine" title="bluesky.run_engine.RunEngine"><code class="xref py py-class docutils literal notranslate"><span class="pre">RunEngine</span></code></a> prints goes to
+<code class="docutils literal notranslate"><span class="pre">session.hooks</span></code>, shared by every runner and unset by default. See
+<a class="reference internal" href="generated/bluesky.plan_runner.PlanHooks.html#bluesky.plan_runner.PlanHooks" title="bluesky.plan_runner.PlanHooks"><code class="xref py py-class docutils literal notranslate"><span class="pre">PlanHooks</span></code></a> for each hook and how it is called.</p>
+</section>
+</section>
+
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="async.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">Asynchronous Acquisition</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="debugging.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">Debugging and Logging</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <dialog id="pst-secondary-sidebar-modal"></dialog>
+                <div id="pst-secondary-sidebar" class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item">
+<div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> On this page
+  </div>
+  <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#running-one-plan">Running one plan</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#how-the-plan-ended">How the plan ended</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#when-a-plan-fails">When a plan fails</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#what-awaiting-a-runner-does">What awaiting a runner does</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#documents">Documents</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#metadata">Metadata</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#more-than-one-plan-at-once">More than one plan at once</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#suspending">Suspending</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#driving-a-running-plan">Driving a running plan</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#hooks">Hooks</a></li>
+</ul>
+  </nav></div>
+
+  <div class="sidebar-secondary-item">
+
+  
+  <div class="tocsection editthispage">
+    <a href="https://github.com/bluesky/bluesky/edit/1.15.2.dev235+g372dcc8c1/docs/headless.rst">
+      <i class="fa-solid fa-pencil"></i>
+      
+      
+        
+          Edit on GitHub
+        
+      
+    </a>
+  </div>
+</div>
+
+  <div class="sidebar-secondary-item">
+
+  <div class="tocsection sourcelink">
+    <a href="_sources/headless.rst.txt">
+      <i class="fa-solid fa-file-lines"></i> Show Source
+    </a>
+  </div>
+</div>
+
+</div></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="_static/scripts/bootstrap.js?digest=55c26ed414f5f8a31ebb"></script>
+<script defer src="_static/scripts/pydata-sphinx-theme.js?digest=55c26ed414f5f8a31ebb"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2015, Brookhaven National Lab.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    <br/>
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  <!-- # L10n: Setting the PST URL as an argument as this does not need to be localized -->
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.17.1.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

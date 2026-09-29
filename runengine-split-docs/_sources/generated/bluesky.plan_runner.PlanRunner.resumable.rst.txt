@@ -1,0 +1,6 @@
+﻿bluesky.plan\_runner.PlanRunner.resumable
+=========================================
+
+.. currentmodule:: bluesky.plan_runner
+
+.. autoproperty:: PlanRunner.resumable

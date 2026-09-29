@@ -1,0 +1,41 @@
+﻿bluesky.plan\_session.PlanSession
+=================================
+
+.. currentmodule:: bluesky.plan_session
+
+.. autoclass:: PlanSession
+
+   
+   .. automethod:: __init__
+
+   
+   .. rubric:: Methods
+
+   .. autosummary::
+   
+      ~PlanSession.__init__
+      ~PlanSession.clear_suspenders
+      ~PlanSession.install_suspender
+      ~PlanSession.register_command
+      ~PlanSession.remove_suspender
+      ~PlanSession.start
+      ~PlanSession.subscribe
+      ~PlanSession.unregister_command
+      ~PlanSession.unsubscribe
+      ~PlanSession.unsubscribe_all
+   
+   
+
+   
+   
+   .. rubric:: Attributes
+
+   .. autosummary::
+   
+      ~PlanSession.commands
+      ~PlanSession.hooks
+      ~PlanSession.ignore_exceptions
+      ~PlanSession.suspenders
+      ~PlanSession.suspension_reasons
+   
+   

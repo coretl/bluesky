@@ -1,0 +1,6 @@
+﻿bluesky.plan\_session.PlanSession.start
+=======================================
+
+.. currentmodule:: bluesky.plan_session
+
+.. automethod:: PlanSession.start

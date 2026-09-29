@@ -1,0 +1,6 @@
+﻿bluesky.plan\_session.PlanSession.hooks
+=======================================
+
+.. currentmodule:: bluesky.plan_session
+
+.. autoproperty:: PlanSession.hooks

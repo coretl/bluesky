@@ -1,0 +1,6 @@
+﻿bluesky.plan\_session.PlanSession.remove\_suspender
+===================================================
+
+.. currentmodule:: bluesky.plan_session
+
+.. automethod:: PlanSession.remove_suspender

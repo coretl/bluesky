@@ -1,0 +1,6 @@
+﻿bluesky.plan\_runner.PlanRunner.suspension\_reasons
+===================================================
+
+.. currentmodule:: bluesky.plan_runner
+
+.. autoproperty:: PlanRunner.suspension_reasons

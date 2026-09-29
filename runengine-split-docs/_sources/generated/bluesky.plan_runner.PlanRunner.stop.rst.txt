@@ -1,0 +1,6 @@
+﻿bluesky.plan\_runner.PlanRunner.stop
+====================================
+
+.. currentmodule:: bluesky.plan_runner
+
+.. automethod:: PlanRunner.stop

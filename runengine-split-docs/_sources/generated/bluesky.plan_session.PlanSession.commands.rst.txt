@@ -1,0 +1,6 @@
+﻿bluesky.plan\_session.PlanSession.commands
+==========================================
+
+.. currentmodule:: bluesky.plan_session
+
+.. autoproperty:: PlanSession.commands

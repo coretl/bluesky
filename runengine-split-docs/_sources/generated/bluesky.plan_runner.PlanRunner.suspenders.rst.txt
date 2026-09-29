@@ -1,0 +1,6 @@
+﻿bluesky.plan\_runner.PlanRunner.suspenders
+==========================================
+
+.. currentmodule:: bluesky.plan_runner
+
+.. autoproperty:: PlanRunner.suspenders

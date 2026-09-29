@@ -1,0 +1,38 @@
+﻿bluesky.plan\_runner.PlanRunner
+===============================
+
+.. currentmodule:: bluesky.plan_runner
+
+.. autoclass:: PlanRunner
+
+   
+   .. automethod:: __init__
+
+   
+   .. rubric:: Methods
+
+   .. autosummary::
+   
+      ~PlanRunner.__init__
+      ~PlanRunner.clear_suspenders
+      ~PlanRunner.done
+      ~PlanRunner.pause
+      ~PlanRunner.resume
+      ~PlanRunner.stop
+   
+   
+
+   
+   
+   .. rubric:: Attributes
+
+   .. autosummary::
+   
+      ~PlanRunner.deferred_pause_requested
+      ~PlanRunner.resumable
+      ~PlanRunner.rewindable
+      ~PlanRunner.state
+      ~PlanRunner.suspenders
+      ~PlanRunner.suspension_reasons
+   
+   

@@ -1,0 +1,6 @@
+﻿bluesky.plan\_runner.PlanRunner.state
+=====================================
+
+.. currentmodule:: bluesky.plan_runner
+
+.. autoproperty:: PlanRunner.state

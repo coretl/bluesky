@@ -1,0 +1,6 @@
+﻿bluesky.plan\_session.PlanSession.unregister\_command
+=====================================================
+
+.. currentmodule:: bluesky.plan_session
+
+.. automethod:: PlanSession.unregister_command

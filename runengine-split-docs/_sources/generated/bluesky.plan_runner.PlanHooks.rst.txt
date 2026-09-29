@@ -1,0 +1,36 @@
+﻿bluesky.plan\_runner.PlanHooks
+==============================
+
+.. currentmodule:: bluesky.plan_runner
+
+.. autoclass:: PlanHooks
+
+   
+   .. automethod:: __init__
+
+   
+   .. rubric:: Methods
+
+   .. autosummary::
+   
+      ~PlanHooks.__init__
+      ~PlanHooks.hold_began
+      ~PlanHooks.hold_ended
+      ~PlanHooks.may_proceed
+      ~PlanHooks.msg_received
+      ~PlanHooks.pause_requested
+      ~PlanHooks.plan_paused
+      ~PlanHooks.state_changed
+      ~PlanHooks.stop_requested
+      ~PlanHooks.suspender_joined
+      ~PlanHooks.suspender_recovered
+      ~PlanHooks.suspension_began
+      ~PlanHooks.suspension_ended
+      ~PlanHooks.suspension_refused
+      ~PlanHooks.waiting_on
+   
+   
+
+   
+   
+   

@@ -1,0 +1,859 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="./" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Architecture: session, runner, suspension &#8212; bluesky 1.15.2.dev235+g372dcc8c1 documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="_static/styles/theme.css?digest=55c26ed414f5f8a31ebb" rel="stylesheet" />
+<link href="_static/styles/pydata-sphinx-theme.css?digest=55c26ed414f5f8a31ebb" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=03e43079" />
+    <link rel="stylesheet" type="text/css" href="_static/plot_directive.css" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="_static/scripts/fontawesome.js?digest=55c26ed414f5f8a31ebb"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="_static/scripts/bootstrap.js?digest=55c26ed414f5f8a31ebb" />
+<link rel="preload" as="script" href="_static/scripts/pydata-sphinx-theme.js?digest=55c26ed414f5f8a31ebb" />
+
+    <script src="_static/documentation_options.js?v=fbac1362"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'architecture';</script>
+    <script>
+        DOCUMENTATION_OPTIONS.theme_version = '0.17.1';
+        DOCUMENTATION_OPTIONS.theme_switcher_json_url = 'https://blueskyproject.io/bluesky/switcher.json';
+        DOCUMENTATION_OPTIONS.theme_switcher_version_match = '1.15.2.dev235+g372dcc8c1';
+        DOCUMENTATION_OPTIONS.show_version_warning_banner =
+            false;
+        </script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Release History" href="api_changes.html" />
+    <link rel="prev" title="The RunEngine run loop" href="run_engine.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="1.15.2.dev235+g372dcc8c1" />
+  
+    
+    <script src="_static/searchtools.js"></script>
+    <script src="_static/language_data.js"></script>
+    <script src="searchindex.js"></script>
+  
+  </head>
+  <body data-default-mode="">
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="_static/bluesky-logo-dark.svg" class="logo__image only-light" alt=""/>
+    <img src="_static/bluesky-logo-dark.svg" class="logo__image only-dark pst-js-only" alt=""/>
+  
+  
+    <p class="title logo__title">bluesky</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="userindex.html">
+    User Documentation
+  </a>
+</li>
+
+
+<li class="nav-item current active">
+  <a class="nav-link nav-internal" href="devindex.html">
+    Developer Documentation
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-external" href="https://blueskyproject.io/bluesky">
+    bluesky
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-external" href="https://blueskyproject.io/ophyd">
+    ophyd
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-external" href="https://blueskyproject.io/tiled">
+    tiled
+  </a>
+</li>
+
+            <li class="nav-item dropdown">
+                <button class="btn dropdown-toggle nav-item" type="button"
+                data-bs-toggle="dropdown" aria-expanded="false"
+                aria-controls="pst-nav-more-links">
+                    More
+                </button>
+                <ul id="pst-nav-more-links" class="dropdown-menu">
+                    
+<li class=" ">
+  <a class="nav-link dropdown-item nav-external" href="https://blueskyproject.io/bluesky-tiled-plugins">
+    bluesky-tiled-plugins
+  </a>
+</li>
+
+
+<li class=" ">
+  <a class="nav-link dropdown-item nav-external" href="https://nsls-ii.github.io/amostra">
+    amostra
+  </a>
+</li>
+
+
+<li class=" ">
+  <a class="nav-link dropdown-item nav-external" href="https://nsls-ii.github.io/datamuxer">
+    datamuxer
+  </a>
+</li>
+
+
+<li class=" ">
+  <a class="nav-link dropdown-item nav-external" href="https://blueskyproject.io/suitcase">
+    suitcase
+  </a>
+</li>
+
+
+<li class=" ">
+  <a class="nav-link dropdown-item nav-external" href="https://github.com/NSLS-II/">
+    NSLS-II Repositories
+  </a>
+</li>
+
+
+<li class=" ">
+  <a class="nav-link dropdown-item nav-external" href="https://github.com/NSLS-II/Bug-Reports/issues">
+    Bug Reports
+  </a>
+</li>
+
+                </ul>
+            </li>
+            
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/bluesky/bluesky" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i>
+            <span class="sr-only">GitHub</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://pypi.org/project/bluesky" title="PyPI" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fas fa-cube fa-lg" aria-hidden="true"></i>
+            <span class="sr-only">PyPI</span></a>
+        </li>
+</ul></div>
+      
+        <div class="navbar-item">
+<div class="version-switcher__container dropdown pst-js-only">
+  <button id="pst-version-switcher-button-2"
+    type="button"
+    class="version-switcher__button btn btn-sm dropdown-toggle"
+    data-bs-toggle="dropdown"
+    aria-haspopup="listbox"
+    aria-controls="pst-version-switcher-list-2"
+    aria-label="Version switcher list"
+  >
+    Choose version  <!-- this text may get changed later by javascript -->
+    <span class="caret"></span>
+  </button>
+  <div id="pst-version-switcher-list-2"
+    class="version-switcher__menu dropdown-menu list-group-flush py-0"
+    role="listbox" aria-labelledby="pst-version-switcher-button-2">
+    <!-- dropdown will be populated by javascript on page load -->
+  </div>
+</div></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+    </div>
+  
+
+  
+    <button class="pst-navbar-icon sidebar-toggle secondary-toggle" aria-label="On this page">
+      <span class="fa-solid fa-outdent"></span>
+    </button>
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          
+          
+            <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="userindex.html">
+    User Documentation
+  </a>
+</li>
+
+
+<li class="nav-item current active">
+  <a class="nav-link nav-internal" href="devindex.html">
+    Developer Documentation
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-external" href="https://blueskyproject.io/bluesky">
+    bluesky
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-external" href="https://blueskyproject.io/ophyd">
+    ophyd
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-external" href="https://blueskyproject.io/tiled">
+    tiled
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-external" href="https://blueskyproject.io/bluesky-tiled-plugins">
+    bluesky-tiled-plugins
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-external" href="https://nsls-ii.github.io/amostra">
+    amostra
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-external" href="https://nsls-ii.github.io/datamuxer">
+    datamuxer
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-external" href="https://blueskyproject.io/suitcase">
+    suitcase
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-external" href="https://github.com/NSLS-II/">
+    NSLS-II Repositories
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-external" href="https://github.com/NSLS-II/Bug-Reports/issues">
+    Bug Reports
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+          
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/bluesky/bluesky" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i>
+            <span class="sr-only">GitHub</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://pypi.org/project/bluesky" title="PyPI" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fas fa-cube fa-lg" aria-hidden="true"></i>
+            <span class="sr-only">PyPI</span></a>
+        </li>
+</ul></div>
+        
+          <div class="navbar-item">
+<div class="version-switcher__container dropdown pst-js-only">
+  <button id="pst-version-switcher-button-3"
+    type="button"
+    class="version-switcher__button btn btn-sm dropdown-toggle"
+    data-bs-toggle="dropdown"
+    aria-haspopup="listbox"
+    aria-controls="pst-version-switcher-list-3"
+    aria-label="Version switcher list"
+  >
+    Choose version  <!-- this text may get changed later by javascript -->
+    <span class="caret"></span>
+  </button>
+  <div id="pst-version-switcher-list-3"
+    class="version-switcher__menu dropdown-menu list-group-flush py-0"
+    role="listbox" aria-labelledby="pst-version-switcher-button-3">
+    <!-- dropdown will be populated by javascript on page load -->
+  </div>
+</div></div>
+        
+      </div>
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item pst-sidebar-collapse"><button id="pst-collapse-sidebar-button" aria-expanded="true" aria-controls="pst-primary-sidebar"><svg class="pst-icon svg-inline--fa" role="img" aria-hidden="true" focusable="false" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">
+    <path fill="currentColor" d="M3 15.5C2.36232 15.5 1.74874 15.2564 1.28478 14.8189C0.820828 14.3815 0.541576 13.7832 0.504167 13.1467L0.5 13L0.5 3C0.499965 2.36232 0.743605 1.74874 1.18107 1.28478C1.61854 0.820828 2.21676 0.541576 2.85333 0.504167L3 0.5L13 0.5C13.6377 0.499965 14.2513 0.743605 14.7152 1.18107C15.1792 1.61854 15.4584 2.21676 15.4958 2.85333L15.5 3L15.5 13C15.5 13.6377 15.2564 14.2513 14.8189 14.7152C14.3815 15.1792 13.7832 15.4584 13.1467 15.4958L13 15.5L3 15.5ZM3 13.8333L10.5 13.8333L10.5 2.16667L3 2.16667C2.79589 2.16669 2.59889 2.24163 2.44636 2.37726C2.29383 2.5129 2.19638 2.69979 2.1725 2.9025L2.16667 3L2.16667 13C2.16669 13.2041 2.24163 13.4011 2.37726 13.5536C2.5129 13.7062 2.69979 13.8036 2.9025 13.8275L3 13.8333ZM6.65583 10.325L6.5775 10.2558L4.91083 8.58917C4.76735 8.44567 4.68116 8.25476 4.66843 8.05223C4.65569 7.84971 4.71729 7.6495 4.84167 7.48917L4.91083 7.41083L6.5775 5.74417C6.72747 5.59471 6.9287 5.50794 7.14032 5.50148C7.35194 5.49502 7.55809 5.56935 7.7169 5.70937C7.8757 5.8494 7.97525 6.04463 7.99533 6.25539C8.01541 6.46616 7.95451 6.67667 7.825 6.84417L7.75583 6.9225L6.67917 8L7.75583 9.0775C7.89931 9.22099 7.98551 9.41191 7.99824 9.61443C8.01097 9.81695 7.94938 10.0172 7.825 10.1775L7.75583 10.2558C7.61234 10.3993 7.42142 10.4855 7.2189 10.4982C7.01638 10.511 6.81617 10.4494 6.65583 10.325Z"/>
+  </svg>
+  <span class="pst-collapse-sidebar-label">Collapse Sidebar</span>
+  <span class="pst-expand-sidebar-label">Expand Sidebar</span>
+</button></div>
+        <div class="sidebar-primary-item">
+
+<nav class="bd-docs-nav bd-links"
+     aria-label="Section Navigation">
+  <p class="bd-links__title" role="heading" aria-level="1">Section Navigation</p>
+  <div class="bd-toc-item navbar-nav"><ul class="current nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="hardware.html">How Bluesky Interfaces with Hardware</a></li>
+<li class="toctree-l1"><a class="reference internal" href="msg.html">Message Protocol</a></li>
+<li class="toctree-l1"><a class="reference internal" href="run_engine.html">The RunEngine run loop</a></li>
+<li class="toctree-l1 current active"><a class="current reference internal" href="#">Architecture: session, runner, suspension</a></li>
+<li class="toctree-l1"><a class="reference internal" href="api_changes.html">Release History</a></li>
+<li class="toctree-l1"><a class="reference internal" href="contributing.html">Contributing</a></li>
+</ul>
+</div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="devindex.html" class="nav-link">Developer Documentation</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">Architecture: session, runner, suspension</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section id="architecture-session-runner-suspension">
+<span id="architecture"></span><h1>Architecture: session, runner, suspension<a class="headerlink" href="#architecture-session-runner-suspension" title="Link to this heading">#</a></h1>
+<p>The objects behind the <a class="reference internal" href="generated/bluesky.run_engine.RunEngine.html#bluesky.run_engine.RunEngine" title="bluesky.run_engine.RunEngine"><code class="xref py py-class docutils literal notranslate"><span class="pre">RunEngine</span></code></a>, and which reaches which:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>RunEngine
+└── PlanSession               what outlives any one plan
+    ├── Suspension            permission to run
+    ├── Dispatcher            subscribers that outlive any plan
+    ├── PlanHooks             where progress is watched from
+    └╌╌ PlanRunner            one per plan, from start(plan); not held
+        ├── Suspension        child of the session's
+        ├── Dispatcher        child of the session's
+        ├── PlanHooks         the session's, shared
+        └── PlanEnvironment   frozen
+</pre></div>
+</div>
+<p>The session builds one runner per plan and keeps no reference to it, so it can
+run several plans at once. A <a class="reference internal" href="generated/bluesky.run_engine.RunEngine.html#bluesky.run_engine.RunEngine" title="bluesky.run_engine.RunEngine"><code class="xref py py-class docutils literal notranslate"><span class="pre">RunEngine</span></code></a> runs one at a time. See
+<a class="reference internal" href="headless.html#headless"><span class="std std-ref">Running plans without a RunEngine</span></a> for driving a session directly, and <a class="reference internal" href="plan_session_api.html#plan-session-api"><span class="std std-ref">PlanSession and PlanRunner API</span></a>
+for the classes.</p>
+<ul class="simple">
+<li><p><strong>Things chain upward, never downward.</strong> A plan’s suspension and dispatcher
+hold the session’s; nothing holds the plan below it.</p></li>
+<li><p><strong>A plan’s environment does not change under it.</strong> What a plan reads is
+settled when it is launched.</p></li>
+</ul>
+<section id="the-modules">
+<h2>The modules<a class="headerlink" href="#the-modules" title="Link to this heading">#</a></h2>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Module</p></th>
+<th class="head"><p>Main classes, and what they are for</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">bluesky.run_engine</span></code></p></td>
+<td><p><a class="reference internal" href="generated/bluesky.run_engine.RunEngine.html#bluesky.run_engine.RunEngine" title="bluesky.run_engine.RunEngine"><code class="xref py py-class docutils literal notranslate"><span class="pre">RunEngine</span></code></a>: drives one plan at a time from a
+terminal. Owns a session, blocks the caller, handles
+Ctrl-C, prints what the hooks report.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">bluesky.plan_session</span></code></p></td>
+<td><p><a class="reference internal" href="generated/bluesky.plan_session.PlanSession.html#bluesky.plan_session.PlanSession" title="bluesky.plan_session.PlanSession"><code class="xref py py-class docutils literal notranslate"><span class="pre">PlanSession</span></code></a>: metadata, subscribers,
+session-scoped suspenders, hooks. <a class="reference internal" href="generated/bluesky.plan_session.PlanSession.start.html#bluesky.plan_session.PlanSession.start" title="bluesky.plan_session.PlanSession.start"><code class="xref py py-meth docutils literal notranslate"><span class="pre">start()</span></code></a>
+builds a runner.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">bluesky.plan_runner</span></code></p></td>
+<td><p><a class="reference internal" href="generated/bluesky.plan_runner.PlanRunner.html#bluesky.plan_runner.PlanRunner" title="bluesky.plan_runner.PlanRunner"><code class="xref py py-class docutils literal notranslate"><span class="pre">PlanRunner</span></code></a>: one plan’s execution, awaitable.
+<a class="reference internal" href="generated/bluesky.plan_runner.PlanHooks.html#bluesky.plan_runner.PlanHooks" title="bluesky.plan_runner.PlanHooks"><code class="xref py py-class docutils literal notranslate"><span class="pre">PlanHooks</span></code></a>: what a runner reports.
+<a class="reference internal" href="generated/bluesky.plan_runner.PlanEnvironment.html#bluesky.plan_runner.PlanEnvironment" title="bluesky.plan_runner.PlanEnvironment"><code class="xref py py-class docutils literal notranslate"><span class="pre">PlanEnvironment</span></code></a>: the frozen settings a runner is
+built with.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">bluesky.suspension</span></code></p></td>
+<td><p><a class="reference internal" href="generated/bluesky.suspension.Suspension.html#bluesky.suspension.Suspension" title="bluesky.suspension.Suspension"><code class="xref py py-class docutils literal notranslate"><span class="pre">Suspension</span></code></a>: tripped while any keyed
+<a class="reference internal" href="generated/bluesky.suspension.SuspensionReason.html#bluesky.suspension.SuspensionReason" title="bluesky.suspension.SuspensionReason"><code class="xref py py-class docutils literal notranslate"><span class="pre">SuspensionReason</span></code></a> stands, here or in its parent.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">bluesky.suspenders</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">SuspenderBase</span></code> and its subclasses (<a class="reference internal" href="state-machine.html#suspenders"><span class="std std-ref">Automated Suspension</span></a>): watch a signal,
+trip or clear one reason on a suspension.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">bluesky.dispatcher</span></code></p></td>
+<td><p><a class="reference internal" href="generated/bluesky.run_engine.Dispatcher.html#bluesky.run_engine.Dispatcher" title="bluesky.run_engine.Dispatcher"><code class="xref py py-class docutils literal notranslate"><span class="pre">Dispatcher</span></code></a>: hands each document to subscribers,
+its parent’s first.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">bluesky._loop</span></code></p></td>
+<td><p>Private. <code class="docutils literal notranslate"><span class="pre">run_coro_on_loop</span></code>, <code class="docutils literal notranslate"><span class="pre">call_soon_or_now</span></code>,
+<code class="docutils literal notranslate"><span class="pre">running_on</span></code>: the only ways onto the event loop.</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+<section id="what-calls-what">
+<h2>What calls what<a class="headerlink" href="#what-calls-what" title="Link to this heading">#</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">RE</span></code> is the <a class="reference internal" href="generated/bluesky.run_engine.RunEngine.html#bluesky.run_engine.RunEngine" title="bluesky.run_engine.RunEngine"><code class="xref py py-class docutils literal notranslate"><span class="pre">RunEngine</span></code></a> and <code class="docutils literal notranslate"><span class="pre">runner</span></code> its current
+<a class="reference internal" href="generated/bluesky.plan_runner.PlanRunner.html#bluesky.plan_runner.PlanRunner" title="bluesky.plan_runner.PlanRunner"><code class="xref py py-class docutils literal notranslate"><span class="pre">PlanRunner</span></code></a>. The runner reports through
+<a class="reference internal" href="generated/bluesky.plan_runner.PlanHooks.html#bluesky.plan_runner.PlanHooks" title="bluesky.plan_runner.PlanHooks"><code class="xref py py-class docutils literal notranslate"><span class="pre">PlanHooks</span></code></a>; <code class="docutils literal notranslate"><span class="pre">RE</span></code> sets most of them, to print and
+to gate the plan. The gate is <code class="docutils literal notranslate"><span class="pre">RE</span></code>’s: an event the runner awaits as
+<code class="docutils literal notranslate"><span class="pre">hooks.may_proceed</span></code>.</p>
+<p><strong>A plan runs.</strong> <a class="reference internal" href="generated/bluesky.run_engine.RunEngine.__call__.html#bluesky.run_engine.RunEngine.__call__" title="bluesky.run_engine.RunEngine.__call__"><code class="xref py py-meth docutils literal notranslate"><span class="pre">RE(plan)</span></code></a>
+crosses to the loop, shuts its gate and calls
+<a class="reference internal" href="generated/bluesky.plan_session.PlanSession.start.html#bluesky.plan_session.PlanSession.start" title="bluesky.plan_session.PlanSession.start"><code class="xref py py-meth docutils literal notranslate"><span class="pre">session.start(plan)</span></code></a>. The
+session snapshots its settings into a
+<a class="reference internal" href="generated/bluesky.plan_runner.PlanEnvironment.html#bluesky.plan_runner.PlanEnvironment" title="bluesky.plan_runner.PlanEnvironment"><code class="xref py py-class docutils literal notranslate"><span class="pre">PlanEnvironment</span></code></a> and builds a runner with a child
+suspension and a child dispatcher; the runner starts its task, which waits at
+the gate. Back on the main thread, <code class="docutils literal notranslate"><span class="pre">RE</span></code> enters its context managers
+(installing the Ctrl-C handler) and opens the gate. The runner holds if its
+suspension is tripped (<code class="docutils literal notranslate"><span class="pre">hooks.hold_began</span></code>), then processes messages, calling
+<code class="docutils literal notranslate"><span class="pre">hooks.msg_received</span></code> for each. <code class="docutils literal notranslate"><span class="pre">RE</span></code> blocks on a future carrying the
+runner’s result.</p>
+<p><strong>A suspender trips.</strong> A signal calls its suspender back, on whatever thread it
+likes. The suspender crosses to the loop with <code class="docutils literal notranslate"><span class="pre">call_soon_or_now</span></code>, decides,
+and calls <code class="docutils literal notranslate"><span class="pre">trip</span></code> on its <a class="reference internal" href="generated/bluesky.suspension.Suspension.html#bluesky.suspension.Suspension" title="bluesky.suspension.Suspension"><code class="xref py py-class docutils literal notranslate"><span class="pre">Suspension</span></code></a>. The
+runner’s supervisor task, parked on the suspension, wakes: it calls
+<code class="docutils literal notranslate"><span class="pre">hooks.suspension_began</span></code> (<code class="docutils literal notranslate"><span class="pre">RE</span></code> prints) and pushes a <code class="docutils literal notranslate"><span class="pre">_start_suspender</span></code>
+message in front of the plan. That message stops what the plan moved and
+pushes the suspension itself, a plan that runs the pre-plans, waits for every
+reason to clear (calling <code class="docutils literal notranslate"><span class="pre">hooks.suspender_joined</span></code> or
+<code class="docutils literal notranslate"><span class="pre">hooks.suspender_recovered</span></code> as they change), calls
+<code class="docutils literal notranslate"><span class="pre">hooks.suspension_ended</span></code>, runs the post-plans in reverse and rewinds. <code class="docutils literal notranslate"><span class="pre">RE</span></code>
+is not involved beyond printing.</p>
+<p><strong>A pause and a resume.</strong> Ctrl-C reaches
+<a class="reference internal" href="generated/bluesky.run_engine.RunEngine.request_pause.html#bluesky.run_engine.RunEngine.request_pause" title="bluesky.run_engine.RunEngine.request_pause"><code class="xref py py-meth docutils literal notranslate"><span class="pre">RE.request_pause()</span></code></a>, which
+crosses to <a class="reference internal" href="generated/bluesky.plan_runner.PlanRunner.pause.html#bluesky.plan_runner.PlanRunner.pause" title="bluesky.plan_runner.PlanRunner.pause"><code class="xref py py-meth docutils literal notranslate"><span class="pre">runner.pause()</span></code></a>. The
+runner calls <code class="docutils literal notranslate"><span class="pre">hooks.pause_requested</span></code> (<code class="docutils literal notranslate"><span class="pre">RE</span></code> prints), interrupts its task,
+puts its devices at rest and calls <code class="docutils literal notranslate"><span class="pre">hooks.plan_paused</span></code>. <code class="docutils literal notranslate"><span class="pre">RE</span></code>’s
+<code class="docutils literal notranslate"><span class="pre">plan_paused</span></code> shuts the gate and unblocks the main thread, so <code class="docutils literal notranslate"><span class="pre">RE(plan)</span></code>
+returns to the prompt. <a class="reference internal" href="generated/bluesky.run_engine.RunEngine.resume.html#bluesky.run_engine.RunEngine.resume" title="bluesky.run_engine.RunEngine.resume"><code class="xref py py-meth docutils literal notranslate"><span class="pre">RE.resume()</span></code></a>
+enters the context managers, crosses to call
+<a class="reference internal" href="generated/bluesky.plan_runner.PlanRunner.resume.html#bluesky.plan_runner.PlanRunner.resume" title="bluesky.plan_runner.PlanRunner.resume"><code class="xref py py-meth docutils literal notranslate"><span class="pre">runner.resume()</span></code></a> (which
+rewinds, and holds again if the suspension is tripped), then opens the gate.
+<a class="reference internal" href="generated/bluesky.run_engine.RunEngine.stop.html#bluesky.run_engine.RunEngine.stop" title="bluesky.run_engine.RunEngine.stop"><code class="xref py py-meth docutils literal notranslate"><span class="pre">RE.stop()</span></code></a>, <code class="docutils literal notranslate"><span class="pre">RE.abort()</span></code> and
+<code class="docutils literal notranslate"><span class="pre">RE.halt()</span></code> on a paused plan cross to
+<a class="reference internal" href="generated/bluesky.plan_runner.PlanRunner.stop.html#bluesky.plan_runner.PlanRunner.stop" title="bluesky.plan_runner.PlanRunner.stop"><code class="xref py py-meth docutils literal notranslate"><span class="pre">runner.stop()</span></code></a>, which calls
+<code class="docutils literal notranslate"><span class="pre">hooks.stop_requested</span></code> (<code class="docutils literal notranslate"><span class="pre">RE</span></code> prints); <code class="docutils literal notranslate"><span class="pre">RE</span></code> then opens the gate as
+<code class="docutils literal notranslate"><span class="pre">RE.resume()</span></code> does, so the runner can clean up.</p>
+<p><strong>A document.</strong> A plan’s message reaches the
+<a class="reference internal" href="generated/bluesky.bundlers.RunBundler.html#bluesky.bundlers.RunBundler" title="bluesky.bundlers.RunBundler"><code class="xref py py-class docutils literal notranslate"><span class="pre">RunBundler</span></code></a>, which emits through the runner into the
+plan’s <a class="reference internal" href="generated/bluesky.run_engine.Dispatcher.html#bluesky.run_engine.Dispatcher" title="bluesky.run_engine.Dispatcher"><code class="xref py py-class docutils literal notranslate"><span class="pre">Dispatcher</span></code></a>. That calls the session’s
+subscribers, then the plan’s own. <code class="docutils literal notranslate"><span class="pre">RE</span></code> is not involved: <code class="docutils literal notranslate"><span class="pre">RE.subscribe</span></code>
+subscribes to the session. A monitored signal’s callback, on the device’s
+thread, hands its document to the loop with <code class="docutils literal notranslate"><span class="pre">call_soon_or_now</span></code>, so
+subscribers are only ever entered on the loop.</p>
+</section>
+<section id="which-thread">
+<span id="id1"></span><h2>Which thread<a class="headerlink" href="#which-thread" title="Link to this heading">#</a></h2>
+<p>The <a class="reference internal" href="generated/bluesky.run_engine.RunEngine.html#bluesky.run_engine.RunEngine" title="bluesky.run_engine.RunEngine"><code class="xref py py-class docutils literal notranslate"><span class="pre">RunEngine</span></code></a> is the thread-safe object. The session, runner, suspensions and
+dispatchers are used on the event loop only, and hold no locks.</p>
+<p>Threads outside bluesky’s control reach the loop through <code class="docutils literal notranslate"><span class="pre">bluesky._loop</span></code>:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">run_coro_on_loop</span></code> crosses and waits, for a user calling the <a class="reference internal" href="generated/bluesky.run_engine.RunEngine.html#bluesky.run_engine.RunEngine" title="bluesky.run_engine.RunEngine"><code class="xref py py-class docutils literal notranslate"><span class="pre">RunEngine</span></code></a>
+from their own thread;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">call_soon_or_now</span></code> crosses without waiting, for ophyd completing a status,
+a signal calling a suspender back, or a monitor producing a document.</p></li>
+</ul>
+<p><code class="docutils literal notranslate"><span class="pre">test_every_hop_onto_the_loop_is_one_of_the_few_we_mean</span></code> pins these, plus the
+loops <code class="docutils literal notranslate"><span class="pre">bluesky.magics</span></code> and <code class="docutils literal notranslate"><span class="pre">bluesky.callbacks.zmq</span></code> stop.</p>
+<p>A trip is applied on the loop, so code that trips a signal and reads
+<code class="docutils literal notranslate"><span class="pre">suspension_reasons</span></code> in the next statement can see the old answer.
+<code class="docutils literal notranslate"><span class="pre">suspension_reasons</span></code>, on the session and the runner, is an immutable mapping
+replaced whole on each change, so it can be read from any thread.</p>
+</section>
+</section>
+
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="run_engine.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">The RunEngine run loop</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="api_changes.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">Release History</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <dialog id="pst-secondary-sidebar-modal"></dialog>
+                <div id="pst-secondary-sidebar" class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item">
+<div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> On this page
+  </div>
+  <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#the-modules">The modules</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#what-calls-what">What calls what</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#which-thread">Which thread</a></li>
+</ul>
+  </nav></div>
+
+  <div class="sidebar-secondary-item">
+
+  
+  <div class="tocsection editthispage">
+    <a href="https://github.com/bluesky/bluesky/edit/1.15.2.dev235+g372dcc8c1/docs/architecture.rst">
+      <i class="fa-solid fa-pencil"></i>
+      
+      
+        
+          Edit on GitHub
+        
+      
+    </a>
+  </div>
+</div>
+
+  <div class="sidebar-secondary-item">
+
+  <div class="tocsection sourcelink">
+    <a href="_sources/architecture.rst.txt">
+      <i class="fa-solid fa-file-lines"></i> Show Source
+    </a>
+  </div>
+</div>
+
+</div></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="_static/scripts/bootstrap.js?digest=55c26ed414f5f8a31ebb"></script>
+<script defer src="_static/scripts/pydata-sphinx-theme.js?digest=55c26ed414f5f8a31ebb"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2015, Brookhaven National Lab.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 7.2.6.
+    <br/>
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  <!-- # L10n: Setting the PST URL as an argument as this does not need to be localized -->
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.17.1.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

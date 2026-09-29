@@ -1,0 +1,6 @@
+﻿bluesky.plan\_runner.PlanRunner.clear\_suspenders
+=================================================
+
+.. currentmodule:: bluesky.plan_runner
+
+.. automethod:: PlanRunner.clear_suspenders

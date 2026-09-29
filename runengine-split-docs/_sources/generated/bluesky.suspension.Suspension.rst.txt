@@ -1,0 +1,36 @@
+﻿bluesky.suspension.Suspension
+=============================
+
+.. currentmodule:: bluesky.suspension
+
+.. autoclass:: Suspension
+
+   
+   .. automethod:: __init__
+
+   
+   .. rubric:: Methods
+
+   .. autosummary::
+   
+      ~Suspension.__init__
+      ~Suspension.clear
+      ~Suspension.listening_for_recoveries
+      ~Suspension.recover
+      ~Suspension.trip
+      ~Suspension.wait_changed
+      ~Suspension.wait_cleared
+   
+   
+
+   
+   
+   .. rubric:: Attributes
+
+   .. autosummary::
+   
+      ~Suspension.loop
+      ~Suspension.reasons
+      ~Suspension.tripped
+   
+   

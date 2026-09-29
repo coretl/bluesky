@@ -1,0 +1,6 @@
+﻿bluesky.plan\_runner.PlanRunner.pause
+=====================================
+
+.. currentmodule:: bluesky.plan_runner
+
+.. automethod:: PlanRunner.pause

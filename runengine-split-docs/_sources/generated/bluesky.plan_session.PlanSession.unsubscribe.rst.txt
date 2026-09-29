@@ -1,0 +1,6 @@
+﻿bluesky.plan\_session.PlanSession.unsubscribe
+=============================================
+
+.. currentmodule:: bluesky.plan_session
+
+.. automethod:: PlanSession.unsubscribe

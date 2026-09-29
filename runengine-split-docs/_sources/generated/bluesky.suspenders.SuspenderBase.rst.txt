@@ -1,0 +1,30 @@
+﻿bluesky.suspenders.SuspenderBase
+================================
+
+.. currentmodule:: bluesky.suspenders
+
+.. autoclass:: SuspenderBase
+
+   
+   .. automethod:: __init__
+
+   
+   .. rubric:: Methods
+
+   .. autosummary::
+   
+      ~SuspenderBase.__init__
+      ~SuspenderBase.install
+      ~SuspenderBase.remove
+   
+   
+
+   
+   
+   .. rubric:: Attributes
+
+   .. autosummary::
+   
+      ~SuspenderBase.tripped
+   
+   

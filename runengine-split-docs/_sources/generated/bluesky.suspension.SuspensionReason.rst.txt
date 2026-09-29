@@ -1,0 +1,30 @@
+﻿bluesky.suspension.SuspensionReason
+===================================
+
+.. currentmodule:: bluesky.suspension
+
+.. autoclass:: SuspensionReason
+
+   
+   .. automethod:: __init__
+
+   
+   .. rubric:: Methods
+
+   .. autosummary::
+   
+      ~SuspensionReason.__init__
+   
+   
+
+   
+   
+   .. rubric:: Attributes
+
+   .. autosummary::
+   
+      ~SuspensionReason.post_plan
+      ~SuspensionReason.pre_plan
+      ~SuspensionReason.justification
+   
+   

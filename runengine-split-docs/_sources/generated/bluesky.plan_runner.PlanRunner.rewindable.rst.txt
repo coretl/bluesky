@@ -1,0 +1,6 @@
+﻿bluesky.plan\_runner.PlanRunner.rewindable
+==========================================
+
+.. currentmodule:: bluesky.plan_runner
+
+.. autoproperty:: PlanRunner.rewindable

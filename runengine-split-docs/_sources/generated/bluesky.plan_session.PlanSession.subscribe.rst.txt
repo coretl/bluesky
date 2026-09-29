@@ -1,0 +1,6 @@
+﻿bluesky.plan\_session.PlanSession.subscribe
+===========================================
+
+.. currentmodule:: bluesky.plan_session
+
+.. automethod:: PlanSession.subscribe

@@ -1,0 +1,6 @@
+﻿bluesky.plan\_runner.PlanRunner.deferred\_pause\_requested
+==========================================================
+
+.. currentmodule:: bluesky.plan_runner
+
+.. autoproperty:: PlanRunner.deferred_pause_requested
