@@ -15,7 +15,6 @@
    
       ~Suspension.__init__
       ~Suspension.clear
-      ~Suspension.listening_for_recoveries
       ~Suspension.recover
       ~Suspension.trip
       ~Suspension.wait_changed
@@ -31,6 +30,7 @@
    
       ~Suspension.loop
       ~Suspension.reasons
+      ~Suspension.recoveries
       ~Suspension.tripped
    
    

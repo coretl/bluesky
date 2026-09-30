@@ -14,8 +14,10 @@
    .. autosummary::
    
       ~PlanRunner.__init__
+      ~PlanRunner.abort
       ~PlanRunner.clear_suspenders
       ~PlanRunner.done
+      ~PlanRunner.halt
       ~PlanRunner.pause
       ~PlanRunner.resume
       ~PlanRunner.stop

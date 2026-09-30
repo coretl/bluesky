@@ -1,0 +1,6 @@
+﻿bluesky.plan\_runner.PlanRunner.halt
+====================================
+
+.. currentmodule:: bluesky.plan_runner
+
+.. automethod:: PlanRunner.halt

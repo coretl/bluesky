@@ -8,7 +8,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
-    <title>Architecture: session, runner, suspension &#8212; bluesky 1.15.2.dev235+g372dcc8c1 documentation</title>
+    <title>Architecture: session, runner, suspension &#8212; bluesky 1.15.2.dev235+g8f67674b8 documentation</title>
   
   
   
@@ -39,14 +39,14 @@
   <link rel="preload" as="script" href="_static/scripts/bootstrap.js?digest=55c26ed414f5f8a31ebb" />
 <link rel="preload" as="script" href="_static/scripts/pydata-sphinx-theme.js?digest=55c26ed414f5f8a31ebb" />
 
-    <script src="_static/documentation_options.js?v=fbac1362"></script>
+    <script src="_static/documentation_options.js?v=2f1b2996"></script>
     <script src="_static/doctools.js?v=888ff710"></script>
     <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
     <script>DOCUMENTATION_OPTIONS.pagename = 'architecture';</script>
     <script>
         DOCUMENTATION_OPTIONS.theme_version = '0.17.1';
         DOCUMENTATION_OPTIONS.theme_switcher_json_url = 'https://blueskyproject.io/bluesky/switcher.json';
-        DOCUMENTATION_OPTIONS.theme_switcher_version_match = '1.15.2.dev235+g372dcc8c1';
+        DOCUMENTATION_OPTIONS.theme_switcher_version_match = '1.15.2.dev235+g8f67674b8';
         DOCUMENTATION_OPTIONS.show_version_warning_banner =
             false;
         </script>
@@ -57,7 +57,7 @@
     <link rel="prev" title="The RunEngine run loop" href="run_engine.html" />
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
-  <meta name="docsearch:version" content="1.15.2.dev235+g372dcc8c1" />
+  <meta name="docsearch:version" content="1.15.2.dev235+g8f67674b8" />
   
     
     <script src="_static/searchtools.js"></script>
@@ -638,7 +638,7 @@ built with.</p></td>
 trip or clear one reason on a suspension.</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">bluesky.dispatcher</span></code></p></td>
-<td><p><a class="reference internal" href="generated/bluesky.run_engine.Dispatcher.html#bluesky.run_engine.Dispatcher" title="bluesky.run_engine.Dispatcher"><code class="xref py py-class docutils literal notranslate"><span class="pre">Dispatcher</span></code></a>: hands each document to subscribers,
+<td><p><a class="reference internal" href="generated/bluesky.run_engine.Dispatcher.html#bluesky.run_engine.Dispatcher" title="bluesky.dispatcher.Dispatcher"><code class="xref py py-class docutils literal notranslate"><span class="pre">Dispatcher</span></code></a>: hands each document to subscribers,
 its parent’s first.</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">bluesky._loop</span></code></p></td>
@@ -670,14 +670,14 @@ runner’s result.</p>
 <p><strong>A suspender trips.</strong> A signal calls its suspender back, on whatever thread it
 likes. The suspender crosses to the loop with <code class="docutils literal notranslate"><span class="pre">call_soon_or_now</span></code>, decides,
 and calls <code class="docutils literal notranslate"><span class="pre">trip</span></code> on its <a class="reference internal" href="generated/bluesky.suspension.Suspension.html#bluesky.suspension.Suspension" title="bluesky.suspension.Suspension"><code class="xref py py-class docutils literal notranslate"><span class="pre">Suspension</span></code></a>. The
-runner’s supervisor task, parked on the suspension, wakes: it calls
-<code class="docutils literal notranslate"><span class="pre">hooks.suspension_began</span></code> (<code class="docutils literal notranslate"><span class="pre">RE</span></code> prints) and pushes a <code class="docutils literal notranslate"><span class="pre">_start_suspender</span></code>
-message in front of the plan. That message stops what the plan moved and
-pushes the suspension itself, a plan that runs the pre-plans, waits for every
-reason to clear (calling <code class="docutils literal notranslate"><span class="pre">hooks.suspender_joined</span></code> or
-<code class="docutils literal notranslate"><span class="pre">hooks.suspender_recovered</span></code> as they change), calls
-<code class="docutils literal notranslate"><span class="pre">hooks.suspension_ended</span></code>, runs the post-plans in reverse and rewinds. <code class="docutils literal notranslate"><span class="pre">RE</span></code>
-is not involved beyond printing.</p>
+runner’s supervisor task, parked on the suspension, wakes. Only while the plan
+is running, it calls <code class="docutils literal notranslate"><span class="pre">hooks.suspension_began</span></code> (<code class="docutils literal notranslate"><span class="pre">RE</span></code> prints) and pushes a
+<code class="docutils literal notranslate"><span class="pre">_start_suspender</span></code> message in front of the plan. That message stops what the
+plan moved and pushes the suspension itself, a plan that runs the pre-plans,
+waits for every reason to clear (calling <code class="docutils literal notranslate"><span class="pre">hooks.suspender_joined</span></code> as reasons
+join, while the supervisor calls <code class="docutils literal notranslate"><span class="pre">hooks.suspender_recovered</span></code> as they
+recover), calls <code class="docutils literal notranslate"><span class="pre">hooks.suspension_ended</span></code>, runs the post-plans in reverse and
+rewinds. <code class="docutils literal notranslate"><span class="pre">RE</span></code> is not involved beyond printing.</p>
 <p><strong>A pause and a resume.</strong> Ctrl-C reaches
 <a class="reference internal" href="generated/bluesky.run_engine.RunEngine.request_pause.html#bluesky.run_engine.RunEngine.request_pause" title="bluesky.run_engine.RunEngine.request_pause"><code class="xref py py-meth docutils literal notranslate"><span class="pre">RE.request_pause()</span></code></a>, which
 crosses to <a class="reference internal" href="generated/bluesky.plan_runner.PlanRunner.pause.html#bluesky.plan_runner.PlanRunner.pause" title="bluesky.plan_runner.PlanRunner.pause"><code class="xref py py-meth docutils literal notranslate"><span class="pre">runner.pause()</span></code></a>. The
@@ -690,21 +690,26 @@ enters the context managers, crosses to call
 rewinds, and holds again if the suspension is tripped), then opens the gate.
 <a class="reference internal" href="generated/bluesky.run_engine.RunEngine.stop.html#bluesky.run_engine.RunEngine.stop" title="bluesky.run_engine.RunEngine.stop"><code class="xref py py-meth docutils literal notranslate"><span class="pre">RE.stop()</span></code></a>, <code class="docutils literal notranslate"><span class="pre">RE.abort()</span></code> and
 <code class="docutils literal notranslate"><span class="pre">RE.halt()</span></code> on a paused plan cross to
-<a class="reference internal" href="generated/bluesky.plan_runner.PlanRunner.stop.html#bluesky.plan_runner.PlanRunner.stop" title="bluesky.plan_runner.PlanRunner.stop"><code class="xref py py-meth docutils literal notranslate"><span class="pre">runner.stop()</span></code></a>, which calls
+<a class="reference internal" href="generated/bluesky.plan_runner.PlanRunner.stop.html#bluesky.plan_runner.PlanRunner.stop" title="bluesky.plan_runner.PlanRunner.stop"><code class="xref py py-meth docutils literal notranslate"><span class="pre">runner.stop()</span></code></a>,
+<a class="reference internal" href="generated/bluesky.plan_runner.PlanRunner.abort.html#bluesky.plan_runner.PlanRunner.abort" title="bluesky.plan_runner.PlanRunner.abort"><code class="xref py py-meth docutils literal notranslate"><span class="pre">runner.abort()</span></code></a> or
+<a class="reference internal" href="generated/bluesky.plan_runner.PlanRunner.halt.html#bluesky.plan_runner.PlanRunner.halt" title="bluesky.plan_runner.PlanRunner.halt"><code class="xref py py-meth docutils literal notranslate"><span class="pre">runner.halt()</span></code></a>, which call
 <code class="docutils literal notranslate"><span class="pre">hooks.stop_requested</span></code> (<code class="docutils literal notranslate"><span class="pre">RE</span></code> prints); <code class="docutils literal notranslate"><span class="pre">RE</span></code> then opens the gate as
 <code class="docutils literal notranslate"><span class="pre">RE.resume()</span></code> does, so the runner can clean up.</p>
 <p><strong>A document.</strong> A plan’s message reaches the
 <a class="reference internal" href="generated/bluesky.bundlers.RunBundler.html#bluesky.bundlers.RunBundler" title="bluesky.bundlers.RunBundler"><code class="xref py py-class docutils literal notranslate"><span class="pre">RunBundler</span></code></a>, which emits through the runner into the
-plan’s <a class="reference internal" href="generated/bluesky.run_engine.Dispatcher.html#bluesky.run_engine.Dispatcher" title="bluesky.run_engine.Dispatcher"><code class="xref py py-class docutils literal notranslate"><span class="pre">Dispatcher</span></code></a>. That calls the session’s
+plan’s <a class="reference internal" href="generated/bluesky.run_engine.Dispatcher.html#bluesky.run_engine.Dispatcher" title="bluesky.dispatcher.Dispatcher"><code class="xref py py-class docutils literal notranslate"><span class="pre">Dispatcher</span></code></a>. That calls the session’s
 subscribers, then the plan’s own. <code class="docutils literal notranslate"><span class="pre">RE</span></code> is not involved: <code class="docutils literal notranslate"><span class="pre">RE.subscribe</span></code>
 subscribes to the session. A monitored signal’s callback, on the device’s
 thread, hands its document to the loop with <code class="docutils literal notranslate"><span class="pre">call_soon_or_now</span></code>, so
-subscribers are only ever entered on the loop.</p>
+subscribers are only ever called on the loop. One arriving after its monitor
+has ended is dropped, so none follows its run’s stop document.</p>
 </section>
 <section id="which-thread">
 <span id="id1"></span><h2>Which thread<a class="headerlink" href="#which-thread" title="Link to this heading">#</a></h2>
-<p>The <a class="reference internal" href="generated/bluesky.run_engine.RunEngine.html#bluesky.run_engine.RunEngine" title="bluesky.run_engine.RunEngine"><code class="xref py py-class docutils literal notranslate"><span class="pre">RunEngine</span></code></a> is the thread-safe object. The session, runner, suspensions and
-dispatchers are used on the event loop only, and hold no locks.</p>
+<p>The <a class="reference internal" href="generated/bluesky.run_engine.RunEngine.html#bluesky.run_engine.RunEngine" title="bluesky.run_engine.RunEngine"><code class="xref py py-class docutils literal notranslate"><span class="pre">RunEngine</span></code></a> is the object to call from any thread but the event loop’s.
+On the loop itself, where a plan body or a subscriber runs, its methods that wait for the loop raise;
+<code class="docutils literal notranslate"><span class="pre">install_suspender</span></code>, <code class="docutils literal notranslate"><span class="pre">remove_suspender</span></code> and <code class="docutils literal notranslate"><span class="pre">clear_suspenders</span></code> run there directly. The session,
+runner, suspensions and dispatchers are used on the event loop only, and hold no locks.</p>
 <p>Threads outside bluesky’s control reach the loop through <code class="docutils literal notranslate"><span class="pre">bluesky._loop</span></code>:</p>
 <ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">run_coro_on_loop</span></code> crosses and waits, for a user calling the <a class="reference internal" href="generated/bluesky.run_engine.RunEngine.html#bluesky.run_engine.RunEngine" title="bluesky.run_engine.RunEngine"><code class="xref py py-class docutils literal notranslate"><span class="pre">RunEngine</span></code></a>
@@ -778,7 +783,7 @@ replaced whole on each change, so it can be read from any thread.</p>
 
   
   <div class="tocsection editthispage">
-    <a href="https://github.com/bluesky/bluesky/edit/1.15.2.dev235+g372dcc8c1/docs/architecture.rst">
+    <a href="https://github.com/bluesky/bluesky/edit/1.15.2.dev235+g8f67674b8/docs/architecture.rst">
       <i class="fa-solid fa-pencil"></i>
       
       

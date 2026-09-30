@@ -8,7 +8,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
-    <title>bluesky.plan_runner.PlanRunner &#8212; bluesky 1.15.2.dev235+g372dcc8c1 documentation</title>
+    <title>bluesky.plan_runner.PlanRunner &#8212; bluesky 1.15.2.dev235+g8f67674b8 documentation</title>
   
   
   
@@ -39,14 +39,14 @@
   <link rel="preload" as="script" href="../_static/scripts/bootstrap.js?digest=55c26ed414f5f8a31ebb" />
 <link rel="preload" as="script" href="../_static/scripts/pydata-sphinx-theme.js?digest=55c26ed414f5f8a31ebb" />
 
-    <script src="../_static/documentation_options.js?v=fbac1362"></script>
+    <script src="../_static/documentation_options.js?v=2f1b2996"></script>
     <script src="../_static/doctools.js?v=888ff710"></script>
     <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script>DOCUMENTATION_OPTIONS.pagename = 'generated/bluesky.plan_runner.PlanRunner';</script>
     <script>
         DOCUMENTATION_OPTIONS.theme_version = '0.17.1';
         DOCUMENTATION_OPTIONS.theme_switcher_json_url = 'https://blueskyproject.io/bluesky/switcher.json';
-        DOCUMENTATION_OPTIONS.theme_switcher_version_match = '1.15.2.dev235+g372dcc8c1';
+        DOCUMENTATION_OPTIONS.theme_switcher_version_match = '1.15.2.dev235+g8f67674b8';
         DOCUMENTATION_OPTIONS.show_version_warning_banner =
             false;
         </script>
@@ -57,7 +57,7 @@
     <link rel="prev" title="bluesky.plan_session.PlanSession.commands" href="bluesky.plan_session.PlanSession.commands.html" />
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
-  <meta name="docsearch:version" content="1.15.2.dev235+g372dcc8c1" />
+  <meta name="docsearch:version" content="1.15.2.dev235+g8f67674b8" />
   
     
     <script src="../_static/searchtools.js"></script>
@@ -671,11 +671,17 @@ every run still open.</p>
 <tr class="row-odd"><td><p><a class="reference internal" href="#bluesky.plan_runner.PlanRunner.__init__" title="bluesky.plan_runner.PlanRunner.__init__"><code class="xref py py-obj docutils literal notranslate"><span class="pre">__init__</span></code></a>(plan, env, suspension, hooks, ...)</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p><a class="reference internal" href="bluesky.plan_runner.PlanRunner.clear_suspenders.html#bluesky.plan_runner.PlanRunner.clear_suspenders" title="bluesky.plan_runner.PlanRunner.clear_suspenders"><code class="xref py py-obj docutils literal notranslate"><span class="pre">clear_suspenders</span></code></a>()</p></td>
+<tr class="row-even"><td><p><a class="reference internal" href="bluesky.plan_runner.PlanRunner.abort.html#bluesky.plan_runner.PlanRunner.abort" title="bluesky.plan_runner.PlanRunner.abort"><code class="xref py py-obj docutils literal notranslate"><span class="pre">abort</span></code></a>([reason])</p></td>
+<td><p>End the plan; it cleans up, and its runs close as aborted.</p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference internal" href="bluesky.plan_runner.PlanRunner.clear_suspenders.html#bluesky.plan_runner.PlanRunner.clear_suspenders" title="bluesky.plan_runner.PlanRunner.clear_suspenders"><code class="xref py py-obj docutils literal notranslate"><span class="pre">clear_suspenders</span></code></a>()</p></td>
 <td><p>Uninstall every plan-scoped suspender of this plan.</p></td>
 </tr>
-<tr class="row-odd"><td><p><a class="reference internal" href="bluesky.plan_runner.PlanRunner.done.html#bluesky.plan_runner.PlanRunner.done" title="bluesky.plan_runner.PlanRunner.done"><code class="xref py py-obj docutils literal notranslate"><span class="pre">done</span></code></a>()</p></td>
+<tr class="row-even"><td><p><a class="reference internal" href="bluesky.plan_runner.PlanRunner.done.html#bluesky.plan_runner.PlanRunner.done" title="bluesky.plan_runner.PlanRunner.done"><code class="xref py py-obj docutils literal notranslate"><span class="pre">done</span></code></a>()</p></td>
 <td><p>Whether the plan has finished, however it finished.</p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference internal" href="bluesky.plan_runner.PlanRunner.halt.html#bluesky.plan_runner.PlanRunner.halt" title="bluesky.plan_runner.PlanRunner.halt"><code class="xref py py-obj docutils literal notranslate"><span class="pre">halt</span></code></a>()</p></td>
+<td><p>End the plan without letting it clean up; its runs close as aborted.</p></td>
 </tr>
 <tr class="row-even"><td><p><a class="reference internal" href="bluesky.plan_runner.PlanRunner.pause.html#bluesky.plan_runner.PlanRunner.pause" title="bluesky.plan_runner.PlanRunner.pause"><code class="xref py py-obj docutils literal notranslate"><span class="pre">pause</span></code></a>([defer])</p></td>
 <td><p>Bring the plan to rest at a resting point.</p></td>
@@ -683,8 +689,8 @@ every run still open.</p>
 <tr class="row-odd"><td><p><a class="reference internal" href="bluesky.plan_runner.PlanRunner.resume.html#bluesky.plan_runner.PlanRunner.resume" title="bluesky.plan_runner.PlanRunner.resume"><code class="xref py py-obj docutils literal notranslate"><span class="pre">resume</span></code></a>()</p></td>
 <td><p>Continue a paused plan from its last checkpoint.</p></td>
 </tr>
-<tr class="row-even"><td><p><a class="reference internal" href="bluesky.plan_runner.PlanRunner.stop.html#bluesky.plan_runner.PlanRunner.stop" title="bluesky.plan_runner.PlanRunner.stop"><code class="xref py py-obj docutils literal notranslate"><span class="pre">stop</span></code></a>(*[, success, finalize, reason])</p></td>
-<td><p>End the plan.</p></td>
+<tr class="row-even"><td><p><a class="reference internal" href="bluesky.plan_runner.PlanRunner.stop.html#bluesky.plan_runner.PlanRunner.stop" title="bluesky.plan_runner.PlanRunner.stop"><code class="xref py py-obj docutils literal notranslate"><span class="pre">stop</span></code></a>()</p></td>
+<td><p>End the plan; it cleans up, and its runs close as a success.</p></td>
 </tr>
 </tbody>
 </table>
@@ -775,7 +781,7 @@ every run still open.</p>
 
   
   <div class="tocsection editthispage">
-    <a href="https://github.com/bluesky/bluesky/edit/1.15.2.dev235+g372dcc8c1/docs/generated/bluesky.plan_runner.PlanRunner.rst">
+    <a href="https://github.com/bluesky/bluesky/edit/1.15.2.dev235+g8f67674b8/docs/generated/bluesky.plan_runner.PlanRunner.rst">
       <i class="fa-solid fa-pencil"></i>
       
       

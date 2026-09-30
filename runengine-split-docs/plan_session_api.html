@@ -8,7 +8,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
-    <title>PlanSession and PlanRunner API &#8212; bluesky 1.15.2.dev235+g372dcc8c1 documentation</title>
+    <title>PlanSession and PlanRunner API &#8212; bluesky 1.15.2.dev235+g8f67674b8 documentation</title>
   
   
   
@@ -39,14 +39,14 @@
   <link rel="preload" as="script" href="_static/scripts/bootstrap.js?digest=55c26ed414f5f8a31ebb" />
 <link rel="preload" as="script" href="_static/scripts/pydata-sphinx-theme.js?digest=55c26ed414f5f8a31ebb" />
 
-    <script src="_static/documentation_options.js?v=fbac1362"></script>
+    <script src="_static/documentation_options.js?v=2f1b2996"></script>
     <script src="_static/doctools.js?v=888ff710"></script>
     <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
     <script>DOCUMENTATION_OPTIONS.pagename = 'plan_session_api';</script>
     <script>
         DOCUMENTATION_OPTIONS.theme_version = '0.17.1';
         DOCUMENTATION_OPTIONS.theme_switcher_json_url = 'https://blueskyproject.io/bluesky/switcher.json';
-        DOCUMENTATION_OPTIONS.theme_switcher_version_match = '1.15.2.dev235+g372dcc8c1';
+        DOCUMENTATION_OPTIONS.theme_switcher_version_match = '1.15.2.dev235+g8f67674b8';
         DOCUMENTATION_OPTIONS.show_version_warning_banner =
             false;
         </script>
@@ -57,7 +57,7 @@
     <link rel="prev" title="bluesky.bundlers.RunBundler.record_interruption" href="generated/bluesky.bundlers.RunBundler.record_interruption.html" />
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
-  <meta name="docsearch:version" content="1.15.2.dev235+g372dcc8c1" />
+  <meta name="docsearch:version" content="1.15.2.dev235+g8f67674b8" />
   
     
     <script src="_static/searchtools.js"></script>
@@ -656,7 +656,13 @@ where it is.</p>
 <td><p>Continue a paused plan from its last checkpoint.</p></td>
 </tr>
 <tr class="row-even"><td><p><a class="reference internal" href="generated/bluesky.plan_runner.PlanRunner.stop.html#bluesky.plan_runner.PlanRunner.stop" title="bluesky.plan_runner.PlanRunner.stop"><code class="xref py py-obj docutils literal notranslate"><span class="pre">PlanRunner.stop</span></code></a></p></td>
-<td><p>End the plan.</p></td>
+<td><p>End the plan; it cleans up, and its runs close as a success.</p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference internal" href="generated/bluesky.plan_runner.PlanRunner.abort.html#bluesky.plan_runner.PlanRunner.abort" title="bluesky.plan_runner.PlanRunner.abort"><code class="xref py py-obj docutils literal notranslate"><span class="pre">PlanRunner.abort</span></code></a></p></td>
+<td><p>End the plan; it cleans up, and its runs close as aborted.</p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference internal" href="generated/bluesky.plan_runner.PlanRunner.halt.html#bluesky.plan_runner.PlanRunner.halt" title="bluesky.plan_runner.PlanRunner.halt"><code class="xref py py-obj docutils literal notranslate"><span class="pre">PlanRunner.halt</span></code></a></p></td>
+<td><p>End the plan without letting it clean up; its runs close as aborted.</p></td>
 </tr>
 <tr class="row-odd"><td><p><a class="reference internal" href="generated/bluesky.plan_runner.PlanRunner.state.html#bluesky.plan_runner.PlanRunner.state" title="bluesky.plan_runner.PlanRunner.state"><code class="xref py py-obj docutils literal notranslate"><span class="pre">PlanRunner.state</span></code></a></p></td>
 <td><p>This plan's state.</p></td>
@@ -676,6 +682,9 @@ where it is.</p>
 </tbody>
 </table>
 </div>
+<p>A runner also has <code class="docutils literal notranslate"><span class="pre">run_start_uids</span></code>, <code class="docutils literal notranslate"><span class="pre">interrupted</span></code>, <code class="docutils literal notranslate"><span class="pre">exit_status</span></code>,
+<code class="docutils literal notranslate"><span class="pre">exit_reason</span></code> and <code class="docutils literal notranslate"><span class="pre">exit_exception</span></code>, filled in as the plan runs and ends;
+see <a class="reference internal" href="generated/bluesky.plan_runner.PlanRunner.html#bluesky.plan_runner.PlanRunner" title="bluesky.plan_runner.PlanRunner"><code class="xref py py-class docutils literal notranslate"><span class="pre">PlanRunner</span></code></a>.</p>
 </section>
 <section id="watching-a-plan">
 <h2>Watching a plan<a class="headerlink" href="#watching-a-plan" title="Link to this heading">#</a></h2>
@@ -701,7 +710,10 @@ where it is.</p>
 <section id="what-a-plan-is-given">
 <h2>What a plan is given<a class="headerlink" href="#what-a-plan-is-given" title="Link to this heading">#</a></h2>
 <p>A runner is built with a frozen copy of the session’s settings, so a change
-to the session reaches the next plan, not the running one.</p>
+to the session reaches the next plan, not the running one. The settings are
+the session’s attributes <code class="docutils literal notranslate"><span class="pre">md</span></code>, <code class="docutils literal notranslate"><span class="pre">preprocessors</span></code>, <code class="docutils literal notranslate"><span class="pre">md_validator</span></code>,
+<code class="docutils literal notranslate"><span class="pre">md_normalizer</span></code> and <code class="docutils literal notranslate"><span class="pre">scan_id_source</span></code>; see
+<a class="reference internal" href="generated/bluesky.plan_session.PlanSession.html#bluesky.plan_session.PlanSession" title="bluesky.plan_session.PlanSession"><code class="xref py py-class docutils literal notranslate"><span class="pre">PlanSession</span></code></a>.</p>
 <div class="pst-scrollable-table-container"><table class="autosummary longtable table autosummary">
 <tbody>
 <tr class="row-odd"><td><p><a class="reference internal" href="generated/bluesky.plan_runner.PlanEnvironment.html#bluesky.plan_runner.PlanEnvironment" title="bluesky.plan_runner.PlanEnvironment"><code class="xref py py-obj docutils literal notranslate"><span class="pre">PlanEnvironment</span></code></a></p></td>
@@ -772,7 +784,7 @@ plan. See <a class="reference internal" href="state-machine.html#suspenders"><sp
 </section>
 <section id="documents">
 <h2>Documents<a class="headerlink" href="#documents" title="Link to this heading">#</a></h2>
-<p>A session and each runner have a <a class="reference internal" href="generated/bluesky.run_engine.Dispatcher.html#bluesky.run_engine.Dispatcher" title="bluesky.run_engine.Dispatcher"><code class="xref py py-class docutils literal notranslate"><span class="pre">Dispatcher</span></code></a>; a
+<p>A session and each runner have a <a class="reference internal" href="generated/bluesky.run_engine.Dispatcher.html#bluesky.run_engine.Dispatcher" title="bluesky.dispatcher.Dispatcher"><code class="xref py py-class docutils literal notranslate"><span class="pre">Dispatcher</span></code></a>; a
 runner’s passes each document to the session’s subscribers before its own.
 <a class="reference internal" href="run_engine_api.html"><span class="doc">RunEngine API Documentation</span></a> documents its methods.</p>
 </section>
@@ -842,7 +854,7 @@ runner’s passes each document to the session’s subscribers before its own.
 
   
   <div class="tocsection editthispage">
-    <a href="https://github.com/bluesky/bluesky/edit/1.15.2.dev235+g372dcc8c1/docs/plan_session_api.rst">
+    <a href="https://github.com/bluesky/bluesky/edit/1.15.2.dev235+g8f67674b8/docs/plan_session_api.rst">
       <i class="fa-solid fa-pencil"></i>
       
       

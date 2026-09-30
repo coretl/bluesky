@@ -249,11 +249,11 @@ The lifecycle verbs are coroutines::
     await runner.resume()
 
     await runner.stop()                                 # RunEngine.stop
-    await runner.stop(success=False)                    # RunEngine.abort
-    await runner.stop(success=False, finalize=False)    # RunEngine.halt
+    await runner.abort(reason="")                       # RunEngine.abort
+    await runner.halt()                                 # RunEngine.halt
 
-``success`` decides whether runs close as ``'success'`` or ``'abort'``;
-``finalize`` whether the plan may run its own cleanup.
+``stop`` closes runs as ``'success'``, ``abort`` and ``halt`` as ``'abort'``;
+``halt`` does not let the plan run its own cleanup.
 
 Hooks
 -----

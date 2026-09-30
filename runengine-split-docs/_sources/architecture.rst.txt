@@ -46,7 +46,7 @@ Module                     Main classes, and what they are for
                            :class:`~bluesky.suspension.SuspensionReason` stands, here or in its parent.
 ``bluesky.suspenders``     ``SuspenderBase`` and its subclasses (:ref:`suspenders`): watch a signal,
                            trip or clear one reason on a suspension.
-``bluesky.dispatcher``     :class:`~bluesky.run_engine.Dispatcher`: hands each document to subscribers,
+``bluesky.dispatcher``     :class:`~bluesky.dispatcher.Dispatcher`: hands each document to subscribers,
                            its parent's first.
 ``bluesky._loop``          Private. ``run_coro_on_loop``, ``call_soon_or_now``,
                            ``running_on``: the only ways onto the event loop.
@@ -76,14 +76,14 @@ runner's result.
 **A suspender trips.** A signal calls its suspender back, on whatever thread it
 likes. The suspender crosses to the loop with ``call_soon_or_now``, decides,
 and calls ``trip`` on its :class:`~bluesky.suspension.Suspension`. The
-runner's supervisor task, parked on the suspension, wakes: it calls
-``hooks.suspension_began`` (``RE`` prints) and pushes a ``_start_suspender``
-message in front of the plan. That message stops what the plan moved and
-pushes the suspension itself, a plan that runs the pre-plans, waits for every
-reason to clear (calling ``hooks.suspender_joined`` or
-``hooks.suspender_recovered`` as they change), calls
-``hooks.suspension_ended``, runs the post-plans in reverse and rewinds. ``RE``
-is not involved beyond printing.
+runner's supervisor task, parked on the suspension, wakes. Only while the plan
+is running, it calls ``hooks.suspension_began`` (``RE`` prints) and pushes a
+``_start_suspender`` message in front of the plan. That message stops what the
+plan moved and pushes the suspension itself, a plan that runs the pre-plans,
+waits for every reason to clear (calling ``hooks.suspender_joined`` as reasons
+join, while the supervisor calls ``hooks.suspender_recovered`` as they
+recover), calls ``hooks.suspension_ended``, runs the post-plans in reverse and
+rewinds. ``RE`` is not involved beyond printing.
 
 **A pause and a resume.** Ctrl-C reaches
 :meth:`RE.request_pause() <bluesky.run_engine.RunEngine.request_pause>`, which
@@ -97,25 +97,30 @@ enters the context managers, crosses to call
 rewinds, and holds again if the suspension is tripped), then opens the gate.
 :meth:`RE.stop() <bluesky.run_engine.RunEngine.stop>`, ``RE.abort()`` and
 ``RE.halt()`` on a paused plan cross to
-:meth:`runner.stop() <bluesky.plan_runner.PlanRunner.stop>`, which calls
+:meth:`runner.stop() <bluesky.plan_runner.PlanRunner.stop>`,
+:meth:`runner.abort() <bluesky.plan_runner.PlanRunner.abort>` or
+:meth:`runner.halt() <bluesky.plan_runner.PlanRunner.halt>`, which call
 ``hooks.stop_requested`` (``RE`` prints); ``RE`` then opens the gate as
 ``RE.resume()`` does, so the runner can clean up.
 
 **A document.** A plan's message reaches the
 :class:`~bluesky.bundlers.RunBundler`, which emits through the runner into the
-plan's :class:`~bluesky.run_engine.Dispatcher`. That calls the session's
+plan's :class:`~bluesky.dispatcher.Dispatcher`. That calls the session's
 subscribers, then the plan's own. ``RE`` is not involved: ``RE.subscribe``
 subscribes to the session. A monitored signal's callback, on the device's
 thread, hands its document to the loop with ``call_soon_or_now``, so
-subscribers are only ever entered on the loop.
+subscribers are only ever called on the loop. One arriving after its monitor
+has ended is dropped, so none follows its run's stop document.
 
 .. _which-thread:
 
 Which thread
 ------------
 
-The :class:`~bluesky.run_engine.RunEngine` is the thread-safe object. The session, runner, suspensions and
-dispatchers are used on the event loop only, and hold no locks.
+The :class:`~bluesky.run_engine.RunEngine` is the object to call from any thread but the event loop's.
+On the loop itself, where a plan body or a subscriber runs, its methods that wait for the loop raise;
+``install_suspender``, ``remove_suspender`` and ``clear_suspenders`` run there directly. The session,
+runner, suspensions and dispatchers are used on the event loop only, and hold no locks.
 
 Threads outside bluesky's control reach the loop through ``bluesky._loop``:
 

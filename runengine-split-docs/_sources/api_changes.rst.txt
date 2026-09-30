@@ -115,11 +115,12 @@ Changed
   goes back into it.
 - ``PlanRunner`` does not print.  It calls ``PlanHooks``, and a ``RunEngine``
   prints what main did.
-- A plan that yields a value on close is reported with a ``UserWarning``,
-  not a printed line.
-- A plan gets a copy of ``RunEngine.md`` as it is launched, so writing to it
-  mid-plan takes effect for the next plan.  ``scan_id`` still comes from
-  ``RE.md``, which is not replaced.
+- A plan that yields a value on close is logged as a warning, not a printed
+  line.
+- ``RE.md`` is read once, as the plan is built, before the plan's first line
+  runs.  A plan that writes ``RE.md`` changes the *next* plan's metadata; pass
+  per-scan metadata with the plan's ``md=`` argument instead.  ``scan_id`` is
+  the one key still read live.
 - A suspender a plan installs with ``Msg('install_suspender')`` holds up only
   that plan, and is removed when it ends.  ``Msg('remove_suspender')`` warns and
   ignores a suspender the plan did not install.  ``RunEngine.suspenders`` and
@@ -129,8 +130,11 @@ Removed
 -------
 - ``RunEngine.request_suspend``, with no replacement.  Install a suspender,
   which composes with other suspenders; or use ``RunEngine.request_pause``.
-- ``SuspenderBase.get_futures`` and ``SuspenderBase.RE``.  Use
-  ``SuspenderBase.tripped``.
+- ``SuspenderBase.get_futures``, ``SuspenderBase.RE`` and
+  ``SuspenderBase._lock``.  Use ``SuspenderBase.tripped``.  A subclass that
+  overrides ``install`` is handed a ``Suspension``; one that calls
+  ``self.RE.abort()`` from its callback has no replacement, as ``RE.abort()``
+  cannot be called from the event loop.
 
 v1.15.1 (2026-05-05)
 ====================

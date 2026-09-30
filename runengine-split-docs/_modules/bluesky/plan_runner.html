@@ -7,7 +7,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>bluesky.plan_runner &#8212; bluesky 1.15.2.dev235+g372dcc8c1 documentation</title>
+    <title>bluesky.plan_runner &#8212; bluesky 1.15.2.dev235+g8f67674b8 documentation</title>
   
   
   
@@ -38,7 +38,7 @@
   <link rel="preload" as="script" href="../../_static/scripts/bootstrap.js?digest=55c26ed414f5f8a31ebb" />
 <link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=55c26ed414f5f8a31ebb" />
 
-    <script src="../../_static/documentation_options.js?v=fbac1362"></script>
+    <script src="../../_static/documentation_options.js?v=2f1b2996"></script>
     <script src="../../_static/doctools.js?v=888ff710"></script>
     <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script type="module">import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11.12.1/dist/mermaid.esm.min.mjs";
@@ -403,7 +403,7 @@ window.runMermaid = runMermaid;</script>
     <script>
         DOCUMENTATION_OPTIONS.theme_version = '0.17.1';
         DOCUMENTATION_OPTIONS.theme_switcher_json_url = 'https://blueskyproject.io/bluesky/switcher.json';
-        DOCUMENTATION_OPTIONS.theme_switcher_version_match = '1.15.2.dev235+g372dcc8c1';
+        DOCUMENTATION_OPTIONS.theme_switcher_version_match = '1.15.2.dev235+g8f67674b8';
         DOCUMENTATION_OPTIONS.show_version_warning_banner =
             false;
         </script>
@@ -412,7 +412,7 @@ window.runMermaid = runMermaid;</script>
     <link rel="search" title="Search" href="../../search.html" />
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
-  <meta name="docsearch:version" content="1.15.2.dev235+g372dcc8c1" />
+  <meta name="docsearch:version" content="1.15.2.dev235+g8f67674b8" />
   
     
     <script src="../../_static/searchtools.js"></script>
@@ -1395,9 +1395,9 @@ window.runMermaid = runMermaid;</script>
         <span class="bp">self</span><span class="o">.</span><span class="n">_plan_suspenders</span><span class="p">:</span> <span class="nb">set</span><span class="p">[</span><span class="n">SuspenderBase</span><span class="p">]</span> <span class="o">=</span> <span class="nb">set</span><span class="p">()</span>
 
         <span class="bp">self</span><span class="o">.</span><span class="n">_suspension</span> <span class="o">=</span> <span class="n">suspension</span>
-        <span class="c1"># True while `_holding` runs a wait for the suspension to clear.</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_held</span> <span class="o">=</span> <span class="kc">False</span>
-        <span class="c1"># Watches the suspension; replaced on every start or resume.</span>
+        <span class="c1"># True from a hold or suspension opening until its wait ends.</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_held_up</span> <span class="o">=</span> <span class="kc">False</span>
+        <span class="c1"># Watches the suspension while the plan runs.</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_supervisor</span><span class="p">:</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">Task</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
 
         <span class="bp">self</span><span class="o">.</span><span class="n">_groups</span><span class="p">:</span> <span class="n">defaultdict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">set</span><span class="p">[</span><span class="n">Callable</span><span class="p">[[],</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">Future</span><span class="p">]]]</span> <span class="o">=</span> <span class="n">defaultdict</span><span class="p">(</span><span class="nb">set</span><span class="p">)</span>
@@ -1452,12 +1452,9 @@ window.runMermaid = runMermaid;</script>
 <span class="w">        </span><span class="sd">"""Dispatch a document, on the loop."""</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_dispatcher</span><span class="o">.</span><span class="n">process</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="n">doc</span><span class="p">)</span>
 
-    <span class="k">def</span><span class="w"> </span><span class="nf">_queue_emit</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">,</span> <span class="n">doc</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">"""Dispatch a document on the loop, from any thread.</span>
-
-<span class="sd">        For a monitor callback, which a sync ophyd signal calls on its own thread.</span>
-<span class="sd">        """</span>
-        <span class="n">call_soon_or_now</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_loop</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">_dispatcher</span><span class="o">.</span><span class="n">process</span><span class="p">,</span> <span class="n">name</span><span class="p">,</span> <span class="n">doc</span><span class="p">)</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">_emit_sync</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">,</span> <span class="n">doc</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""Dispatch a document now, on the loop."""</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_dispatcher</span><span class="o">.</span><span class="n">process</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="n">doc</span><span class="p">)</span>
 
     <span class="nd">@property</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">_loop</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">AbstractEventLoop</span><span class="p">:</span>
@@ -1484,96 +1481,149 @@ window.runMermaid = runMermaid;</script>
 
 
     <span class="k">def</span><span class="w"> </span><span class="nf">_arrange_permission</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">at_start</span><span class="p">:</span> <span class="nb">bool</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">"""Hold the plan while its suspension is tripped, and restart the supervisor.</span>
+<span class="w">        </span><span class="sd">"""Hold the plan in band while the suspension is tripped; at the start, supervise it too."""</span>
+        <span class="k">if</span> <span class="n">at_start</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_supervisor</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_loop</span><span class="o">.</span><span class="n">create_task</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_supervise_suspension</span><span class="p">())</span>
+            <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">_suspension</span><span class="o">.</span><span class="n">tripped</span><span class="p">:</span>
+                <span class="c1"># Decided now, so that any later trip suspends.</span>
+                <span class="k">return</span>
+        <span class="c1"># On a resume, `_hold` looks in band, so a trip before the plan moves still holds it.</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">_held_up</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_held_up</span> <span class="o">=</span> <span class="kc">True</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_push_plan</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_hold</span><span class="p">(</span><span class="n">at_start</span><span class="p">))</span>
 
-<span class="sd">        Called at the start of a plan and on a resume.</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">_hold</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">at_start</span><span class="p">:</span> <span class="nb">bool</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">typing</span><span class="o">.</span><span class="n">Generator</span><span class="p">[</span><span class="n">Msg</span><span class="p">,</span> <span class="n">typing</span><span class="o">.</span><span class="n">Any</span><span class="p">,</span> <span class="kc">None</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">"""Wait until the suspension clears, with no pre- or post-plans."""</span>
+        <span class="n">held</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_suspension</span><span class="o">.</span><span class="n">tripped</span>
+        <span class="k">while</span> <span class="bp">self</span><span class="o">.</span><span class="n">_suspension</span><span class="o">.</span><span class="n">tripped</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_hooks</span><span class="o">.</span><span class="n">hold_began</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_suspension</span><span class="o">.</span><span class="n">reasons</span><span class="p">,</span> <span class="n">at_start</span><span class="p">)</span>
+            <span class="c1"># A pause ends the wait early; the plan then continues, not begins.</span>
+            <span class="n">at_start</span> <span class="o">=</span> <span class="kc">False</span>
+            <span class="k">yield</span> <span class="n">Msg</span><span class="p">(</span><span class="s2">"wait_for"</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">_suspension</span><span class="o">.</span><span class="n">wait_cleared</span><span class="p">])</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_held_up</span> <span class="o">=</span> <span class="kc">False</span>
+        <span class="k">if</span> <span class="n">held</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_hooks</span><span class="o">.</span><span class="n">hold_ended</span><span class="p">()</span>
+
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_supervise_suspension</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""Suspend the running plan when the suspension trips, and report recoveries while held up."""</span>
+        <span class="n">seen</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_suspension</span><span class="o">.</span><span class="n">recoveries</span>
+        <span class="k">while</span> <span class="kc">True</span><span class="p">:</span>
+            <span class="n">recoveries</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_suspension</span><span class="o">.</span><span class="n">recoveries</span>
+            <span class="c1"># Not while pausing or paused, whose resume holds instead, nor while ending.</span>
+            <span class="n">running</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_state</span> <span class="o">==</span> <span class="s2">"running"</span>
+            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_held_up</span> <span class="ow">and</span> <span class="n">running</span><span class="p">:</span>
+                <span class="k">for</span> <span class="n">key</span><span class="p">,</span> <span class="n">recovery</span> <span class="ow">in</span> <span class="n">recoveries</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+                    <span class="c1"># Each `recover` makes a new record.</span>
+                    <span class="k">if</span> <span class="n">seen</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">key</span><span class="p">)</span> <span class="ow">is</span> <span class="ow">not</span> <span class="n">recovery</span><span class="p">:</span>
+                        <span class="bp">self</span><span class="o">.</span><span class="n">_hooks</span><span class="o">.</span><span class="n">suspender_recovered</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="o">*</span><span class="n">recovery</span><span class="p">)</span>
+            <span class="n">seen</span> <span class="o">=</span> <span class="n">recoveries</span>
+            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_suspension</span><span class="o">.</span><span class="n">tripped</span> <span class="ow">and</span> <span class="n">running</span> <span class="ow">and</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">_held_up</span><span class="p">:</span>
+                <span class="n">opening</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_suspension</span><span class="o">.</span><span class="n">reasons</span><span class="p">)</span>
+                <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">resumable</span><span class="p">:</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">_hooks</span><span class="o">.</span><span class="n">suspension_began</span><span class="p">(</span><span class="n">opening</span><span class="p">)</span>
+                    <span class="c1"># Until the pushed message pushes the suspension itself.</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">_held_up</span> <span class="o">=</span> <span class="kc">True</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">_state</span> <span class="o">=</span> <span class="s2">"suspending"</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">_push_plan</span><span class="p">(</span><span class="n">single_gen</span><span class="p">(</span><span class="n">Msg</span><span class="p">(</span><span class="s2">"_start_suspender"</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="n">opening</span><span class="p">)))</span>
+                <span class="k">else</span><span class="p">:</span>
+                    <span class="c1"># No checkpoint to rewind to, so the plan cannot be held: end it.</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">_hooks</span><span class="o">.</span><span class="n">suspension_refused</span><span class="p">(</span><span class="n">opening</span><span class="p">)</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">interrupted</span> <span class="o">=</span> <span class="kc">True</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">_exception</span> <span class="o">=</span> <span class="n">FailedPause</span><span class="p">()</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">_state</span> <span class="o">=</span> <span class="s2">"aborting"</span>
+                <span class="c1"># Interrupt the run task so it reaches the pushed message, or ends.</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_get_run_task</span><span class="p">()</span><span class="o">.</span><span class="n">cancel</span><span class="p">()</span>
+            <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_suspension</span><span class="o">.</span><span class="n">wait_changed</span><span class="p">()</span>
+
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_start_suspender</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">msg</span><span class="p">:</span> <span class="n">Msg</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">typing</span><span class="o">.</span><span class="n">Any</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        An internal message to do the initial work of starting a suspender</span>
 <span class="sd">        """</span>
-        <span class="n">reasons</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_suspension</span><span class="o">.</span><span class="n">reasons</span>
-        <span class="n">tripped</span> <span class="o">=</span> <span class="nb">bool</span><span class="p">(</span><span class="n">reasons</span><span class="p">)</span>
-        <span class="c1"># No checkpoint yet to rewind to, so hold in band rather than suspend.</span>
-        <span class="c1"># Not twice: a plan paused inside the hold waits in it again.</span>
-        <span class="k">if</span> <span class="n">tripped</span> <span class="ow">and</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">_held</span><span class="p">:</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">_push_plan</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_holding</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_hold</span><span class="p">()))</span>
-        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_supervisor</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">_supervisor</span><span class="o">.</span><span class="n">cancel</span><span class="p">()</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_supervisor</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_loop</span><span class="o">.</span><span class="n">create_task</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_supervise_suspension</span><span class="p">(</span><span class="n">tripped_at_start</span><span class="o">=</span><span class="n">tripped</span><span class="p">))</span>
-        <span class="c1"># Last, so a hook that raises cannot skip the hold.</span>
-        <span class="k">if</span> <span class="n">tripped</span><span class="p">:</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">_hooks</span><span class="o">.</span><span class="n">hold_began</span><span class="p">(</span><span class="n">reasons</span><span class="p">,</span> <span class="n">at_start</span><span class="p">)</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="nf">_holding</span><span class="p">(</span>
-        <span class="bp">self</span><span class="p">,</span> <span class="n">plan</span><span class="p">:</span> <span class="n">typing</span><span class="o">.</span><span class="n">Generator</span><span class="p">[</span><span class="n">Msg</span><span class="p">,</span> <span class="n">typing</span><span class="o">.</span><span class="n">Any</span><span class="p">,</span> <span class="n">typing</span><span class="o">.</span><span class="n">Any</span><span class="p">]</span>
-    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">typing</span><span class="o">.</span><span class="n">Generator</span><span class="p">[</span><span class="n">Msg</span><span class="p">,</span> <span class="n">typing</span><span class="o">.</span><span class="n">Any</span><span class="p">,</span> <span class="n">typing</span><span class="o">.</span><span class="n">Any</span><span class="p">]:</span>
-<span class="w">        </span><span class="sd">"""Run ``plan`` with `_held` set."""</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_held</span> <span class="o">=</span> <span class="kc">True</span>
+        <span class="p">(</span><span class="n">opening</span><span class="p">,)</span> <span class="o">=</span> <span class="n">msg</span><span class="o">.</span><span class="n">args</span>
+        <span class="k">for</span> <span class="n">current_run</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_run_bundlers</span><span class="o">.</span><span class="n">values</span><span class="p">():</span>
+            <span class="n">current_run</span><span class="o">.</span><span class="n">record_interruption</span><span class="p">(</span><span class="n">join_justifications</span><span class="p">(</span><span class="n">opening</span><span class="p">)</span> <span class="ow">or</span> <span class="s2">"suspended"</span><span class="p">)</span>
         <span class="k">try</span><span class="p">:</span>
-            <span class="k">return</span> <span class="p">(</span><span class="k">yield from</span> <span class="n">plan</span><span class="p">)</span>
-        <span class="k">finally</span><span class="p">:</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">_held</span> <span class="o">=</span> <span class="kc">False</span>
+            <span class="c1"># During suspend, all motors should be stopped. Call stop() on</span>
+            <span class="c1"># every object we ever set().</span>
+            <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_stop_movable_objects</span><span class="p">(</span><span class="n">success</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+            <span class="c1"># Notify Devices of the pause in case they want to clean up.</span>
+            <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_pause_objects</span><span class="p">()</span>
+        <span class="k">except</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">CancelledError</span><span class="p">:</span>
+            <span class="c1"># Paused before the suspension began, so the resume holds instead.</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_held_up</span> <span class="o">=</span> <span class="kc">False</span>
+            <span class="k">raise</span>
+        <span class="c1"># rewind to the last checkpoint</span>
+        <span class="n">rewind_plan</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_rewind</span><span class="p">()</span>
+        <span class="n">was_rewindable</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">rewindable</span>
+        <span class="c1"># Every reason in this suspension, in the order it tripped.</span>
+        <span class="n">known</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span><span class="n">opening</span><span class="p">)</span>
 
-    <span class="k">def</span><span class="w"> </span><span class="nf">_hold</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">typing</span><span class="o">.</span><span class="n">Generator</span><span class="p">[</span><span class="n">Msg</span><span class="p">,</span> <span class="n">typing</span><span class="o">.</span><span class="n">Any</span><span class="p">,</span> <span class="kc">None</span><span class="p">]:</span>
-<span class="w">        </span><span class="sd">"""Wait in band until the suspension clears."""</span>
-        <span class="k">with</span> <span class="bp">self</span><span class="o">.</span><span class="n">_suspension</span><span class="o">.</span><span class="n">listening_for_recoveries</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_on_recovery</span><span class="p">):</span>
-            <span class="k">while</span> <span class="kc">True</span><span class="p">:</span>
-                <span class="k">yield</span> <span class="n">Msg</span><span class="p">(</span><span class="s2">"wait_for"</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">_suspension</span><span class="o">.</span><span class="n">wait_cleared</span><span class="p">])</span>
-                <span class="c1"># Woken by a pause and resumed still tripped: wait again.</span>
-                <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">_suspension</span><span class="o">.</span><span class="n">tripped</span><span class="p">:</span>
-                    <span class="k">break</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_hooks</span><span class="o">.</span><span class="n">hold_ended</span><span class="p">()</span>
+        <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">joined_or_cleared</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">while</span> <span class="bp">self</span><span class="o">.</span><span class="n">_suspension</span><span class="o">.</span><span class="n">tripped</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">_suspension</span><span class="o">.</span><span class="n">reasons</span><span class="o">.</span><span class="n">keys</span><span class="p">()</span> <span class="o">&lt;=</span> <span class="n">known</span><span class="o">.</span><span class="n">keys</span><span class="p">():</span>
+                <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_suspension</span><span class="o">.</span><span class="n">wait_changed</span><span class="p">()</span>
 
-    <span class="k">def</span><span class="w"> </span><span class="nf">_on_recovery</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">key</span><span class="p">:</span> <span class="n">typing</span><span class="o">.</span><span class="n">Hashable</span><span class="p">,</span> <span class="n">reason</span><span class="p">:</span> <span class="n">SuspensionReason</span><span class="p">,</span> <span class="n">release_at</span><span class="p">:</span> <span class="nb">float</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">"""Pass on a recovery of one of this plan's reasons, unless paused."""</span>
-        <span class="k">if</span> <span class="n">key</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_suspension</span><span class="o">.</span><span class="n">reasons</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">state</span> <span class="ow">not</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">"paused"</span><span class="p">,</span> <span class="s2">"pausing"</span><span class="p">):</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">_hooks</span><span class="o">.</span><span class="n">suspender_recovered</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="n">reason</span><span class="p">,</span> <span class="n">release_at</span><span class="p">)</span>
+        <span class="k">def</span><span class="w"> </span><span class="nf">suspender_helper_inner_plan</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">typing</span><span class="o">.</span><span class="n">Generator</span><span class="p">[</span><span class="n">Msg</span><span class="p">,</span> <span class="n">typing</span><span class="o">.</span><span class="n">Any</span><span class="p">,</span> <span class="kc">None</span><span class="p">]:</span>
+            <span class="k">try</span><span class="p">:</span>
+                <span class="c1"># none of this should run again.</span>
+                <span class="k">yield</span> <span class="n">Msg</span><span class="p">(</span><span class="s2">"rewindable"</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">False</span><span class="p">)</span>
+                <span class="c1"># if there is a pre plan add on top of the wait</span>
+                <span class="k">for</span> <span class="n">reason</span> <span class="ow">in</span> <span class="n">opening</span><span class="o">.</span><span class="n">values</span><span class="p">():</span>
+                    <span class="k">if</span> <span class="n">reason</span><span class="o">.</span><span class="n">pre_plan</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+                        <span class="k">yield from</span> <span class="n">ensure_generator</span><span class="p">(</span><span class="n">_called</span><span class="p">(</span><span class="n">reason</span><span class="o">.</span><span class="n">pre_plan</span><span class="p">))</span>
+                <span class="c1"># wait for every reason to clear; one that joins runs its pre plan</span>
+                <span class="n">woken</span> <span class="o">=</span> <span class="kc">False</span>
+                <span class="k">while</span> <span class="bp">self</span><span class="o">.</span><span class="n">_suspension</span><span class="o">.</span><span class="n">tripped</span><span class="p">:</span>
+                    <span class="n">joining</span> <span class="o">=</span> <span class="p">{</span><span class="n">key</span><span class="p">:</span> <span class="n">reason</span> <span class="k">for</span> <span class="n">key</span><span class="p">,</span> <span class="n">reason</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_suspension</span><span class="o">.</span><span class="n">reasons</span><span class="o">.</span><span class="n">items</span><span class="p">()</span> <span class="k">if</span> <span class="n">key</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">known</span><span class="p">}</span>
+                    <span class="k">for</span> <span class="n">key</span><span class="p">,</span> <span class="n">reason</span> <span class="ow">in</span> <span class="n">joining</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+                        <span class="bp">self</span><span class="o">.</span><span class="n">_hooks</span><span class="o">.</span><span class="n">suspender_joined</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="n">reason</span><span class="p">)</span>
+                        <span class="n">known</span><span class="p">[</span><span class="n">key</span><span class="p">]</span> <span class="o">=</span> <span class="n">reason</span>
+                        <span class="k">if</span> <span class="n">reason</span><span class="o">.</span><span class="n">pre_plan</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+                            <span class="k">yield from</span> <span class="n">ensure_generator</span><span class="p">(</span><span class="n">_called</span><span class="p">(</span><span class="n">reason</span><span class="o">.</span><span class="n">pre_plan</span><span class="p">))</span>
+                    <span class="k">if</span> <span class="ow">not</span> <span class="n">joining</span><span class="p">:</span>
+                        <span class="k">if</span> <span class="n">woken</span><span class="p">:</span>
+                            <span class="c1"># Woken by a pause, and resumed still tripped.</span>
+                            <span class="bp">self</span><span class="o">.</span><span class="n">_hooks</span><span class="o">.</span><span class="n">hold_began</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_suspension</span><span class="o">.</span><span class="n">reasons</span><span class="p">,</span> <span class="kc">False</span><span class="p">)</span>
+                        <span class="k">yield</span> <span class="n">Msg</span><span class="p">(</span><span class="s2">"wait_for"</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="p">[</span><span class="n">joined_or_cleared</span><span class="p">])</span>
+                    <span class="n">woken</span> <span class="o">=</span> <span class="ow">not</span> <span class="n">joining</span>
+            <span class="k">finally</span><span class="p">:</span>
+                <span class="c1"># Released: a trip from here on is a new suspension.</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_held_up</span> <span class="o">=</span> <span class="kc">False</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_hooks</span><span class="o">.</span><span class="n">suspension_ended</span><span class="p">()</span>
+            <span class="c1"># do the work we need to do to resume</span>
+            <span class="k">yield</span> <span class="n">Msg</span><span class="p">(</span>
+                <span class="s2">"_resume_from_suspender"</span><span class="p">,</span>
+                <span class="kc">None</span><span class="p">,</span>
+            <span class="p">)</span>
+            <span class="c1"># if there is a post plan, run it</span>
+            <span class="k">for</span> <span class="n">reason</span> <span class="ow">in</span> <span class="nb">reversed</span><span class="p">(</span><span class="n">known</span><span class="o">.</span><span class="n">values</span><span class="p">()):</span>
+                <span class="k">if</span> <span class="n">reason</span><span class="o">.</span><span class="n">post_plan</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+                    <span class="k">yield from</span> <span class="n">ensure_generator</span><span class="p">(</span><span class="n">_called</span><span class="p">(</span><span class="n">reason</span><span class="o">.</span><span class="n">post_plan</span><span class="p">))</span>
+            <span class="c1"># put rewindable back the way it was</span>
+            <span class="k">yield</span> <span class="n">Msg</span><span class="p">(</span><span class="s2">"rewindable"</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="n">was_rewindable</span><span class="p">)</span>
+            <span class="k">yield from</span> <span class="n">rewind_plan</span>
 
-    <span class="nd">@property</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">_run_task</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">Task</span><span class="p">:</span>
+        <span class="c1"># add the above helper to the plan stack</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_push_plan</span><span class="p">(</span><span class="n">suspender_helper_inner_plan</span><span class="p">())</span>
+
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_resume_from_suspender</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">msg</span><span class="p">:</span> <span class="n">Msg</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">typing</span><span class="o">.</span><span class="n">Any</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""The suspension is over: tell the devices.</span>
+
+<span class="sd">        Expected message object is:</span>
+
+<span class="sd">            Msg('_resume_from_suspender')</span>
+
+<span class="sd">        Sent by the helper plan `_start_suspender` pushes, between the hold and</span>
+<span class="sd">        the post-plan. Nothing to do with `PlanRunner.resume`.</span>
+
+<span class="sd">        Monitors are untouched: a suspension never stopped them.</span>
+<span class="sd">        """</span>
+        <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_resume_objects</span><span class="p">()</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_get_run_task</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">Task</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">"""The task running the plan. RuntimeError for an idle runner."""</span>
         <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_task</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
             <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="s2">"No plan is running, so there is no task to interrupt."</span><span class="p">)</span>
         <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_task</span>
-
-    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_supervise_suspension</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">tripped_at_start</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">"""Suspend the plan whenever its suspension is tripped.</span>
-
-<span class="sd">        A reason tripping during a suspension joins it.</span>
-<span class="sd">        """</span>
-        <span class="k">if</span> <span class="n">tripped_at_start</span><span class="p">:</span>
-            <span class="c1"># Held in band by `_arrange_permission`; wait for that to clear.</span>
-            <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_suspension</span><span class="o">.</span><span class="n">wait_cleared</span><span class="p">()</span>
-        <span class="k">while</span> <span class="kc">True</span><span class="p">:</span>
-            <span class="c1"># Nothing while paused or pausing: `resume` restarts this task.</span>
-            <span class="k">while</span> <span class="ow">not</span> <span class="p">(</span><span class="n">reasons</span> <span class="o">:=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_suspension</span><span class="o">.</span><span class="n">reasons</span><span class="p">)</span> <span class="ow">or</span> <span class="bp">self</span><span class="o">.</span><span class="n">state</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">"paused"</span><span class="p">,</span> <span class="s2">"pausing"</span><span class="p">):</span>
-                <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_suspension</span><span class="o">.</span><span class="n">wait_changed</span><span class="p">()</span>
-            <span class="n">opening</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span><span class="n">reasons</span><span class="p">)</span>
-            <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">resumable</span><span class="p">:</span>
-                <span class="c1"># The plan is being torn down, so a suspension would never run.</span>
-                <span class="bp">self</span><span class="o">.</span><span class="n">_abort_unsuspendable</span><span class="p">(</span><span class="n">opening</span><span class="p">)</span>
-                <span class="k">return</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">_hooks</span><span class="o">.</span><span class="n">suspension_began</span><span class="p">(</span><span class="n">opening</span><span class="p">)</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">_begin_suspension</span><span class="p">(</span><span class="n">opening</span><span class="p">)</span>
-            <span class="c1"># The plan runs the suspension; wait for it to end.</span>
-            <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_suspension</span><span class="o">.</span><span class="n">wait_cleared</span><span class="p">()</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="nf">_abort_unsuspendable</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">reasons</span><span class="p">:</span> <span class="n">typing</span><span class="o">.</span><span class="n">Mapping</span><span class="p">[</span><span class="n">typing</span><span class="o">.</span><span class="n">Hashable</span><span class="p">,</span> <span class="n">SuspensionReason</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">"""End a plan that cannot be held, because it has no checkpoint."""</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_hooks</span><span class="o">.</span><span class="n">suspension_refused</span><span class="p">(</span><span class="n">reasons</span><span class="p">)</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">interrupted</span> <span class="o">=</span> <span class="kc">True</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_exception</span> <span class="o">=</span> <span class="n">FailedPause</span><span class="p">()</span>
-        <span class="c1"># Never paused: the supervisor skips a paused plan.</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">state</span> <span class="o">=</span> <span class="s2">"aborting"</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_run_task</span><span class="o">.</span><span class="n">cancel</span><span class="p">()</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="nf">_begin_suspension</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">opening</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="n">typing</span><span class="o">.</span><span class="n">Hashable</span><span class="p">,</span> <span class="n">SuspensionReason</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">"""Put a suspension for ``opening`` in front of the plan."""</span>
-        <span class="c1"># The supervisor is cancelled before the runner goes idle.</span>
-        <span class="k">assert</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">state</span><span class="o">.</span><span class="n">is_idle</span><span class="p">,</span> <span class="s2">"a suspension reached a runner that had already finished"</span>
-        <span class="c1"># The supervisor does nothing while paused.</span>
-        <span class="k">assert</span> <span class="bp">self</span><span class="o">.</span><span class="n">state</span> <span class="o">!=</span> <span class="s2">"paused"</span><span class="p">,</span> <span class="s2">"a suspension was opened while the plan was paused"</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_push_plan</span><span class="p">(</span><span class="n">single_gen</span><span class="p">(</span><span class="n">Msg</span><span class="p">(</span><span class="s2">"_start_suspender"</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="n">opening</span><span class="p">)))</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">state</span> <span class="o">=</span> <span class="s2">"suspending"</span>
-        <span class="c1"># Interrupt the run task so it reaches the pushed message.</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_run_task</span><span class="o">.</span><span class="n">cancel</span><span class="p">()</span>
 
     <span class="nd">@property</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">suspension_reasons</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">typing</span><span class="o">.</span><span class="n">Mapping</span><span class="p">[</span><span class="n">typing</span><span class="o">.</span><span class="n">Hashable</span><span class="p">,</span> <span class="n">SuspensionReason</span><span class="p">]:</span>
@@ -1613,10 +1663,6 @@ window.runMermaid = runMermaid;</script>
     <span class="k">def</span><span class="w"> </span><span class="nf">state</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">"""This plan's state. One of {'idle', 'running', 'paused', ...}."""</span>
         <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_state</span>
-
-    <span class="nd">@state</span><span class="o">.</span><span class="n">setter</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">state</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">):</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_state</span> <span class="o">=</span> <span class="n">value</span>
 
     <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_pause_objects</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">"""Tell every `Pausable` object the plan has come to rest."""</span>
@@ -1702,20 +1748,20 @@ window.runMermaid = runMermaid;</script>
         <span class="nb">sentinel</span> <span class="o">=</span> <span class="nb">object</span><span class="p">()</span>
         <span class="n">plan_return</span> <span class="o">=</span> <span class="n">NO_PLAN_RETURN</span>
         <span class="k">try</span><span class="p">:</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">state</span> <span class="o">=</span> <span class="s2">"running"</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_state</span> <span class="o">=</span> <span class="s2">"running"</span>
             <span class="k">while</span> <span class="kc">True</span><span class="p">:</span>
                 <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">state</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">"pausing"</span><span class="p">,</span> <span class="s2">"suspending"</span><span class="p">):</span>
                     <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">resumable</span><span class="p">:</span>
                         <span class="bp">self</span><span class="o">.</span><span class="n">_run_permit</span><span class="o">.</span><span class="n">set</span><span class="p">()</span>
                         <span class="n">stashed_exception</span> <span class="o">=</span> <span class="n">FailedPause</span><span class="p">()</span>
 
-                        <span class="bp">self</span><span class="o">.</span><span class="n">state</span> <span class="o">=</span> <span class="s2">"aborting"</span>
+                        <span class="bp">self</span><span class="o">.</span><span class="n">_state</span> <span class="o">=</span> <span class="s2">"aborting"</span>
                         <span class="k">continue</span>
                 <span class="c1"># currently only using 'suspending' to get us into the</span>
                 <span class="c1"># block above, we do not have a 'suspended' state</span>
                 <span class="c1"># (yet)</span>
                 <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">state</span> <span class="o">==</span> <span class="s2">"suspending"</span><span class="p">:</span>
-                    <span class="bp">self</span><span class="o">.</span><span class="n">state</span> <span class="o">=</span> <span class="s2">"running"</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">_state</span> <span class="o">=</span> <span class="s2">"running"</span>
                 <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">_run_permit</span><span class="o">.</span><span class="n">is_set</span><span class="p">():</span>
                     <span class="c1"># A pause has been requested. First, put everything in a</span>
                     <span class="c1"># resting state.</span>
@@ -1726,7 +1772,7 @@ window.runMermaid = runMermaid;</script>
                         <span class="k">await</span> <span class="n">current_run</span><span class="o">.</span><span class="n">suspend_monitors</span><span class="p">()</span>
                     <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_stop_movable_objects</span><span class="p">(</span><span class="n">success</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
                     <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_pause_objects</span><span class="p">()</span>
-                    <span class="bp">self</span><span class="o">.</span><span class="n">state</span> <span class="o">=</span> <span class="s2">"paused"</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">_state</span> <span class="o">=</span> <span class="s2">"paused"</span>
                     <span class="c1"># Let RunEngine.__call__ return...</span>
                     <span class="bp">self</span><span class="o">.</span><span class="n">_hooks</span><span class="o">.</span><span class="n">plan_paused</span><span class="p">()</span>
 
@@ -1738,7 +1784,7 @@ window.runMermaid = runMermaid;</script>
                         <span class="k">await</span> <span class="n">current_run</span><span class="o">.</span><span class="n">restore_monitors</span><span class="p">()</span>
                     <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">state</span> <span class="o">==</span> <span class="s2">"paused"</span><span class="p">:</span>
                         <span class="c1"># may be called by 'resume', 'stop', 'abort', 'halt'</span>
-                        <span class="bp">self</span><span class="o">.</span><span class="n">state</span> <span class="o">=</span> <span class="s2">"running"</span>
+                        <span class="bp">self</span><span class="o">.</span><span class="n">_state</span> <span class="o">=</span> <span class="s2">"running"</span>
 
                     <span class="c1"># If we are here, we have come back to life either to</span>
                     <span class="c1"># continue (resume) or to clean up before exiting.</span>
@@ -1851,7 +1897,12 @@ window.runMermaid = runMermaid;</script>
                     <span class="bp">self</span><span class="o">.</span><span class="n">_objs_seen</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">msg</span><span class="o">.</span><span class="n">obj</span><span class="p">)</span>
 
                     <span class="c1"># if this message can be cached for rewinding, cache it</span>
-                    <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_msg_cache</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">rewindable</span> <span class="ow">and</span> <span class="n">msg</span><span class="o">.</span><span class="n">command</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">UNCACHEABLE_COMMANDS</span><span class="p">:</span>
+                    <span class="k">if</span> <span class="p">(</span>
+                        <span class="bp">self</span><span class="o">.</span><span class="n">_msg_cache</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+                        <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">rewindable</span>
+                        <span class="ow">and</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">_held_up</span>
+                        <span class="ow">and</span> <span class="n">msg</span><span class="o">.</span><span class="n">command</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">UNCACHEABLE_COMMANDS</span>
+                    <span class="p">):</span>
                         <span class="c1"># We have a checkpoint.</span>
                         <span class="bp">self</span><span class="o">.</span><span class="n">_msg_cache</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">msg</span><span class="p">)</span>
 
@@ -1893,7 +1944,7 @@ window.runMermaid = runMermaid;</script>
                         <span class="s2">"An unknown external library has improperly raised "</span>
                         <span class="s2">"KeyboardInterrupt. Intercepting and triggering a HALT."</span>
                     <span class="p">)</span>
-                    <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">stop</span><span class="p">(</span><span class="n">success</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">finalize</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+                    <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">halt</span><span class="p">()</span>
                 <span class="k">except</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">CancelledError</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
                     <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">state</span> <span class="o">==</span> <span class="s2">"pausing"</span><span class="p">:</span>
                         <span class="c1"># if we got a CancelledError and we are in the</span>
@@ -1984,13 +2035,13 @@ window.runMermaid = runMermaid;</script>
                 <span class="k">try</span><span class="p">:</span>
                     <span class="n">p</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
                 <span class="k">except</span> <span class="ne">RuntimeError</span><span class="p">:</span>
-                    <span class="n">warn</span><span class="p">(</span><span class="sa">f</span><span class="s2">"The plan </span><span class="si">{</span><span class="n">p</span><span class="si">!r}</span><span class="s2"> tried to yield a value on close.  Please fix your plan."</span><span class="p">,</span> <span class="n">stacklevel</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">_env</span><span class="o">.</span><span class="n">log</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="s2">"The plan </span><span class="si">%r</span><span class="s2"> tried to yield a value on close.  Please fix your plan."</span><span class="p">,</span> <span class="n">p</span><span class="p">)</span>
 
             <span class="bp">self</span><span class="o">.</span><span class="n">clear_suspenders</span><span class="p">()</span>
             <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_supervisor</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
                 <span class="bp">self</span><span class="o">.</span><span class="n">_supervisor</span><span class="o">.</span><span class="n">cancel</span><span class="p">()</span>
 
-            <span class="bp">self</span><span class="o">.</span><span class="n">state</span> <span class="o">=</span> <span class="s2">"idle"</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_state</span> <span class="o">=</span> <span class="s2">"idle"</span>
 
         <span class="bp">self</span><span class="o">.</span><span class="n">_env</span><span class="o">.</span><span class="n">log</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">"Cleaned up from plan </span><span class="si">%r</span><span class="s2">"</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">_plan</span><span class="p">)</span>
         <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">stashed_exception</span><span class="p">,</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">CancelledError</span><span class="p">):</span>
@@ -2111,11 +2162,11 @@ window.runMermaid = runMermaid;</script>
 
         <span class="bp">self</span><span class="o">.</span><span class="n">_deferred_pause_requested</span> <span class="o">=</span> <span class="kc">False</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">interrupted</span> <span class="o">=</span> <span class="kc">True</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">state</span> <span class="o">=</span> <span class="s2">"pausing"</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_state</span> <span class="o">=</span> <span class="s2">"pausing"</span>
         <span class="k">for</span> <span class="n">current_run</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_run_bundlers</span><span class="o">.</span><span class="n">values</span><span class="p">():</span>
             <span class="n">current_run</span><span class="o">.</span><span class="n">record_interruption</span><span class="p">(</span><span class="s2">"pause"</span><span class="p">)</span>
 
-        <span class="bp">self</span><span class="o">.</span><span class="n">_run_task</span><span class="o">.</span><span class="n">cancel</span><span class="p">()</span></div>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_get_run_task</span><span class="p">()</span><span class="o">.</span><span class="n">cancel</span><span class="p">()</span></div>
 
 
 <div class="viewcode-block" id="PlanRunner.resume">
@@ -2139,34 +2190,30 @@ window.runMermaid = runMermaid;</script>
 
 <div class="viewcode-block" id="PlanRunner.stop">
 <a class="viewcode-back" href="../../generated/bluesky.plan_runner.PlanRunner.stop.html#bluesky.plan_runner.PlanRunner.stop">[docs]</a>
-    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">stop</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">success</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span> <span class="n">finalize</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span> <span class="n">reason</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">""</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">"""End the plan.</span>
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">stop</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""End the plan; it cleans up, and its runs close as a success. As `RunEngine.stop`."""</span>
+        <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_end</span><span class="p">(</span><span class="n">success</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">finalize</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span></div>
 
-<span class="sd">        ===============================================  ===========  ============</span>
-<span class="sd">        verb                                             ``success``  ``finalize``</span>
-<span class="sd">        ===============================================  ===========  ============</span>
-<span class="sd">        :meth:`~bluesky.run_engine.RunEngine.stop`       True         True</span>
-<span class="sd">        :meth:`~bluesky.run_engine.RunEngine.abort`      False        True</span>
-<span class="sd">        :meth:`~bluesky.run_engine.RunEngine.halt`       False        False</span>
-<span class="sd">        ===============================================  ===========  ============</span>
 
-<span class="sd">        Parameters</span>
-<span class="sd">        ----------</span>
-<span class="sd">        success : bool, optional</span>
-<span class="sd">            Whether the runs close as ``'success'`` rather than ``'abort'``.</span>
-<span class="sd">        finalize : bool, optional</span>
-<span class="sd">            Whether the plan may run its own cleanup. The runner's teardown</span>
-<span class="sd">            always runs.</span>
-<span class="sd">        reason : str, optional</span>
-<span class="sd">            Recorded on the RunStop of every run still open.</span>
+<div class="viewcode-block" id="PlanRunner.abort">
+<a class="viewcode-back" href="../../generated/bluesky.plan_runner.PlanRunner.abort.html#bluesky.plan_runner.PlanRunner.abort">[docs]</a>
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">abort</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">reason</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">""</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""End the plan; it cleans up, and its runs close as aborted. As `RunEngine.abort`.</span>
+
+<span class="sd">        ``reason`` is recorded on the RunStop of every run still open.</span>
 <span class="sd">        """</span>
-        <span class="k">if</span> <span class="n">success</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">finalize</span><span class="p">:</span>
-            <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span>
-                <span class="s2">"success=True with finalize=False has no meaning: skipping the plan's "</span>
-                <span class="s2">"own cleanup is how giving up on a plan differs from ending it, so a "</span>
-                <span class="s2">"run cannot then be closed as a success. Use stop() to end the plan "</span>
-                <span class="s2">"tidily, or halt() to give up on it."</span>
-            <span class="p">)</span>
+        <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_end</span><span class="p">(</span><span class="n">success</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">finalize</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">reason</span><span class="o">=</span><span class="n">reason</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="PlanRunner.halt">
+<a class="viewcode-back" href="../../generated/bluesky.plan_runner.PlanRunner.halt.html#bluesky.plan_runner.PlanRunner.halt">[docs]</a>
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">halt</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""End the plan without letting it clean up; its runs close as aborted. As `RunEngine.halt`."""</span>
+        <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_end</span><span class="p">(</span><span class="n">success</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">finalize</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span></div>
+
+
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_end</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">success</span><span class="p">:</span> <span class="nb">bool</span><span class="p">,</span> <span class="n">finalize</span><span class="p">:</span> <span class="nb">bool</span><span class="p">,</span> <span class="n">reason</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">""</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""End the plan. ``success`` closes its runs as a success; ``finalize`` lets it clean up."""</span>
         <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">state</span><span class="o">.</span><span class="n">is_idle</span><span class="p">:</span>
             <span class="k">raise</span> <span class="n">TransitionError</span><span class="p">(</span><span class="s2">"RunEngine is already idle."</span><span class="p">)</span>
 
@@ -2189,7 +2236,7 @@ window.runMermaid = runMermaid;</script>
             <span class="bp">self</span><span class="o">.</span><span class="n">_destroy_open_run_tracing_spans</span><span class="p">()</span>
 
         <span class="n">was_paused</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">state</span> <span class="o">==</span> <span class="s2">"paused"</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">state</span> <span class="o">=</span> <span class="n">state</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_state</span> <span class="o">=</span> <span class="n">state</span>
         <span class="k">if</span> <span class="n">was_paused</span><span class="p">:</span>
             <span class="c1"># A paused plan must be released to run its cleanup. Record the</span>
             <span class="c1"># exception first: once released, the run loop clears `_exception`.</span>
@@ -2197,8 +2244,7 @@ window.runMermaid = runMermaid;</script>
             <span class="bp">self</span><span class="o">.</span><span class="n">_exception</span> <span class="o">=</span> <span class="n">exception</span>
             <span class="bp">self</span><span class="o">.</span><span class="n">_run_permit</span><span class="o">.</span><span class="n">set</span><span class="p">()</span>
         <span class="k">else</span><span class="p">:</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">_run_task</span><span class="o">.</span><span class="n">cancel</span><span class="p">()</span></div>
-
+            <span class="bp">self</span><span class="o">.</span><span class="n">_get_run_task</span><span class="p">()</span><span class="o">.</span><span class="n">cancel</span><span class="p">()</span>
 
     <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_wait_for</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">msg</span><span class="p">:</span> <span class="n">Msg</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">typing</span><span class="o">.</span><span class="n">Any</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">"""Instruct the RunEngine to wait for futures and return the resulting tasks.</span>
@@ -2293,7 +2339,7 @@ window.runMermaid = runMermaid;</script>
             <span class="n">validated</span><span class="p">,</span>
             <span class="bp">self</span><span class="o">.</span><span class="n">_env</span><span class="o">.</span><span class="n">record_interruptions</span><span class="p">,</span>
             <span class="bp">self</span><span class="o">.</span><span class="n">_emit_async</span><span class="p">,</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">_queue_emit</span><span class="p">,</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_emit_sync</span><span class="p">,</span>
             <span class="bp">self</span><span class="o">.</span><span class="n">_env</span><span class="o">.</span><span class="n">log</span><span class="p">,</span>
             <span class="n">strict_pre_declare</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">_env</span><span class="o">.</span><span class="n">strict_pre_declare</span><span class="p">,</span>
         <span class="p">)</span>
@@ -2749,10 +2795,6 @@ window.runMermaid = runMermaid;</script>
 <span class="sd">        """</span>
         <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">pause</span><span class="p">(</span><span class="o">*</span><span class="n">msg</span><span class="o">.</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">msg</span><span class="o">.</span><span class="n">kwargs</span><span class="p">)</span>
 
-    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_resume_from_suspender</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">msg</span><span class="p">:</span> <span class="n">Msg</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">typing</span><span class="o">.</span><span class="n">Any</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">"""The suspension is over: tell the devices. Msg('_resume_from_suspender')"""</span>
-        <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_resume_objects</span><span class="p">()</span>
-
     <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_checkpoint</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">msg</span><span class="p">:</span> <span class="n">Msg</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">typing</span><span class="o">.</span><span class="n">Any</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">"""Instruct the RunEngine to create a checkpoint so that we can rewind</span>
 <span class="sd">        to this point if necessary</span>
@@ -2961,67 +3003,6 @@ window.runMermaid = runMermaid;</script>
             <span class="p">)</span>
             <span class="k">return</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_drop_plan_suspender</span><span class="p">(</span><span class="n">suspender</span><span class="p">)</span>
-
-    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_start_suspender</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">msg</span><span class="p">:</span> <span class="n">Msg</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">typing</span><span class="o">.</span><span class="n">Any</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">"""</span>
-<span class="sd">        An internal message to do the initial work of starting a suspender</span>
-<span class="sd">        """</span>
-        <span class="p">(</span><span class="n">opening</span><span class="p">,)</span> <span class="o">=</span> <span class="n">msg</span><span class="o">.</span><span class="n">args</span>
-        <span class="k">for</span> <span class="n">current_run</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_run_bundlers</span><span class="o">.</span><span class="n">values</span><span class="p">():</span>
-            <span class="n">current_run</span><span class="o">.</span><span class="n">record_interruption</span><span class="p">(</span><span class="n">join_justifications</span><span class="p">(</span><span class="n">opening</span><span class="p">)</span> <span class="ow">or</span> <span class="s2">"suspended"</span><span class="p">)</span>
-        <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_stop_movable_objects</span><span class="p">(</span><span class="n">success</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-        <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_pause_objects</span><span class="p">()</span>
-        <span class="n">rewind_plan</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_rewind</span><span class="p">()</span>
-        <span class="n">was_rewindable</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">rewindable</span>
-        <span class="c1"># A copy, so reasons that join later do not change it.</span>
-        <span class="n">opening_order</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">opening</span><span class="o">.</span><span class="n">values</span><span class="p">())</span>
-        <span class="n">seen</span> <span class="o">=</span> <span class="nb">set</span><span class="p">(</span><span class="n">opening</span><span class="p">)</span>
-        <span class="c1"># Reasons that join, for the post-plans.</span>
-        <span class="n">joined</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">SuspensionReason</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
-
-        <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">a_change</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">            </span><span class="sd">"""Park until the suspension clears, or a reason outside ``seen`` joins."""</span>
-            <span class="k">while</span> <span class="bp">self</span><span class="o">.</span><span class="n">_suspension</span><span class="o">.</span><span class="n">tripped</span> <span class="ow">and</span> <span class="n">seen</span><span class="o">.</span><span class="n">issuperset</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_suspension</span><span class="o">.</span><span class="n">reasons</span><span class="p">):</span>
-                <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_suspension</span><span class="o">.</span><span class="n">wait_changed</span><span class="p">()</span>
-
-        <span class="k">def</span><span class="w"> </span><span class="nf">until_released</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">typing</span><span class="o">.</span><span class="n">Generator</span><span class="p">[</span><span class="n">Msg</span><span class="p">,</span> <span class="n">typing</span><span class="o">.</span><span class="n">Any</span><span class="p">,</span> <span class="kc">None</span><span class="p">]:</span>
-            <span class="k">with</span> <span class="bp">self</span><span class="o">.</span><span class="n">_suspension</span><span class="o">.</span><span class="n">listening_for_recoveries</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_on_recovery</span><span class="p">):</span>
-                <span class="k">yield from</span> <span class="n">released</span><span class="p">()</span>
-
-        <span class="k">def</span><span class="w"> </span><span class="nf">released</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">typing</span><span class="o">.</span><span class="n">Generator</span><span class="p">[</span><span class="n">Msg</span><span class="p">,</span> <span class="n">typing</span><span class="o">.</span><span class="n">Any</span><span class="p">,</span> <span class="kc">None</span><span class="p">]:</span>
-            <span class="c1"># None of this is replayed: rewinding is what happens after it.</span>
-            <span class="k">yield</span> <span class="n">Msg</span><span class="p">(</span><span class="s2">"rewindable"</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">False</span><span class="p">)</span>
-            <span class="c1"># The pre-plans of the reasons that opened the suspension.</span>
-            <span class="k">for</span> <span class="n">reason</span> <span class="ow">in</span> <span class="n">opening_order</span><span class="p">:</span>
-                <span class="k">if</span> <span class="n">reason</span><span class="o">.</span><span class="n">pre_plan</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
-                    <span class="k">yield from</span> <span class="n">ensure_generator</span><span class="p">(</span><span class="n">_called</span><span class="p">(</span><span class="n">reason</span><span class="o">.</span><span class="n">pre_plan</span><span class="p">))</span>
-            <span class="c1"># Hold until the suspension clears. A reason tripping meanwhile</span>
-            <span class="c1"># joins, and its pre-plan runs here.</span>
-            <span class="k">while</span> <span class="kc">True</span><span class="p">:</span>
-                <span class="k">yield</span> <span class="n">Msg</span><span class="p">(</span><span class="s2">"wait_for"</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="p">[</span><span class="n">a_change</span><span class="p">])</span>
-                <span class="c1"># A pause wakes this too.</span>
-                <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">_suspension</span><span class="o">.</span><span class="n">tripped</span><span class="p">:</span>
-                    <span class="k">break</span>
-                <span class="n">joining</span> <span class="o">=</span> <span class="p">{</span><span class="n">key</span><span class="p">:</span> <span class="n">reason</span> <span class="k">for</span> <span class="n">key</span><span class="p">,</span> <span class="n">reason</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_suspension</span><span class="o">.</span><span class="n">reasons</span><span class="o">.</span><span class="n">items</span><span class="p">()</span> <span class="k">if</span> <span class="n">key</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">seen</span><span class="p">}</span>
-                <span class="k">for</span> <span class="n">key</span><span class="p">,</span> <span class="n">reason</span> <span class="ow">in</span> <span class="n">joining</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
-                    <span class="n">seen</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">key</span><span class="p">)</span>
-                    <span class="n">joined</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">reason</span><span class="p">)</span>
-                    <span class="bp">self</span><span class="o">.</span><span class="n">_hooks</span><span class="o">.</span><span class="n">suspender_joined</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="n">reason</span><span class="p">)</span>
-                    <span class="k">if</span> <span class="n">reason</span><span class="o">.</span><span class="n">pre_plan</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
-                        <span class="k">yield from</span> <span class="n">ensure_generator</span><span class="p">(</span><span class="n">_called</span><span class="p">(</span><span class="n">reason</span><span class="o">.</span><span class="n">pre_plan</span><span class="p">))</span>
-
-        <span class="k">def</span><span class="w"> </span><span class="nf">suspension</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">typing</span><span class="o">.</span><span class="n">Generator</span><span class="p">[</span><span class="n">Msg</span><span class="p">,</span> <span class="n">typing</span><span class="o">.</span><span class="n">Any</span><span class="p">,</span> <span class="kc">None</span><span class="p">]:</span>
-            <span class="k">yield from</span> <span class="bp">self</span><span class="o">.</span><span class="n">_holding</span><span class="p">(</span><span class="n">until_released</span><span class="p">())</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">_hooks</span><span class="o">.</span><span class="n">suspension_ended</span><span class="p">()</span>
-            <span class="k">yield</span> <span class="n">Msg</span><span class="p">(</span><span class="s2">"_resume_from_suspender"</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
-            <span class="c1"># Post-plans for every reason that joined too, in reverse.</span>
-            <span class="k">for</span> <span class="n">reason</span> <span class="ow">in</span> <span class="p">[</span><span class="o">*</span><span class="nb">reversed</span><span class="p">(</span><span class="n">joined</span><span class="p">),</span> <span class="o">*</span><span class="nb">reversed</span><span class="p">(</span><span class="n">opening_order</span><span class="p">)]:</span>
-                <span class="k">if</span> <span class="n">reason</span><span class="o">.</span><span class="n">post_plan</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
-                    <span class="k">yield from</span> <span class="n">ensure_generator</span><span class="p">(</span><span class="n">_called</span><span class="p">(</span><span class="n">reason</span><span class="o">.</span><span class="n">post_plan</span><span class="p">))</span>
-            <span class="k">yield</span> <span class="n">Msg</span><span class="p">(</span><span class="s2">"rewindable"</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="n">was_rewindable</span><span class="p">)</span>
-            <span class="k">yield from</span> <span class="n">rewind_plan</span>
-
-        <span class="bp">self</span><span class="o">.</span><span class="n">_push_plan</span><span class="p">(</span><span class="n">suspension</span><span class="p">())</span>
 
     <span class="c1"># The built-in commands, as unbound methods, so `PlanSession.commands`</span>
     <span class="c1"># can read them without a runner.</span>

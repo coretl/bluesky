@@ -8,7 +8,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
-    <title>Release History &#8212; bluesky 1.15.2.dev235+g372dcc8c1 documentation</title>
+    <title>Release History &#8212; bluesky 1.15.2.dev235+g8f67674b8 documentation</title>
   
   
   
@@ -39,14 +39,14 @@
   <link rel="preload" as="script" href="_static/scripts/bootstrap.js?digest=55c26ed414f5f8a31ebb" />
 <link rel="preload" as="script" href="_static/scripts/pydata-sphinx-theme.js?digest=55c26ed414f5f8a31ebb" />
 
-    <script src="_static/documentation_options.js?v=fbac1362"></script>
+    <script src="_static/documentation_options.js?v=2f1b2996"></script>
     <script src="_static/doctools.js?v=888ff710"></script>
     <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
     <script>DOCUMENTATION_OPTIONS.pagename = 'api_changes';</script>
     <script>
         DOCUMENTATION_OPTIONS.theme_version = '0.17.1';
         DOCUMENTATION_OPTIONS.theme_switcher_json_url = 'https://blueskyproject.io/bluesky/switcher.json';
-        DOCUMENTATION_OPTIONS.theme_switcher_version_match = '1.15.2.dev235+g372dcc8c1';
+        DOCUMENTATION_OPTIONS.theme_switcher_version_match = '1.15.2.dev235+g8f67674b8';
         DOCUMENTATION_OPTIONS.show_version_warning_banner =
             false;
         </script>
@@ -57,7 +57,7 @@
     <link rel="prev" title="Architecture: session, runner, suspension" href="architecture.html" />
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
-  <meta name="docsearch:version" content="1.15.2.dev235+g372dcc8c1" />
+  <meta name="docsearch:version" content="1.15.2.dev235+g8f67674b8" />
   
     
     <script src="_static/searchtools.js"></script>
@@ -692,11 +692,12 @@ to clear, without opening a new suspension; a plan paused inside a suspension
 goes back into it.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">PlanRunner</span></code> does not print.  It calls <code class="docutils literal notranslate"><span class="pre">PlanHooks</span></code>, and a <code class="docutils literal notranslate"><span class="pre">RunEngine</span></code>
 prints what main did.</p></li>
-<li><p>A plan that yields a value on close is reported with a <code class="docutils literal notranslate"><span class="pre">UserWarning</span></code>,
-not a printed line.</p></li>
-<li><p>A plan gets a copy of <code class="docutils literal notranslate"><span class="pre">RunEngine.md</span></code> as it is launched, so writing to it
-mid-plan takes effect for the next plan.  <code class="docutils literal notranslate"><span class="pre">scan_id</span></code> still comes from
-<code class="docutils literal notranslate"><span class="pre">RE.md</span></code>, which is not replaced.</p></li>
+<li><p>A plan that yields a value on close is logged as a warning, not a printed
+line.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">RE.md</span></code> is read once, as the plan is built, before the plan’s first line
+runs.  A plan that writes <code class="docutils literal notranslate"><span class="pre">RE.md</span></code> changes the <em>next</em> plan’s metadata; pass
+per-scan metadata with the plan’s <code class="docutils literal notranslate"><span class="pre">md=</span></code> argument instead.  <code class="docutils literal notranslate"><span class="pre">scan_id</span></code> is
+the one key still read live.</p></li>
 <li><p>A suspender a plan installs with <code class="docutils literal notranslate"><span class="pre">Msg('install_suspender')</span></code> holds up only
 that plan, and is removed when it ends.  <code class="docutils literal notranslate"><span class="pre">Msg('remove_suspender')</span></code> warns and
 ignores a suspender the plan did not install.  <code class="docutils literal notranslate"><span class="pre">RunEngine.suspenders</span></code> and
@@ -708,8 +709,11 @@ ignores a suspender the plan did not install.  <code class="docutils literal not
 <ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">RunEngine.request_suspend</span></code>, with no replacement.  Install a suspender,
 which composes with other suspenders; or use <code class="docutils literal notranslate"><span class="pre">RunEngine.request_pause</span></code>.</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">SuspenderBase.get_futures</span></code> and <code class="docutils literal notranslate"><span class="pre">SuspenderBase.RE</span></code>.  Use
-<code class="docutils literal notranslate"><span class="pre">SuspenderBase.tripped</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">SuspenderBase.get_futures</span></code>, <code class="docutils literal notranslate"><span class="pre">SuspenderBase.RE</span></code> and
+<code class="docutils literal notranslate"><span class="pre">SuspenderBase._lock</span></code>.  Use <code class="docutils literal notranslate"><span class="pre">SuspenderBase.tripped</span></code>.  A subclass that
+overrides <code class="docutils literal notranslate"><span class="pre">install</span></code> is handed a <code class="docutils literal notranslate"><span class="pre">Suspension</span></code>; one that calls
+<code class="docutils literal notranslate"><span class="pre">self.RE.abort()</span></code> from its callback has no replacement, as <code class="docutils literal notranslate"><span class="pre">RE.abort()</span></code>
+cannot be called from the event loop.</p></li>
 </ul>
 </section>
 </section>
@@ -3098,7 +3102,7 @@ not have any effect on user code.</p>
 
   
   <div class="tocsection editthispage">
-    <a href="https://github.com/bluesky/bluesky/edit/1.15.2.dev235+g372dcc8c1/docs/api_changes.rst">
+    <a href="https://github.com/bluesky/bluesky/edit/1.15.2.dev235+g8f67674b8/docs/api_changes.rst">
       <i class="fa-solid fa-pencil"></i>
       
       
