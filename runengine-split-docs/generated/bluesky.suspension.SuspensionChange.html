@@ -8,7 +8,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
-    <title>bluesky.preprocessors.baseline_wrapper &#8212; bluesky 1.15.2.dev235+ge6b14a4e2 documentation</title>
+    <title>bluesky.suspension.SuspensionChange &#8212; bluesky 1.15.2.dev235+ge6b14a4e2 documentation</title>
   
   
   
@@ -42,7 +42,7 @@
     <script src="../_static/documentation_options.js?v=71c5136c"></script>
     <script src="../_static/doctools.js?v=888ff710"></script>
     <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
-    <script>DOCUMENTATION_OPTIONS.pagename = 'generated/bluesky.preprocessors.baseline_wrapper';</script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'generated/bluesky.suspension.SuspensionChange';</script>
     <script>
         DOCUMENTATION_OPTIONS.theme_version = '0.17.1';
         DOCUMENTATION_OPTIONS.theme_switcher_json_url = 'https://blueskyproject.io/bluesky/switcher.json';
@@ -53,8 +53,8 @@
     <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
     <link rel="index" title="Index" href="../genindex.html" />
     <link rel="search" title="Search" href="../search.html" />
-    <link rel="next" title="bluesky.preprocessors.contingency_wrapper" href="bluesky.preprocessors.contingency_wrapper.html" />
-    <link rel="prev" title="bluesky.preprocessors.baseline_decorator" href="bluesky.preprocessors.baseline_decorator.html" />
+    <link rel="next" title="bluesky.suspenders.SuspenderBase" href="bluesky.suspenders.SuspenderBase.html" />
+    <link rel="prev" title="bluesky.suspension.SuspensionReason" href="bluesky.suspension.SuspensionReason.html" />
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
   <meta name="docsearch:version" content="1.15.2.dev235+ge6b14a4e2" />
@@ -513,7 +513,7 @@
      aria-label="Section Navigation">
   <p class="bd-links__title" role="heading" aria-level="1">Section Navigation</p>
   <div class="bd-toc-item navbar-nav"><ul class="current nav bd-sidenav">
-<li class="toctree-l1 current active"><a class="reference internal" href="../plans.html">Plans</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../plans.html">Plans</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../documents.html">Documents</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../metadata.html">Recording Metadata</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../callbacks.html">Live Visualization and Processing</a></li>
@@ -525,7 +525,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../headless.html">Running plans without a RunEngine</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../debugging.html">Debugging and Logging</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../run_engine_api.html">RunEngine API Documentation</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../plan_session_api.html">PlanSession and PlanRunner API</a></li>
+<li class="toctree-l1 current active"><a class="reference internal" href="../plan_session_api.html">PlanSession and PlanRunner API</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../utils.html">Utility classes and functions</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../magics.html">IPython ‘Magics’ [Experimental]</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../otel-tracing.html">Tracing with Opentelemetry</a></li>
@@ -578,9 +578,9 @@
     <li class="breadcrumb-item"><a href="../userindex.html" class="nav-link">User Documentation</a></li>
     
     
-    <li class="breadcrumb-item"><a href="../plans.html" class="nav-link">Plans</a></li>
+    <li class="breadcrumb-item"><a href="../plan_session_api.html" class="nav-link">PlanSession and PlanRunner API</a></li>
     
-    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">bluesky.preprocessors.baseline_wrapper</span></li>
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">bluesky.suspension.SuspensionChange</span></li>
   </ul>
 </nav>
 </div>
@@ -597,33 +597,44 @@
 <div id="searchbox"></div>
                 <article class="bd-article">
                   
-  <section id="bluesky-preprocessors-baseline-wrapper">
-<h1>bluesky.preprocessors.baseline_wrapper<a class="headerlink" href="#bluesky-preprocessors-baseline-wrapper" title="Link to this heading">#</a></h1>
-<dl class="py function">
-<dt class="sig sig-object py" id="bluesky.preprocessors.baseline_wrapper">
-<span class="sig-prename descclassname"><span class="pre">bluesky.preprocessors.</span></span><span class="sig-name descname"><span class="pre">baseline_wrapper</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">plan</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">devices</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">name</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'baseline'</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/bluesky/preprocessors.html#baseline_wrapper"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#bluesky.preprocessors.baseline_wrapper" title="Link to this definition">#</a></dt>
-<dd><p>Preprocessor that records a baseline of all <cite>devices</cite> after <cite>open_run</cite></p>
-<p>The readings are designated for a separate event stream named ‘baseline’ by
-default.</p>
-<dl class="field-list simple">
-<dt class="field-odd">Parameters<span class="colon">:</span></dt>
-<dd class="field-odd"><dl class="simple">
-<dt><strong>plan</strong><span class="classifier">iterable or iterator</span></dt><dd><p>a generator, list, or similar containing <cite>Msg</cite> objects</p>
-</dd>
-<dt><strong>devices</strong><span class="classifier">collection</span></dt><dd><p>collection of Devices to read
-If None, the plan passes through unchanged.</p>
-</dd>
-<dt><strong>name</strong><span class="classifier">string, optional</span></dt><dd><p>name for event stream; by default, ‘baseline’</p>
-</dd>
-</dl>
-</dd>
-<dt class="field-even">Yields<span class="colon">:</span></dt>
-<dd class="field-even"><dl class="simple">
-<dt><strong>msg</strong><span class="classifier">Msg</span></dt><dd><p>messages from plan, with ‘set’ messages inserted</p>
-</dd>
-</dl>
-</dd>
-</dl>
+  <section id="bluesky-suspension-suspensionchange">
+<h1>bluesky.suspension.SuspensionChange<a class="headerlink" href="#bluesky-suspension-suspensionchange" title="Link to this heading">#</a></h1>
+<dl class="py class">
+<dt class="sig sig-object py" id="bluesky.suspension.SuspensionChange">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">bluesky.suspension.</span></span><span class="sig-name descname"><span class="pre">SuspensionChange</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">now</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://docs.python.org/3/library/collections.abc.html#collections.abc.Mapping" title="(in Python v3.14)"><span class="pre">Mapping</span></a><span class="p"><span class="pre">[</span></span><a class="reference external" href="https://docs.python.org/3/library/collections.abc.html#collections.abc.Hashable" title="(in Python v3.14)"><span class="pre">Hashable</span></a><span class="p"><span class="pre">,</span></span><span class="w"> </span><a class="reference internal" href="bluesky.suspension.SuspensionReason.html#bluesky.suspension.SuspensionReason" title="bluesky.suspension.SuspensionReason"><span class="pre">SuspensionReason</span></a><span class="p"><span class="pre">]</span></span></span></em>, <em class="sig-param"><span class="n"><span class="pre">added</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://docs.python.org/3/library/collections.abc.html#collections.abc.Mapping" title="(in Python v3.14)"><span class="pre">Mapping</span></a><span class="p"><span class="pre">[</span></span><a class="reference external" href="https://docs.python.org/3/library/collections.abc.html#collections.abc.Hashable" title="(in Python v3.14)"><span class="pre">Hashable</span></a><span class="p"><span class="pre">,</span></span><span class="w"> </span><a class="reference internal" href="bluesky.suspension.SuspensionReason.html#bluesky.suspension.SuspensionReason" title="bluesky.suspension.SuspensionReason"><span class="pre">SuspensionReason</span></a><span class="p"><span class="pre">]</span></span></span></em>, <em class="sig-param"><span class="n"><span class="pre">recovered</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://docs.python.org/3/library/collections.abc.html#collections.abc.Mapping" title="(in Python v3.14)"><span class="pre">Mapping</span></a><span class="p"><span class="pre">[</span></span><a class="reference external" href="https://docs.python.org/3/library/collections.abc.html#collections.abc.Hashable" title="(in Python v3.14)"><span class="pre">Hashable</span></a><span class="p"><span class="pre">,</span></span><span class="w"> </span><a class="reference internal" href="bluesky.suspension.SuspensionReason.html#bluesky.suspension.SuspensionReason" title="bluesky.suspension.SuspensionReason"><span class="pre">SuspensionReason</span></a><span class="p"><span class="pre">]</span></span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/bluesky/suspension.html#SuspensionChange"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#bluesky.suspension.SuspensionChange" title="Link to this definition">#</a></dt>
+<dd><p>How the reasons changed during a <cite>Suspension.wait_until</cite>.</p>
+<dl class="py method">
+<dt class="sig sig-object py" id="bluesky.suspension.SuspensionChange.__init__">
+<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">now</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://docs.python.org/3/library/collections.abc.html#collections.abc.Mapping" title="(in Python v3.14)"><span class="pre">Mapping</span></a><span class="p"><span class="pre">[</span></span><a class="reference external" href="https://docs.python.org/3/library/collections.abc.html#collections.abc.Hashable" title="(in Python v3.14)"><span class="pre">Hashable</span></a><span class="p"><span class="pre">,</span></span><span class="w"> </span><a class="reference internal" href="bluesky.suspension.SuspensionReason.html#bluesky.suspension.SuspensionReason" title="bluesky.suspension.SuspensionReason"><span class="pre">SuspensionReason</span></a><span class="p"><span class="pre">]</span></span></span></em>, <em class="sig-param"><span class="n"><span class="pre">added</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://docs.python.org/3/library/collections.abc.html#collections.abc.Mapping" title="(in Python v3.14)"><span class="pre">Mapping</span></a><span class="p"><span class="pre">[</span></span><a class="reference external" href="https://docs.python.org/3/library/collections.abc.html#collections.abc.Hashable" title="(in Python v3.14)"><span class="pre">Hashable</span></a><span class="p"><span class="pre">,</span></span><span class="w"> </span><a class="reference internal" href="bluesky.suspension.SuspensionReason.html#bluesky.suspension.SuspensionReason" title="bluesky.suspension.SuspensionReason"><span class="pre">SuspensionReason</span></a><span class="p"><span class="pre">]</span></span></span></em>, <em class="sig-param"><span class="n"><span class="pre">recovered</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://docs.python.org/3/library/collections.abc.html#collections.abc.Mapping" title="(in Python v3.14)"><span class="pre">Mapping</span></a><span class="p"><span class="pre">[</span></span><a class="reference external" href="https://docs.python.org/3/library/collections.abc.html#collections.abc.Hashable" title="(in Python v3.14)"><span class="pre">Hashable</span></a><span class="p"><span class="pre">,</span></span><span class="w"> </span><a class="reference internal" href="bluesky.suspension.SuspensionReason.html#bluesky.suspension.SuspensionReason" title="bluesky.suspension.SuspensionReason"><span class="pre">SuspensionReason</span></a><span class="p"><span class="pre">]</span></span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><a class="reference external" href="https://docs.python.org/3/builtins/constants.html#None" title="(in Python v3.14)"><span class="pre">None</span></a></span></span><a class="headerlink" href="#bluesky.suspension.SuspensionChange.__init__" title="Link to this definition">#</a></dt>
+<dd></dd></dl>
+
+<p class="rubric">Methods</p>
+<div class="pst-scrollable-table-container"><table class="autosummary longtable table autosummary">
+<tbody>
+<tr class="row-odd"><td><p><a class="reference internal" href="#bluesky.suspension.SuspensionChange.__init__" title="bluesky.suspension.SuspensionChange.__init__"><code class="xref py py-obj docutils literal notranslate"><span class="pre">__init__</span></code></a>(now, added, recovered)</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">from_reasons</span></code>(before, after)</p></td>
+<td><p>What changed from <code class="docutils literal notranslate"><span class="pre">before</span></code> to <code class="docutils literal notranslate"><span class="pre">after</span></code>.</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p class="rubric">Attributes</p>
+<div class="pst-scrollable-table-container"><table class="autosummary longtable table autosummary">
+<tbody>
+<tr class="row-odd"><td><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">now</span></code></p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">added</span></code></p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">recovered</span></code></p></td>
+<td><p></p></td>
+</tr>
+</tbody>
+</table>
+</div>
 </dd></dl>
 
 </section>
@@ -639,20 +650,20 @@ If None, the plan passes through unchanged.</p>
                   
 <div class="prev-next-area">
     <a class="left-prev"
-       href="bluesky.preprocessors.baseline_decorator.html"
+       href="bluesky.suspension.SuspensionReason.html"
        title="previous page">
       <i class="fa-solid fa-angle-left"></i>
       <div class="prev-next-info">
         <p class="prev-next-subtitle">previous</p>
-        <p class="prev-next-title">bluesky.preprocessors.baseline_decorator</p>
+        <p class="prev-next-title">bluesky.suspension.SuspensionReason</p>
       </div>
     </a>
     <a class="right-next"
-       href="bluesky.preprocessors.contingency_wrapper.html"
+       href="bluesky.suspenders.SuspenderBase.html"
        title="next page">
       <div class="prev-next-info">
         <p class="prev-next-subtitle">next</p>
-        <p class="prev-next-title">bluesky.preprocessors.contingency_wrapper</p>
+        <p class="prev-next-title">bluesky.suspenders.SuspenderBase</p>
       </div>
       <i class="fa-solid fa-angle-right"></i>
     </a>
@@ -675,7 +686,10 @@ If None, the plan passes through unchanged.</p>
   </div>
   <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
     <ul class="pst-show_toc_level nav section-nav flex-column">
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#bluesky.preprocessors.baseline_wrapper"><code class="docutils literal notranslate"><span class="pre">baseline_wrapper()</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#bluesky.suspension.SuspensionChange"><code class="docutils literal notranslate"><span class="pre">SuspensionChange</span></code></a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#bluesky.suspension.SuspensionChange.__init__"><code class="docutils literal notranslate"><span class="pre">SuspensionChange.__init__()</span></code></a></li>
+</ul>
+</li>
 </ul>
   </nav></div>
 
@@ -683,7 +697,7 @@ If None, the plan passes through unchanged.</p>
 
   
   <div class="tocsection editthispage">
-    <a href="https://github.com/bluesky/bluesky/edit/1.15.2.dev235+ge6b14a4e2/docs/generated/bluesky.preprocessors.baseline_wrapper.rst">
+    <a href="https://github.com/bluesky/bluesky/edit/1.15.2.dev235+ge6b14a4e2/docs/generated/bluesky.suspension.SuspensionChange.rst">
       <i class="fa-solid fa-pencil"></i>
       
       
@@ -698,7 +712,7 @@ If None, the plan passes through unchanged.</p>
   <div class="sidebar-secondary-item">
 
   <div class="tocsection sourcelink">
-    <a href="../_sources/generated/bluesky.preprocessors.baseline_wrapper.rst.txt">
+    <a href="../_sources/generated/bluesky.suspension.SuspensionChange.rst.txt">
       <i class="fa-solid fa-file-lines"></i> Show Source
     </a>
   </div>

@@ -7,7 +7,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>bluesky.suspenders &#8212; bluesky 1.15.2.dev235+g8f67674b8 documentation</title>
+    <title>bluesky.suspenders &#8212; bluesky 1.15.2.dev235+ge6b14a4e2 documentation</title>
   
   
   
@@ -38,7 +38,7 @@
   <link rel="preload" as="script" href="../../_static/scripts/bootstrap.js?digest=55c26ed414f5f8a31ebb" />
 <link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=55c26ed414f5f8a31ebb" />
 
-    <script src="../../_static/documentation_options.js?v=2f1b2996"></script>
+    <script src="../../_static/documentation_options.js?v=71c5136c"></script>
     <script src="../../_static/doctools.js?v=888ff710"></script>
     <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script type="module">import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11.12.1/dist/mermaid.esm.min.mjs";
@@ -403,7 +403,7 @@ window.runMermaid = runMermaid;</script>
     <script>
         DOCUMENTATION_OPTIONS.theme_version = '0.17.1';
         DOCUMENTATION_OPTIONS.theme_switcher_json_url = 'https://blueskyproject.io/bluesky/switcher.json';
-        DOCUMENTATION_OPTIONS.theme_switcher_version_match = '1.15.2.dev235+g8f67674b8';
+        DOCUMENTATION_OPTIONS.theme_switcher_version_match = '1.15.2.dev235+ge6b14a4e2';
         DOCUMENTATION_OPTIONS.show_version_warning_banner =
             false;
         </script>
@@ -412,7 +412,7 @@ window.runMermaid = runMermaid;</script>
     <link rel="search" title="Search" href="../../search.html" />
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
-  <meta name="docsearch:version" content="1.15.2.dev235+g8f67674b8" />
+  <meta name="docsearch:version" content="1.15.2.dev235+ge6b14a4e2" />
   
     
     <script src="../../_static/searchtools.js"></script>
@@ -1048,7 +1048,7 @@ window.runMermaid = runMermaid;</script>
             <span class="bp">self</span><span class="o">.</span><span class="n">_sig</span><span class="o">.</span><span class="n">subscribe</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">event_type</span><span class="o">=</span><span class="n">event_type</span><span class="p">,</span> <span class="n">run</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">remove</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">"""Stop watching the signal, and clear whatever this had tripped.</span>
+<span class="w">        </span><span class="sd">"""Stop watching the signal, and drop whatever this had tripped.</span>
 
 <span class="sd">        Call on the suspension's loop; :meth:`~bluesky.run_engine.RunEngine.remove_suspender` does that</span>
 <span class="sd">        for you. Off the loop, this warns and crosses to it.</span>
@@ -1073,7 +1073,7 @@ window.runMermaid = runMermaid;</script>
         <span class="bp">self</span><span class="o">.</span><span class="n">_sig</span><span class="o">.</span><span class="n">clear_sub</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_suspension</span> <span class="o">=</span> <span class="kc">None</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_tripped</span> <span class="o">=</span> <span class="kc">False</span>
-        <span class="n">suspension</span><span class="o">.</span><span class="n">clear</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span>
+        <span class="n">suspension</span><span class="o">.</span><span class="n">recover</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span>
 
     <span class="nd">@abstractmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">_should_suspend</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
@@ -1131,7 +1131,7 @@ window.runMermaid = runMermaid;</script>
         <span class="n">call_soon_or_now</span><span class="p">(</span><span class="n">suspension</span><span class="o">.</span><span class="n">loop</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">__decide</span><span class="p">,</span> <span class="n">value</span><span class="p">)</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">__decide</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">"""Trip or clear the suspension for ``value``. On the loop."""</span>
+<span class="w">        </span><span class="sd">"""Trip or recover the suspension for ``value``. On the loop."""</span>
         <span class="n">suspension</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_suspension</span>
         <span class="k">if</span> <span class="n">suspension</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
             <span class="c1"># Uninstalled between the callback and this running.</span>
@@ -1147,7 +1147,7 @@ window.runMermaid = runMermaid;</script>
                     <span class="n">post_plan</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">_post_plan</span><span class="p">,</span>
                 <span class="p">)</span>
         <span class="k">elif</span> <span class="bp">self</span><span class="o">.</span><span class="n">_should_resume</span><span class="p">(</span><span class="n">value</span><span class="p">)</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">_tripped</span><span class="p">:</span>
-            <span class="c1"># Only clear what this tripped, or a pending clear could drop a later trip.</span>
+            <span class="c1"># Once, so a repeated good reading does not restart the sleep.</span>
             <span class="bp">self</span><span class="o">.</span><span class="n">_tripped</span> <span class="o">=</span> <span class="kc">False</span>
             <span class="n">suspension</span><span class="o">.</span><span class="n">recover</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">after</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">_sleep</span><span class="p">)</span>
 

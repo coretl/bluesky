@@ -8,7 +8,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
-    <title>PlanSession and PlanRunner API &#8212; bluesky 1.15.2.dev235+g8f67674b8 documentation</title>
+    <title>PlanSession and PlanRunner API &#8212; bluesky 1.15.2.dev235+ge6b14a4e2 documentation</title>
   
   
   
@@ -39,14 +39,14 @@
   <link rel="preload" as="script" href="_static/scripts/bootstrap.js?digest=55c26ed414f5f8a31ebb" />
 <link rel="preload" as="script" href="_static/scripts/pydata-sphinx-theme.js?digest=55c26ed414f5f8a31ebb" />
 
-    <script src="_static/documentation_options.js?v=2f1b2996"></script>
+    <script src="_static/documentation_options.js?v=71c5136c"></script>
     <script src="_static/doctools.js?v=888ff710"></script>
     <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
     <script>DOCUMENTATION_OPTIONS.pagename = 'plan_session_api';</script>
     <script>
         DOCUMENTATION_OPTIONS.theme_version = '0.17.1';
         DOCUMENTATION_OPTIONS.theme_switcher_json_url = 'https://blueskyproject.io/bluesky/switcher.json';
-        DOCUMENTATION_OPTIONS.theme_switcher_version_match = '1.15.2.dev235+g8f67674b8';
+        DOCUMENTATION_OPTIONS.theme_switcher_version_match = '1.15.2.dev235+ge6b14a4e2';
         DOCUMENTATION_OPTIONS.show_version_warning_banner =
             false;
         </script>
@@ -57,7 +57,7 @@
     <link rel="prev" title="bluesky.bundlers.RunBundler.record_interruption" href="generated/bluesky.bundlers.RunBundler.record_interruption.html" />
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
-  <meta name="docsearch:version" content="1.15.2.dev235+g8f67674b8" />
+  <meta name="docsearch:version" content="1.15.2.dev235+ge6b14a4e2" />
   
     
     <script src="_static/searchtools.js"></script>
@@ -725,7 +725,7 @@ the session’s attributes <code class="docutils literal notranslate"><span clas
 </section>
 <section id="suspending">
 <h2>Suspending<a class="headerlink" href="#suspending" title="Link to this heading">#</a></h2>
-<p>A plan runs only while its <a class="reference internal" href="generated/bluesky.suspension.Suspension.html#bluesky.suspension.Suspension" title="bluesky.suspension.Suspension"><code class="xref py py-class docutils literal notranslate"><span class="pre">Suspension</span></code></a> is clear.
+<p>A plan runs only while its <a class="reference internal" href="generated/bluesky.suspension.Suspension.html#bluesky.suspension.Suspension" title="bluesky.suspension.Suspension"><code class="xref py py-class docutils literal notranslate"><span class="pre">Suspension</span></code></a> has no reasons.
 Suspenders trip it; the session’s holds up every plan, a plan’s only that
 plan. See <a class="reference internal" href="state-machine.html#suspenders"><span class="std std-ref">Automated Suspension</span></a> for the suspenders themselves.</p>
 <div class="pst-scrollable-table-container"><table class="autosummary longtable table autosummary">
@@ -765,10 +765,13 @@ plan. See <a class="reference internal" href="state-machine.html#suspenders"><sp
 <div class="pst-scrollable-table-container"><table class="autosummary longtable table autosummary">
 <tbody>
 <tr class="row-odd"><td><p><a class="reference internal" href="generated/bluesky.suspension.Suspension.html#bluesky.suspension.Suspension" title="bluesky.suspension.Suspension"><code class="xref py py-obj docutils literal notranslate"><span class="pre">Suspension</span></code></a></p></td>
-<td><p>Tripped while any reason stands, here or in a parent.</p></td>
+<td><p>The reasons a plan may not run, here or in a parent, keyed by the suspender that tripped each.</p></td>
 </tr>
 <tr class="row-even"><td><p><a class="reference internal" href="generated/bluesky.suspension.SuspensionReason.html#bluesky.suspension.SuspensionReason" title="bluesky.suspension.SuspensionReason"><code class="xref py py-obj docutils literal notranslate"><span class="pre">SuspensionReason</span></code></a></p></td>
 <td><p>One reason a suspension is tripped, with its pre- and post-plans.</p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference internal" href="generated/bluesky.suspension.SuspensionChange.html#bluesky.suspension.SuspensionChange" title="bluesky.suspension.SuspensionChange"><code class="xref py py-obj docutils literal notranslate"><span class="pre">SuspensionChange</span></code></a></p></td>
+<td><p>How the reasons changed during a <cite>Suspension.wait_until</cite>.</p></td>
 </tr>
 </tbody>
 </table>
@@ -854,7 +857,7 @@ runner’s passes each document to the session’s subscribers before its own.
 
   
   <div class="tocsection editthispage">
-    <a href="https://github.com/bluesky/bluesky/edit/1.15.2.dev235+g8f67674b8/docs/plan_session_api.rst">
+    <a href="https://github.com/bluesky/bluesky/edit/1.15.2.dev235+ge6b14a4e2/docs/plan_session_api.rst">
       <i class="fa-solid fa-pencil"></i>
       
       

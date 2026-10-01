@@ -45,7 +45,7 @@ Module                     Main classes, and what they are for
 ``bluesky.suspension``     :class:`~bluesky.suspension.Suspension`: tripped while any keyed
                            :class:`~bluesky.suspension.SuspensionReason` stands, here or in its parent.
 ``bluesky.suspenders``     ``SuspenderBase`` and its subclasses (:ref:`suspenders`): watch a signal,
-                           trip or clear one reason on a suspension.
+                           trip or recover one reason on a suspension.
 ``bluesky.dispatcher``     :class:`~bluesky.dispatcher.Dispatcher`: hands each document to subscribers,
                            its parent's first.
 ``bluesky._loop``          Private. ``run_coro_on_loop``, ``call_soon_or_now``,

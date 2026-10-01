@@ -7,7 +7,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>bluesky.suspension &#8212; bluesky 1.15.2.dev235+g8f67674b8 documentation</title>
+    <title>bluesky.suspension &#8212; bluesky 1.15.2.dev235+ge6b14a4e2 documentation</title>
   
   
   
@@ -38,7 +38,7 @@
   <link rel="preload" as="script" href="../../_static/scripts/bootstrap.js?digest=55c26ed414f5f8a31ebb" />
 <link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=55c26ed414f5f8a31ebb" />
 
-    <script src="../../_static/documentation_options.js?v=2f1b2996"></script>
+    <script src="../../_static/documentation_options.js?v=71c5136c"></script>
     <script src="../../_static/doctools.js?v=888ff710"></script>
     <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script type="module">import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11.12.1/dist/mermaid.esm.min.mjs";
@@ -403,7 +403,7 @@ window.runMermaid = runMermaid;</script>
     <script>
         DOCUMENTATION_OPTIONS.theme_version = '0.17.1';
         DOCUMENTATION_OPTIONS.theme_switcher_json_url = 'https://blueskyproject.io/bluesky/switcher.json';
-        DOCUMENTATION_OPTIONS.theme_switcher_version_match = '1.15.2.dev235+g8f67674b8';
+        DOCUMENTATION_OPTIONS.theme_switcher_version_match = '1.15.2.dev235+ge6b14a4e2';
         DOCUMENTATION_OPTIONS.show_version_warning_banner =
             false;
         </script>
@@ -412,7 +412,7 @@ window.runMermaid = runMermaid;</script>
     <link rel="search" title="Search" href="../../search.html" />
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
-  <meta name="docsearch:version" content="1.15.2.dev235+g8f67674b8" />
+  <meta name="docsearch:version" content="1.15.2.dev235+ge6b14a4e2" />
   
     
     <script src="../../_static/searchtools.js"></script>
@@ -916,14 +916,13 @@ window.runMermaid = runMermaid;</script>
 <span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">time</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">collections.abc</span><span class="w"> </span><span class="kn">import</span> <span class="n">Callable</span><span class="p">,</span> <span class="n">Hashable</span><span class="p">,</span> <span class="n">Iterable</span><span class="p">,</span> <span class="n">Mapping</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span><span class="p">,</span> <span class="n">replace</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">types</span><span class="w"> </span><span class="kn">import</span> <span class="n">MappingProxyType</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">TypeVar</span>
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">.utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">Msg</span>
 
 <span class="n">PlanLike</span> <span class="o">=</span> <span class="n">Iterable</span><span class="p">[</span><span class="n">Msg</span><span class="p">]</span> <span class="o">|</span> <span class="n">Callable</span><span class="p">[[],</span> <span class="n">Iterable</span><span class="p">[</span><span class="n">Msg</span><span class="p">]]</span>
-<span class="n">V</span> <span class="o">=</span> <span class="n">TypeVar</span><span class="p">(</span><span class="s2">"V"</span><span class="p">)</span>
+<span class="n">Reasons</span> <span class="o">=</span> <span class="n">Mapping</span><span class="p">[</span><span class="n">Hashable</span><span class="p">,</span> <span class="s2">"SuspensionReason"</span><span class="p">]</span>
 
 
 <div class="viewcode-block" id="SuspensionReason">
@@ -934,44 +933,64 @@ window.runMermaid = runMermaid;</script>
 
     <span class="n">justification</span><span class="p">:</span> <span class="nb">str</span>
     <span class="n">pre_plan</span><span class="p">:</span> <span class="n">PlanLike</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
-    <span class="n">post_plan</span><span class="p">:</span> <span class="n">PlanLike</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span></div>
+    <span class="n">post_plan</span><span class="p">:</span> <span class="n">PlanLike</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="c1"># When a recovered reason is dropped; None until it recovers.</span>
+    <span class="n">release_at</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span></div>
 
 
 
-<span class="k">def</span><span class="w"> </span><span class="nf">join_justifications</span><span class="p">(</span><span class="n">reasons</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">[</span><span class="n">Hashable</span><span class="p">,</span> <span class="n">SuspensionReason</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">"""Every standing reason's justification, one per line, outermost first."""</span>
+<div class="viewcode-block" id="SuspensionChange">
+<a class="viewcode-back" href="../../generated/bluesky.suspension.SuspensionChange.html#bluesky.suspension.SuspensionChange">[docs]</a>
+<span class="nd">@dataclass</span><span class="p">(</span><span class="n">frozen</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">SuspensionChange</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""How the reasons changed during a `Suspension.wait_until`."""</span>
+
+    <span class="c1"># Every reason now.</span>
+    <span class="n">now</span><span class="p">:</span> <span class="n">Reasons</span>
+    <span class="c1"># Tripped since, including a recovering reason tripped again.</span>
+    <span class="n">added</span><span class="p">:</span> <span class="n">Reasons</span>
+    <span class="c1"># Recovered since, each with when it is or was dropped.</span>
+    <span class="n">recovered</span><span class="p">:</span> <span class="n">Reasons</span>
+
+    <span class="nd">@classmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">from_reasons</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">before</span><span class="p">:</span> <span class="n">Reasons</span><span class="p">,</span> <span class="n">after</span><span class="p">:</span> <span class="n">Reasons</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">SuspensionChange</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""What changed from ``before`` to ``after``."""</span>
+        <span class="n">added</span> <span class="o">=</span> <span class="p">{</span><span class="n">k</span><span class="p">:</span> <span class="n">r</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">after</span><span class="o">.</span><span class="n">items</span><span class="p">()</span> <span class="k">if</span> <span class="n">r</span><span class="o">.</span><span class="n">release_at</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">before</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">k</span><span class="p">)</span> <span class="ow">is</span> <span class="ow">not</span> <span class="n">r</span><span class="p">}</span>
+        <span class="n">recovered</span> <span class="o">=</span> <span class="p">{</span><span class="n">k</span><span class="p">:</span> <span class="n">r</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">after</span><span class="o">.</span><span class="n">items</span><span class="p">()</span> <span class="k">if</span> <span class="n">r</span><span class="o">.</span><span class="n">release_at</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">before</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">k</span><span class="p">)</span> <span class="ow">is</span> <span class="ow">not</span> <span class="n">r</span><span class="p">}</span>
+        <span class="c1"># Dropped at once, with no sleep or by a removal, so never seen recovering.</span>
+        <span class="n">dropped_at</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+        <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">before</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+            <span class="k">if</span> <span class="n">k</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">after</span> <span class="ow">and</span> <span class="n">r</span><span class="o">.</span><span class="n">release_at</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="n">recovered</span><span class="p">[</span><span class="n">k</span><span class="p">]</span> <span class="o">=</span> <span class="n">replace</span><span class="p">(</span><span class="n">r</span><span class="p">,</span> <span class="n">release_at</span><span class="o">=</span><span class="n">dropped_at</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">cls</span><span class="p">(</span><span class="n">after</span><span class="p">,</span> <span class="n">MappingProxyType</span><span class="p">(</span><span class="n">added</span><span class="p">),</span> <span class="n">MappingProxyType</span><span class="p">(</span><span class="n">recovered</span><span class="p">))</span></div>
+
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">join_justifications</span><span class="p">(</span><span class="n">reasons</span><span class="p">:</span> <span class="n">Reasons</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""Every reason's justification, one per line, in the order tripped."""</span>
     <span class="k">return</span> <span class="s2">"</span><span class="se">\n</span><span class="s2">"</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">reason</span><span class="o">.</span><span class="n">justification</span> <span class="k">for</span> <span class="n">reason</span> <span class="ow">in</span> <span class="n">reasons</span><span class="o">.</span><span class="n">values</span><span class="p">()</span> <span class="k">if</span> <span class="n">reason</span><span class="o">.</span><span class="n">justification</span><span class="p">)</span>
-
-
-<span class="k">def</span><span class="w"> </span><span class="nf">_without</span><span class="p">(</span><span class="n">mapping</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">[</span><span class="n">Hashable</span><span class="p">,</span> <span class="n">V</span><span class="p">],</span> <span class="n">key</span><span class="p">:</span> <span class="n">Hashable</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Mapping</span><span class="p">[</span><span class="n">Hashable</span><span class="p">,</span> <span class="n">V</span><span class="p">]:</span>
-<span class="w">    </span><span class="sd">"""An immutable copy of ``mapping`` less ``key``."""</span>
-    <span class="k">return</span> <span class="n">MappingProxyType</span><span class="p">({</span><span class="n">k</span><span class="p">:</span> <span class="n">v</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">mapping</span><span class="o">.</span><span class="n">items</span><span class="p">()</span> <span class="k">if</span> <span class="n">k</span> <span class="o">!=</span> <span class="n">key</span><span class="p">})</span>
 
 
 <div class="viewcode-block" id="Suspension">
 <a class="viewcode-back" href="../../generated/bluesky.suspension.Suspension.html#bluesky.suspension.Suspension">[docs]</a>
 <span class="k">class</span><span class="w"> </span><span class="nc">Suspension</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">"""Tripped while any reason stands, here or in a parent.</span>
+<span class="w">    </span><span class="sd">"""The reasons a plan may not run, here or in a parent, keyed by the suspender that tripped each.</span>
 
-<span class="sd">    Reasons are keyed, normally by the suspender that tripped them.</span>
-<span class="sd">    ``trip``, ``clear`` and ``recover`` are loop-only and unchecked; ``tripped``,</span>
-<span class="sd">    ``reasons`` and ``recoveries`` are safe on any thread.</span>
+<span class="sd">    ``reasons`` is safe on any thread; everything else is loop-only and unchecked.</span>
 <span class="sd">    """</span>
 
 <div class="viewcode-block" id="Suspension.__init__">
 <a class="viewcode-back" href="../../generated/bluesky.suspension.Suspension.html#bluesky.suspension.Suspension.__init__">[docs]</a>
-    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">loop</span><span class="p">:</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">AbstractEventLoop</span><span class="p">,</span> <span class="n">parent</span><span class="p">:</span> <span class="n">Suspension</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">name</span> <span class="o">=</span> <span class="n">name</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">loop</span><span class="p">:</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">AbstractEventLoop</span><span class="p">,</span> <span class="n">parent</span><span class="p">:</span> <span class="n">Suspension</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_loop</span> <span class="o">=</span> <span class="n">loop</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_parent</span> <span class="o">=</span> <span class="n">parent</span>
-        <span class="c1"># Immutable and swapped whole, so readers off the loop see a snapshot.</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_reasons</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">[</span><span class="n">Hashable</span><span class="p">,</span> <span class="n">SuspensionReason</span><span class="p">]</span> <span class="o">=</span> <span class="n">MappingProxyType</span><span class="p">({})</span>
-        <span class="c1"># Pending delayed clears, cancelled if the key trips again first.</span>
+        <span class="c1"># Immutable and swapped whole on every change.</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_reasons</span><span class="p">:</span> <span class="n">Reasons</span> <span class="o">=</span> <span class="n">MappingProxyType</span><span class="p">({})</span>
+        <span class="c1"># Pending releases of recovered reasons.</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_releases</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="n">Hashable</span><span class="p">,</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">TimerHandle</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
-        <span class="c1"># Shared with the parent, so a change up the chain wakes waiters here.</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_changed</span><span class="p">:</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">Event</span> <span class="o">=</span> <span class="n">parent</span><span class="o">.</span><span class="n">_changed</span> <span class="k">if</span> <span class="n">parent</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">Event</span><span class="p">()</span>
-        <span class="c1"># Each key's latest recovery, kept past its release until it trips again or is cleared.</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_recoveries</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">[</span><span class="n">Hashable</span><span class="p">,</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">SuspensionReason</span><span class="p">,</span> <span class="nb">float</span><span class="p">]]</span> <span class="o">=</span> <span class="n">MappingProxyType</span><span class="p">({})</span></div>
+        <span class="c1"># Set and cleared on every change, to wake waiters; shared with the parent,</span>
+        <span class="c1"># so a change up the chain wakes waiters here.</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_changed</span><span class="p">:</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">Event</span> <span class="o">=</span> <span class="n">parent</span><span class="o">.</span><span class="n">_changed</span> <span class="k">if</span> <span class="n">parent</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">Event</span><span class="p">()</span></div>
 
 
     <span class="nd">@property</span>
@@ -979,28 +998,12 @@ window.runMermaid = runMermaid;</script>
 <span class="w">        </span><span class="sd">"""The loop this suspension's state lives on."""</span>
         <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_loop</span>
 
-    <span class="k">def</span><span class="w"> </span><span class="fm">__repr__</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-        <span class="n">state</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">"tripped by </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">reasons</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">tripped</span> <span class="k">else</span> <span class="s2">"clear"</span>
-        <span class="k">return</span> <span class="sa">f</span><span class="s2">"&lt;</span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="si">!r}</span><span class="s2"> </span><span class="si">{</span><span class="n">state</span><span class="si">}</span><span class="s2">&gt;"</span>
-
     <span class="nd">@property</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">tripped</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">"""Whether any reason stands, here or above."""</span>
-        <span class="k">return</span> <span class="nb">bool</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">reasons</span><span class="p">)</span>
-
-    <span class="nd">@property</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">reasons</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Mapping</span><span class="p">[</span><span class="n">Hashable</span><span class="p">,</span> <span class="n">SuspensionReason</span><span class="p">]:</span>
-<span class="w">        </span><span class="sd">"""Every standing reason, keyed; the parent's first."""</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">reasons</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Reasons</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""Every reason, in the order tripped; the parent's first."""</span>
         <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_parent</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
             <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_reasons</span>
         <span class="k">return</span> <span class="n">MappingProxyType</span><span class="p">({</span><span class="o">**</span><span class="bp">self</span><span class="o">.</span><span class="n">_parent</span><span class="o">.</span><span class="n">reasons</span><span class="p">,</span> <span class="o">**</span><span class="bp">self</span><span class="o">.</span><span class="n">_reasons</span><span class="p">})</span>
-
-    <span class="nd">@property</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">recoveries</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Mapping</span><span class="p">[</span><span class="n">Hashable</span><span class="p">,</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">SuspensionReason</span><span class="p">,</span> <span class="nb">float</span><span class="p">]]:</span>
-<span class="w">        </span><span class="sd">"""Each key's latest `recover`, as ``(reason, release_at)``; the parent's first."""</span>
-        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_parent</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_recoveries</span>
-        <span class="k">return</span> <span class="n">MappingProxyType</span><span class="p">({</span><span class="o">**</span><span class="bp">self</span><span class="o">.</span><span class="n">_parent</span><span class="o">.</span><span class="n">recoveries</span><span class="p">,</span> <span class="o">**</span><span class="bp">self</span><span class="o">.</span><span class="n">_recoveries</span><span class="p">})</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">trip</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
@@ -1010,34 +1013,30 @@ window.runMermaid = runMermaid;</script>
         <span class="n">pre_plan</span><span class="p">:</span> <span class="n">PlanLike</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
         <span class="n">post_plan</span><span class="p">:</span> <span class="n">PlanLike</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">"""Record that ``key`` has tripped. Loop thread only."""</span>
+<span class="w">        </span><span class="sd">"""Add ``key``'s reason, replacing any it has, recovered or not."""</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_cancel_release</span><span class="p">(</span><span class="n">key</span><span class="p">)</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_recoveries</span> <span class="o">=</span> <span class="n">_without</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_recoveries</span><span class="p">,</span> <span class="n">key</span><span class="p">)</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_reasons</span> <span class="o">=</span> <span class="n">MappingProxyType</span><span class="p">(</span>
-            <span class="p">{</span><span class="o">**</span><span class="bp">self</span><span class="o">.</span><span class="n">_reasons</span><span class="p">,</span> <span class="n">key</span><span class="p">:</span> <span class="n">SuspensionReason</span><span class="p">(</span><span class="n">justification</span><span class="p">,</span> <span class="n">pre_plan</span><span class="p">,</span> <span class="n">post_plan</span><span class="p">)}</span>
-        <span class="p">)</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_notify_changed</span><span class="p">()</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="nf">clear</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">key</span><span class="p">:</span> <span class="n">Hashable</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">after</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mi">0</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">"""Drop ``key``'s reason, ``after`` seconds from now. Loop thread only."""</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_recoveries</span> <span class="o">=</span> <span class="n">_without</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_recoveries</span><span class="p">,</span> <span class="n">key</span><span class="p">)</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_release_after</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="n">after</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_set_reasons</span><span class="p">({</span><span class="o">**</span><span class="bp">self</span><span class="o">.</span><span class="n">_reasons</span><span class="p">,</span> <span class="n">key</span><span class="p">:</span> <span class="n">SuspensionReason</span><span class="p">(</span><span class="n">justification</span><span class="p">,</span> <span class="n">pre_plan</span><span class="p">,</span> <span class="n">post_plan</span><span class="p">)})</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">recover</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">key</span><span class="p">:</span> <span class="n">Hashable</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">after</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mi">0</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">"""As `clear`, but noted in `recoveries` with when it is released. Loop thread only."""</span>
+<span class="w">        </span><span class="sd">"""Drop ``key``'s reason ``after`` seconds from now, marking it with when."""</span>
         <span class="n">reason</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_reasons</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">key</span><span class="p">)</span>
-        <span class="k">if</span> <span class="n">reason</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">_recoveries</span> <span class="o">=</span> <span class="n">MappingProxyType</span><span class="p">({</span><span class="o">**</span><span class="bp">self</span><span class="o">.</span><span class="n">_recoveries</span><span class="p">,</span> <span class="n">key</span><span class="p">:</span> <span class="p">(</span><span class="n">reason</span><span class="p">,</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span> <span class="o">+</span> <span class="n">after</span><span class="p">)})</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_release_after</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="n">after</span><span class="p">)</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_notify_changed</span><span class="p">()</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="nf">_release_after</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">key</span><span class="p">:</span> <span class="n">Hashable</span><span class="p">,</span> <span class="n">after</span><span class="p">:</span> <span class="nb">float</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">reason</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">return</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_cancel_release</span><span class="p">(</span><span class="n">key</span><span class="p">)</span>
         <span class="k">if</span> <span class="n">after</span><span class="p">:</span>
-            <span class="c1"># A timer must be scheduled on its own loop, hence loop-only.</span>
             <span class="bp">self</span><span class="o">.</span><span class="n">_releases</span><span class="p">[</span><span class="n">key</span><span class="p">]</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_loop</span><span class="o">.</span><span class="n">call_later</span><span class="p">(</span><span class="n">after</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">_release</span><span class="p">,</span> <span class="n">key</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_set_reasons</span><span class="p">({</span><span class="o">**</span><span class="bp">self</span><span class="o">.</span><span class="n">_reasons</span><span class="p">,</span> <span class="n">key</span><span class="p">:</span> <span class="n">replace</span><span class="p">(</span><span class="n">reason</span><span class="p">,</span> <span class="n">release_at</span><span class="o">=</span><span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span> <span class="o">+</span> <span class="n">after</span><span class="p">)})</span>
         <span class="k">else</span><span class="p">:</span>
             <span class="bp">self</span><span class="o">.</span><span class="n">_release</span><span class="p">(</span><span class="n">key</span><span class="p">)</span>
+
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">wait_until</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span> <span class="n">predicate</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">SuspensionChange</span><span class="p">],</span> <span class="nb">object</span><span class="p">],</span> <span class="o">*</span><span class="p">,</span> <span class="n">since</span><span class="p">:</span> <span class="n">Reasons</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">SuspensionChange</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""Wait until ``predicate`` holds for the change since ``since``, by default now, and return it."""</span>
+        <span class="n">before</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">reasons</span> <span class="k">if</span> <span class="n">since</span> <span class="ow">is</span> <span class="kc">None</span> <span class="k">else</span> <span class="n">since</span>
+        <span class="k">while</span> <span class="ow">not</span> <span class="n">predicate</span><span class="p">(</span><span class="n">change</span> <span class="o">:=</span> <span class="n">SuspensionChange</span><span class="o">.</span><span class="n">from_reasons</span><span class="p">(</span><span class="n">before</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">reasons</span><span class="p">)):</span>
+            <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_changed</span><span class="o">.</span><span class="n">wait</span><span class="p">()</span>
+        <span class="k">return</span> <span class="n">change</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">_cancel_release</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">key</span><span class="p">:</span> <span class="n">Hashable</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
         <span class="n">release</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_releases</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
@@ -1046,25 +1045,12 @@ window.runMermaid = runMermaid;</script>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">_release</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">key</span><span class="p">:</span> <span class="n">Hashable</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_releases</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_reasons</span> <span class="o">=</span> <span class="n">_without</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_reasons</span><span class="p">,</span> <span class="n">key</span><span class="p">)</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_notify_changed</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_set_reasons</span><span class="p">({</span><span class="n">k</span><span class="p">:</span> <span class="n">v</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_reasons</span><span class="o">.</span><span class="n">items</span><span class="p">()</span> <span class="k">if</span> <span class="n">k</span> <span class="o">!=</span> <span class="n">key</span><span class="p">})</span>
 
-    <span class="k">def</span><span class="w"> </span><span class="nf">_notify_changed</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">"""Wake every waiter on this chain. Loop thread only."""</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">_set_reasons</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">reasons</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="n">Hashable</span><span class="p">,</span> <span class="n">SuspensionReason</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_reasons</span> <span class="o">=</span> <span class="n">MappingProxyType</span><span class="p">(</span><span class="n">reasons</span><span class="p">)</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_changed</span><span class="o">.</span><span class="n">set</span><span class="p">()</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_changed</span><span class="o">.</span><span class="n">clear</span><span class="p">()</span>
-
-    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">wait_changed</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">"""Wait until a reason is raised, recovers or is dropped anywhere in the chain.</span>
-
-<span class="sd">        Do not await between testing a condition and calling this.</span>
-<span class="sd">        """</span>
-        <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_changed</span><span class="o">.</span><span class="n">wait</span><span class="p">()</span>
-
-    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">wait_cleared</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">"""Wait until no reason stands in the chain."""</span>
-        <span class="k">while</span> <span class="bp">self</span><span class="o">.</span><span class="n">tripped</span><span class="p">:</span>
-            <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">wait_changed</span><span class="p">()</span></div>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_changed</span><span class="o">.</span><span class="n">clear</span><span class="p">()</span></div>
 
 </pre></div>
 

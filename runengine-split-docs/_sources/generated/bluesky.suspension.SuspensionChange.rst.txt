@@ -1,0 +1,31 @@
+﻿bluesky.suspension.SuspensionChange
+===================================
+
+.. currentmodule:: bluesky.suspension
+
+.. autoclass:: SuspensionChange
+
+   
+   .. automethod:: __init__
+
+   
+   .. rubric:: Methods
+
+   .. autosummary::
+   
+      ~SuspensionChange.__init__
+      ~SuspensionChange.from_reasons
+   
+   
+
+   
+   
+   .. rubric:: Attributes
+
+   .. autosummary::
+   
+      ~SuspensionChange.now
+      ~SuspensionChange.added
+      ~SuspensionChange.recovered
+   
+   

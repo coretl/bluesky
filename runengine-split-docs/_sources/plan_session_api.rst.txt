@@ -103,7 +103,7 @@ the session's attributes ``md``, ``preprocessors``, ``md_validator``,
 Suspending
 ----------
 
-A plan runs only while its :class:`~bluesky.suspension.Suspension` is clear.
+A plan runs only while its :class:`~bluesky.suspension.Suspension` has no reasons.
 Suspenders trip it; the session's holds up every plan, a plan's only that
 plan. See :ref:`suspenders` for the suspenders themselves.
 
@@ -137,6 +137,7 @@ plan. See :ref:`suspenders` for the suspenders themselves.
 
    Suspension
    SuspensionReason
+   SuspensionChange
 
 .. currentmodule:: bluesky.suspenders
 

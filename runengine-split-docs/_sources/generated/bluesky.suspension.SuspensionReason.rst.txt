@@ -25,6 +25,7 @@
    
       ~SuspensionReason.post_plan
       ~SuspensionReason.pre_plan
+      ~SuspensionReason.release_at
       ~SuspensionReason.justification
    
    

@@ -14,11 +14,9 @@
    .. autosummary::
    
       ~Suspension.__init__
-      ~Suspension.clear
       ~Suspension.recover
       ~Suspension.trip
-      ~Suspension.wait_changed
-      ~Suspension.wait_cleared
+      ~Suspension.wait_until
    
    
 
@@ -30,7 +28,5 @@
    
       ~Suspension.loop
       ~Suspension.reasons
-      ~Suspension.recoveries
-      ~Suspension.tripped
    
    
