@@ -7,7 +7,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>bluesky.suspension &#8212; bluesky 1.15.2.dev235+ge6b14a4e2 documentation</title>
+    <title>bluesky.suspension &#8212; bluesky 1.15.2.dev238+gb5ee8e6b7 documentation</title>
   
   
   
@@ -38,7 +38,7 @@
   <link rel="preload" as="script" href="../../_static/scripts/bootstrap.js?digest=55c26ed414f5f8a31ebb" />
 <link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=55c26ed414f5f8a31ebb" />
 
-    <script src="../../_static/documentation_options.js?v=71c5136c"></script>
+    <script src="../../_static/documentation_options.js?v=10a2f272"></script>
     <script src="../../_static/doctools.js?v=888ff710"></script>
     <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script type="module">import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11.12.1/dist/mermaid.esm.min.mjs";
@@ -403,7 +403,7 @@ window.runMermaid = runMermaid;</script>
     <script>
         DOCUMENTATION_OPTIONS.theme_version = '0.17.1';
         DOCUMENTATION_OPTIONS.theme_switcher_json_url = 'https://blueskyproject.io/bluesky/switcher.json';
-        DOCUMENTATION_OPTIONS.theme_switcher_version_match = '1.15.2.dev235+ge6b14a4e2';
+        DOCUMENTATION_OPTIONS.theme_switcher_version_match = '1.15.2.dev238+gb5ee8e6b7';
         DOCUMENTATION_OPTIONS.show_version_warning_banner =
             false;
         </script>
@@ -412,7 +412,7 @@ window.runMermaid = runMermaid;</script>
     <link rel="search" title="Search" href="../../search.html" />
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
-  <meta name="docsearch:version" content="1.15.2.dev235+ge6b14a4e2" />
+  <meta name="docsearch:version" content="1.15.2.dev238+gb5ee8e6b7" />
   
     
     <script src="../../_static/searchtools.js"></script>
@@ -914,7 +914,6 @@ window.runMermaid = runMermaid;</script>
 <span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span>
-<span class="kn">import</span><span class="w"> </span><span class="nn">time</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">collections.abc</span><span class="w"> </span><span class="kn">import</span> <span class="n">Callable</span><span class="p">,</span> <span class="n">Hashable</span><span class="p">,</span> <span class="n">Iterable</span><span class="p">,</span> <span class="n">Mapping</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span><span class="p">,</span> <span class="n">replace</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">types</span><span class="w"> </span><span class="kn">import</span> <span class="n">MappingProxyType</span>
@@ -934,8 +933,8 @@ window.runMermaid = runMermaid;</script>
     <span class="n">justification</span><span class="p">:</span> <span class="nb">str</span>
     <span class="n">pre_plan</span><span class="p">:</span> <span class="n">PlanLike</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
     <span class="n">post_plan</span><span class="p">:</span> <span class="n">PlanLike</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
-    <span class="c1"># When a recovered reason is dropped; None until it recovers.</span>
-    <span class="n">release_at</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span></div>
+    <span class="c1"># Seconds from its recovery until it is dropped; None until it recovers.</span>
+    <span class="n">settle_time</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span></div>
 
 
 
@@ -949,19 +948,18 @@ window.runMermaid = runMermaid;</script>
     <span class="n">now</span><span class="p">:</span> <span class="n">Reasons</span>
     <span class="c1"># Tripped since, including a recovering reason tripped again.</span>
     <span class="n">added</span><span class="p">:</span> <span class="n">Reasons</span>
-    <span class="c1"># Recovered since, each with when it is or was dropped.</span>
+    <span class="c1"># Recovered since, each with its settle time.</span>
     <span class="n">recovered</span><span class="p">:</span> <span class="n">Reasons</span>
 
     <span class="nd">@classmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">from_reasons</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">before</span><span class="p">:</span> <span class="n">Reasons</span><span class="p">,</span> <span class="n">after</span><span class="p">:</span> <span class="n">Reasons</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">SuspensionChange</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">"""What changed from ``before`` to ``after``."""</span>
-        <span class="n">added</span> <span class="o">=</span> <span class="p">{</span><span class="n">k</span><span class="p">:</span> <span class="n">r</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">after</span><span class="o">.</span><span class="n">items</span><span class="p">()</span> <span class="k">if</span> <span class="n">r</span><span class="o">.</span><span class="n">release_at</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">before</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">k</span><span class="p">)</span> <span class="ow">is</span> <span class="ow">not</span> <span class="n">r</span><span class="p">}</span>
-        <span class="n">recovered</span> <span class="o">=</span> <span class="p">{</span><span class="n">k</span><span class="p">:</span> <span class="n">r</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">after</span><span class="o">.</span><span class="n">items</span><span class="p">()</span> <span class="k">if</span> <span class="n">r</span><span class="o">.</span><span class="n">release_at</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">before</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">k</span><span class="p">)</span> <span class="ow">is</span> <span class="ow">not</span> <span class="n">r</span><span class="p">}</span>
+        <span class="n">added</span> <span class="o">=</span> <span class="p">{</span><span class="n">k</span><span class="p">:</span> <span class="n">r</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">after</span><span class="o">.</span><span class="n">items</span><span class="p">()</span> <span class="k">if</span> <span class="n">r</span><span class="o">.</span><span class="n">settle_time</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">before</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">k</span><span class="p">)</span> <span class="ow">is</span> <span class="ow">not</span> <span class="n">r</span><span class="p">}</span>
+        <span class="n">recovered</span> <span class="o">=</span> <span class="p">{</span><span class="n">k</span><span class="p">:</span> <span class="n">r</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">after</span><span class="o">.</span><span class="n">items</span><span class="p">()</span> <span class="k">if</span> <span class="n">r</span><span class="o">.</span><span class="n">settle_time</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">before</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">k</span><span class="p">)</span> <span class="ow">is</span> <span class="ow">not</span> <span class="n">r</span><span class="p">}</span>
         <span class="c1"># Dropped at once, with no sleep or by a removal, so never seen recovering.</span>
-        <span class="n">dropped_at</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
         <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">before</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
-            <span class="k">if</span> <span class="n">k</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">after</span> <span class="ow">and</span> <span class="n">r</span><span class="o">.</span><span class="n">release_at</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-                <span class="n">recovered</span><span class="p">[</span><span class="n">k</span><span class="p">]</span> <span class="o">=</span> <span class="n">replace</span><span class="p">(</span><span class="n">r</span><span class="p">,</span> <span class="n">release_at</span><span class="o">=</span><span class="n">dropped_at</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">k</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">after</span> <span class="ow">and</span> <span class="n">r</span><span class="o">.</span><span class="n">settle_time</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="n">recovered</span><span class="p">[</span><span class="n">k</span><span class="p">]</span> <span class="o">=</span> <span class="n">replace</span><span class="p">(</span><span class="n">r</span><span class="p">,</span> <span class="n">settle_time</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
         <span class="k">return</span> <span class="bp">cls</span><span class="p">(</span><span class="n">after</span><span class="p">,</span> <span class="n">MappingProxyType</span><span class="p">(</span><span class="n">added</span><span class="p">),</span> <span class="n">MappingProxyType</span><span class="p">(</span><span class="n">recovered</span><span class="p">))</span></div>
 
 
@@ -1018,14 +1016,14 @@ window.runMermaid = runMermaid;</script>
         <span class="bp">self</span><span class="o">.</span><span class="n">_set_reasons</span><span class="p">({</span><span class="o">**</span><span class="bp">self</span><span class="o">.</span><span class="n">_reasons</span><span class="p">,</span> <span class="n">key</span><span class="p">:</span> <span class="n">SuspensionReason</span><span class="p">(</span><span class="n">justification</span><span class="p">,</span> <span class="n">pre_plan</span><span class="p">,</span> <span class="n">post_plan</span><span class="p">)})</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">recover</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">key</span><span class="p">:</span> <span class="n">Hashable</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">after</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mi">0</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">"""Drop ``key``'s reason ``after`` seconds from now, marking it with when."""</span>
+<span class="w">        </span><span class="sd">"""Drop ``key``'s reason ``after`` seconds from now, marking it with that settle time."""</span>
         <span class="n">reason</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_reasons</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">key</span><span class="p">)</span>
         <span class="k">if</span> <span class="n">reason</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
             <span class="k">return</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_cancel_release</span><span class="p">(</span><span class="n">key</span><span class="p">)</span>
         <span class="k">if</span> <span class="n">after</span><span class="p">:</span>
             <span class="bp">self</span><span class="o">.</span><span class="n">_releases</span><span class="p">[</span><span class="n">key</span><span class="p">]</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_loop</span><span class="o">.</span><span class="n">call_later</span><span class="p">(</span><span class="n">after</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">_release</span><span class="p">,</span> <span class="n">key</span><span class="p">)</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">_set_reasons</span><span class="p">({</span><span class="o">**</span><span class="bp">self</span><span class="o">.</span><span class="n">_reasons</span><span class="p">,</span> <span class="n">key</span><span class="p">:</span> <span class="n">replace</span><span class="p">(</span><span class="n">reason</span><span class="p">,</span> <span class="n">release_at</span><span class="o">=</span><span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span> <span class="o">+</span> <span class="n">after</span><span class="p">)})</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_set_reasons</span><span class="p">({</span><span class="o">**</span><span class="bp">self</span><span class="o">.</span><span class="n">_reasons</span><span class="p">,</span> <span class="n">key</span><span class="p">:</span> <span class="n">replace</span><span class="p">(</span><span class="n">reason</span><span class="p">,</span> <span class="n">settle_time</span><span class="o">=</span><span class="n">after</span><span class="p">)})</span>
         <span class="k">else</span><span class="p">:</span>
             <span class="bp">self</span><span class="o">.</span><span class="n">_release</span><span class="p">(</span><span class="n">key</span><span class="p">)</span>
 

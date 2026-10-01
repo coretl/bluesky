@@ -7,7 +7,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>bluesky.plan_runner &#8212; bluesky 1.15.2.dev235+ge6b14a4e2 documentation</title>
+    <title>bluesky.plan_runner &#8212; bluesky 1.15.2.dev238+gb5ee8e6b7 documentation</title>
   
   
   
@@ -38,7 +38,7 @@
   <link rel="preload" as="script" href="../../_static/scripts/bootstrap.js?digest=55c26ed414f5f8a31ebb" />
 <link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=55c26ed414f5f8a31ebb" />
 
-    <script src="../../_static/documentation_options.js?v=71c5136c"></script>
+    <script src="../../_static/documentation_options.js?v=10a2f272"></script>
     <script src="../../_static/doctools.js?v=888ff710"></script>
     <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script type="module">import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11.12.1/dist/mermaid.esm.min.mjs";
@@ -403,7 +403,7 @@ window.runMermaid = runMermaid;</script>
     <script>
         DOCUMENTATION_OPTIONS.theme_version = '0.17.1';
         DOCUMENTATION_OPTIONS.theme_switcher_json_url = 'https://blueskyproject.io/bluesky/switcher.json';
-        DOCUMENTATION_OPTIONS.theme_switcher_version_match = '1.15.2.dev235+ge6b14a4e2';
+        DOCUMENTATION_OPTIONS.theme_switcher_version_match = '1.15.2.dev238+gb5ee8e6b7';
         DOCUMENTATION_OPTIONS.show_version_warning_banner =
             false;
         </script>
@@ -412,7 +412,7 @@ window.runMermaid = runMermaid;</script>
     <link rel="search" title="Search" href="../../search.html" />
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
-  <meta name="docsearch:version" content="1.15.2.dev235+ge6b14a4e2" />
+  <meta name="docsearch:version" content="1.15.2.dev238+gb5ee8e6b7" />
   
     
     <script src="../../_static/searchtools.js"></script>
@@ -1242,8 +1242,8 @@ window.runMermaid = runMermaid;</script>
 <span class="sd">        ``f(key, reason)``: another reason joins an open suspension.</span>
 <span class="sd">    suspender_recovered</span>
 <span class="sd">        ``f(key, reason)``: a reason holding the plan up recovers. It is</span>
-<span class="sd">        dropped at ``reason.release_at``, in seconds since the epoch, unless it</span>
-<span class="sd">        trips again first.</span>
+<span class="sd">        dropped ``reason.settle_time`` seconds later, unless it trips again</span>
+<span class="sd">        first.</span>
 <span class="sd">    suspension_ended</span>
 <span class="sd">        ``f()``: every reason has cleared, before the post-plans.</span>
 <span class="sd">    suspension_refused</span>
@@ -1487,22 +1487,24 @@ window.runMermaid = runMermaid;</script>
             <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">_suspension</span><span class="o">.</span><span class="n">reasons</span><span class="p">:</span>
                 <span class="c1"># Decided now, so that any later trip suspends.</span>
                 <span class="k">return</span>
-        <span class="c1"># On a resume, `_hold` looks in band, so a trip before the plan moves still holds it.</span>
-        <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">_held_up</span><span class="p">:</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">_held_up</span> <span class="o">=</span> <span class="kc">True</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">_push_plan</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_hold</span><span class="p">(</span><span class="n">at_start</span><span class="p">))</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_held_up</span><span class="p">:</span>
+            <span class="k">return</span>
 
-    <span class="k">def</span><span class="w"> </span><span class="nf">_hold</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">at_start</span><span class="p">:</span> <span class="nb">bool</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">typing</span><span class="o">.</span><span class="n">Generator</span><span class="p">[</span><span class="n">Msg</span><span class="p">,</span> <span class="n">typing</span><span class="o">.</span><span class="n">Any</span><span class="p">,</span> <span class="kc">None</span><span class="p">]:</span>
-<span class="w">        </span><span class="sd">"""Wait until the suspension clears, with no pre- or post-plans."""</span>
-        <span class="n">held</span> <span class="o">=</span> <span class="nb">bool</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_suspension</span><span class="o">.</span><span class="n">reasons</span><span class="p">)</span>
-        <span class="k">while</span> <span class="bp">self</span><span class="o">.</span><span class="n">_suspension</span><span class="o">.</span><span class="n">reasons</span><span class="p">:</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">_hooks</span><span class="o">.</span><span class="n">hold_began</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_suspension</span><span class="o">.</span><span class="n">reasons</span><span class="p">,</span> <span class="n">at_start</span><span class="p">)</span>
-            <span class="c1"># A pause ends the wait early; the plan then continues, not begins.</span>
-            <span class="n">at_start</span> <span class="o">=</span> <span class="kc">False</span>
-            <span class="k">yield</span> <span class="n">Msg</span><span class="p">(</span><span class="s2">"wait_for"</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="p">[</span><span class="k">lambda</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">_suspension</span><span class="o">.</span><span class="n">wait_until</span><span class="p">(</span><span class="k">lambda</span> <span class="n">c</span><span class="p">:</span> <span class="ow">not</span> <span class="n">c</span><span class="o">.</span><span class="n">now</span><span class="p">)])</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_held_up</span> <span class="o">=</span> <span class="kc">False</span>
-        <span class="k">if</span> <span class="n">held</span><span class="p">:</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">_hooks</span><span class="o">.</span><span class="n">hold_ended</span><span class="p">()</span>
+        <span class="k">def</span><span class="w"> </span><span class="nf">hold_inner_plan</span><span class="p">(</span><span class="n">at_start</span><span class="p">:</span> <span class="nb">bool</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">typing</span><span class="o">.</span><span class="n">Generator</span><span class="p">[</span><span class="n">Msg</span><span class="p">,</span> <span class="n">typing</span><span class="o">.</span><span class="n">Any</span><span class="p">,</span> <span class="kc">None</span><span class="p">]:</span>
+            <span class="c1"># wait until the suspension clears, with no pre- or post-plans</span>
+            <span class="n">held</span> <span class="o">=</span> <span class="nb">bool</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_suspension</span><span class="o">.</span><span class="n">reasons</span><span class="p">)</span>
+            <span class="k">while</span> <span class="bp">self</span><span class="o">.</span><span class="n">_suspension</span><span class="o">.</span><span class="n">reasons</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_hooks</span><span class="o">.</span><span class="n">hold_began</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_suspension</span><span class="o">.</span><span class="n">reasons</span><span class="p">,</span> <span class="n">at_start</span><span class="p">)</span>
+                <span class="c1"># A pause ends the wait early; the plan then continues, not begins.</span>
+                <span class="n">at_start</span> <span class="o">=</span> <span class="kc">False</span>
+                <span class="k">yield</span> <span class="n">Msg</span><span class="p">(</span><span class="s2">"wait_for"</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="p">[</span><span class="k">lambda</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">_suspension</span><span class="o">.</span><span class="n">wait_until</span><span class="p">(</span><span class="k">lambda</span> <span class="n">c</span><span class="p">:</span> <span class="ow">not</span> <span class="n">c</span><span class="o">.</span><span class="n">now</span><span class="p">)])</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_held_up</span> <span class="o">=</span> <span class="kc">False</span>
+            <span class="k">if</span> <span class="n">held</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_hooks</span><span class="o">.</span><span class="n">hold_ended</span><span class="p">()</span>
+
+        <span class="c1"># On a resume, the hold looks in band, so a trip before the plan moves still holds it.</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_held_up</span> <span class="o">=</span> <span class="kc">True</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_push_plan</span><span class="p">(</span><span class="n">hold_inner_plan</span><span class="p">(</span><span class="n">at_start</span><span class="p">))</span>
 
     <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_supervise_suspension</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">"""Suspend the running plan when the suspension trips, and report recoveries while held up."""</span>
@@ -2989,13 +2991,25 @@ window.runMermaid = runMermaid;</script>
         <span class="k">return</span> <span class="k">await</span> <span class="n">ask</span><span class="p">(</span><span class="n">prompt</span><span class="p">)</span>
 
     <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_install_suspender</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">msg</span><span class="p">:</span> <span class="n">Msg</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">typing</span><span class="o">.</span><span class="n">Any</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">"""Install a suspender for this plan only. Msg('install_suspender', None, suspender)"""</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Install a plan-scoped suspender, removed when the plan ends.</span>
+
+<span class="sd">        Expected message object is:</span>
+
+<span class="sd">            Msg('install_suspender', None, suspender)</span>
+<span class="sd">        """</span>
         <span class="n">suspender</span> <span class="o">=</span> <span class="n">msg</span><span class="o">.</span><span class="n">args</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_plan_suspenders</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">suspender</span><span class="p">)</span>
         <span class="n">suspender</span><span class="o">.</span><span class="n">install</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_suspension</span><span class="p">)</span>
 
     <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_remove_suspender</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">msg</span><span class="p">:</span> <span class="n">Msg</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">typing</span><span class="o">.</span><span class="n">Any</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">"""Remove a suspender this plan installed. Msg('remove_suspender', None, suspender)"""</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Remove a plan-scoped suspender this plan installed.</span>
+
+<span class="sd">        Expected message object is:</span>
+
+<span class="sd">            Msg('remove_suspender', None, suspender)</span>
+<span class="sd">        """</span>
         <span class="n">suspender</span> <span class="o">=</span> <span class="n">msg</span><span class="o">.</span><span class="n">args</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
         <span class="k">if</span> <span class="n">suspender</span> <span class="ow">not</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_plan_suspenders</span><span class="p">:</span>
             <span class="n">warn</span><span class="p">(</span>
