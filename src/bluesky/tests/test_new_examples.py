@@ -1226,3 +1226,44 @@ def test_cache_used_correct_number_of_times_for_object(RE, hw):
 
     assert mock_read.call_count == expected_read_calls
     assert mock_describe.call_count == expected_read_describe_calls
+
+
+def test_unstage_status_failure_is_logged_not_raised(RE, caplog):
+    from ophyd import StatusBase
+
+    import bluesky.plan_stubs as bps
+    import bluesky.preprocessors as bpp
+
+    class CancelOnUnstage:
+        """complete() starts a status; unstage() fails it, as a cancelling device does."""
+
+        name = "dev"
+        parent = None
+
+        def __init__(self):
+            self._status = StatusBase()
+
+        def stage(self):
+            return []
+
+        def unstage(self):
+            self._status.set_exception(ValueError("unstage cancelled complete"))
+            return []
+
+        def kickoff(self):
+            return NullStatus()
+
+        def complete(self):
+            return self._status
+
+    def plan(dev):
+        yield from bps.complete(dev, group="g")  # started, never waited on
+        yield from bps.sleep(0.1)
+        raise RuntimeError("the real error")
+
+    dev = CancelOnUnstage()
+    with caplog.at_level("ERROR", logger="bluesky.plan_stubs"):
+        with pytest.raises(RuntimeError, match="the real error"):
+            RE(bpp.stage_wrapper(plan(dev), [dev]))
+    assert "Status failed while unstaging" in caplog.text
+    assert "unstage cancelled complete" in caplog.text
