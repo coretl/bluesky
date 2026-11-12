@@ -1,5 +1,6 @@
 import asyncio
 import itertools
+import logging
 import operator
 import time
 import uuid
@@ -49,6 +50,7 @@ from .protocols import (
 )
 from .utils import (
     CustomPlanMetadata,
+    FailedStatus,
     Msg,
     MsgGenerator,
     ScalarOrIterableFloat,
@@ -63,6 +65,8 @@ from .utils import (
 from .utils import (
     short_uid as _short_uid,
 )
+
+logger = logging.getLogger(__name__)
 
 #: Any plan function that takes a reading given a list of Readables
 TakeReading = Callable[[Sequence[Readable]], MsgGenerator[Mapping[str, Reading]]]
@@ -1399,6 +1403,10 @@ def unstage_all(*args: Stageable, group: Hashable | None = None) -> MsgGenerator
     """
     'Unstage' one or more devices (i.e., put them in standby, 'disarm' them).
 
+    If a status that the plan started but did not wait on fails while the devices
+    are being unstaged, the failure is logged rather than raised, so that it does
+    not replace the exception that caused the cleanup.
+
     Parameters
     ----------
     args :
@@ -1419,12 +1427,22 @@ def unstage_all(*args: Stageable, group: Hashable | None = None) -> MsgGenerator
     status_objects = []
 
     for obj in args:
-        ret = yield Msg("unstage", obj, group=group)
-        if isinstance(ret, Status):
-            status_objects.append(ret)
+        try:
+            ret = yield Msg("unstage", obj, group=group)
+        except FailedStatus:
+            # A status the plan started but did not wait on failed while
+            # unstaging. Unstage is cleanup, so raising here would replace the
+            # exception that caused the cleanup, which is then lost.
+            logger.exception("Status failed while unstaging %s", obj)
+        else:
+            if isinstance(ret, Status):
+                status_objects.append(ret)
 
     if status_objects:
-        yield Msg("wait", None, group=group)
+        try:
+            yield Msg("wait", None, group=group)
+        except FailedStatus:
+            logger.exception("Status failed while unstaging %s", ", ".join(str(arg) for arg in args))
 
 
 @plan

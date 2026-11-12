@@ -43,6 +43,13 @@ Removed
 Fixed
 -----
 
+- ``bluesky.plan_stubs.unstage_all`` logs a status that fails while devices are
+  being unstaged, rather than raising it.  Previously, when a plan raised while
+  a status it had started with a ``group`` was still pending, and unstaging
+  failed that status (for example by cancelling an in-flight ``complete``), the
+  ``FailedStatus`` replaced the plan's own exception, which was then lost.  The
+  plan's exception now reaches the caller and the status failure is logged on
+  the ``bluesky.plan_stubs`` logger.
 - A plan aborted while parked in a ``wait_for`` cancels the tasks that wait was
   running.  Nothing else held a reference to them, and ``asyncio.wait`` does not
   cancel what it was waiting on when it is itself cancelled, so they outlived
