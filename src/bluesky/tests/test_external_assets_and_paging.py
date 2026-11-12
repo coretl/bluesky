@@ -674,29 +674,49 @@ def test_both_protocols_producing_stream_assets_matches_a_stream_only_device(RE)
     assert both["stop"][0]["num_events"] == stream_only["stop"][0]["num_events"]
 
 
-def test_both_protocols_reporting_both_ways_in_one_run_raises(RE):
-    """Reporting pages and then stream assets in one run would count frames twice."""
+def test_both_protocols_producing_both_kinds_in_one_collect_raises(RE):
+    """Both kinds in one collect would count every frame twice, so nothing is emitted."""
+    det = StreamAssetsOrPagesCollectable(name="det", produces="both")
+    docs = DocHolder()
+    with pytest.raises(
+        RuntimeError,
+        match=re.escape(
+            "Collect object 'det' produced both stream assets and Events or EventPages in one collect."
+        ),
+    ):
+        RE(collect_plan(det, pre_declare=True, stream_name="main"), docs.append)
+    assert "stream_resource" not in docs
+    assert "event_page" not in docs
+
+
+@pytest.mark.parametrize(
+    "first, second, produced, now",
+    [
+        ("event_pages", "stream_assets", "Events or EventPages", "stream assets"),
+        ("stream_assets", "event_pages", "stream assets", "Events or EventPages"),
+    ],
+)
+def test_both_protocols_switching_kind_within_a_run_raises(RE, first, second, produced, now):
+    """Once a device has produced one kind in a run it must not produce the other."""
     det = StreamAssetsOrPagesCollectable(name="det", produces="both")
     with pytest.raises(
         RuntimeError,
         match=re.escape(
-            "Collect object 'det' reported Events or EventPages earlier in this run, but has now "
-            "reported stream assets."
+            f"Collect object 'det' produced {produced} earlier in this run but has now produced {now}."
         ),
     ):
-        RE(two_collect_plan(det, "event_pages", "stream_assets"))
+        RE(two_collect_plan(det, first, second))
 
 
-def test_both_protocols_reporting_stream_assets_stays_on_the_stream_asset_path(RE):
-    """Once a device has reported stream assets it is not asked for pages again.
-
-    A device with no new frames to flush reports no stream assets, which is not the same
-    as it having changed to producing pages, so the choice is pinned for the run.
-    """
-    det = StreamAssetsOrPagesCollectable(name="det", produces="both")
-    docs = DocHolder()
-    RE(two_collect_plan(det, "stream_assets", "event_pages"), docs.append)
-    docs.assert_emitted(start=1, descriptor=1, stream_resource=2, stream_datum=2, stop=1)
+def test_both_protocols_may_use_the_other_kind_in_a_new_run(RE):
+    """The record belongs to the run, so the next run may use the other kind."""
+    det = StreamAssetsOrPagesCollectable(name="det", produces="event_pages")
+    first, second = DocHolder(), DocHolder()
+    RE(collect_plan(det, pre_declare=True, stream_name="main"), first.append)
+    det.produces = "stream_assets"
+    RE(collect_plan(det, pre_declare=True, stream_name="main"), second.append)
+    first.assert_emitted(start=1, descriptor=1, event_page=1, stop=1)
+    second.assert_emitted(start=1, descriptor=1, stream_resource=2, stream_datum=2, stop=1)
 
 
 def test_both_protocols_with_nothing_to_flush_is_not_pinned_to_pages(RE):
@@ -716,30 +736,6 @@ def test_stream_assets_only_device_with_nothing_to_flush(RE):
     RE(collect_plan(det, pre_declare=True, stream_name="main"), docs.append)
     docs.assert_emitted(start=1, descriptor=1, stop=1)
     assert docs["stop"][0]["num_events"] == {"main": 0}
-
-
-def many_collectables_plan(det1, det2):
-    """Collect one device on its own, then collect it alongside another"""
-    yield from bps.open_run()
-    yield from bps.declare_stream(det1, name="main", collect=True)
-    yield from bps.collect(det1, name="main")
-    yield from bps.declare_stream(det1, det2, name="both", collect=True)
-    yield from bps.collect(det1, det2, name="both")
-    yield from bps.close_run()
-
-
-def test_page_collectable_alongside_other_collectables_raises(RE):
-    """collect() can only compose pages for one object, so don't drop the other's data."""
-    det1 = StreamAssetsOrPagesCollectable(name="det1", produces="event_pages")
-    det2 = StreamDatumReadableCollectable(name="det2")
-    with pytest.raises(
-        RuntimeError,
-        match=re.escape(
-            "Collect object 'det1' reported Events or EventPages earlier in this run, so it "
-            "cannot be collected alongside other objects."
-        ),
-    ):
-        RE(many_collectables_plan(det1, det2))
 
 
 def uncollected_plan(det):

@@ -8,11 +8,12 @@ v1.15.2 (yyyy-mm-dd)
 Changed
 -------
 
-- ``collect()`` now chooses whether to ask a device for Events, EventPages or stream
-  assets based on what that device produced, rather than on the protocols it statically
-  obeys, so a single device may obey both ``WritesStreamAssets`` and
-  ``EventPageCollectable`` and decide which of them it uses when it is prepared.
-  Reporting both ways in the same run raises a ``RuntimeError``.
+- ``collect()`` now asks a single device that obeys both ``WritesStreamAssets`` and
+  ``EventPageCollectable`` (or ``EventCollectable``) for both kinds of data on every
+  collect, and lets what comes back decide, rather than choosing from the protocols the
+  device statically obeys. Such a device yields nothing from the one it is not using.
+  A ``RuntimeError`` is raised if it produces both kinds in one collect, or produces a
+  different kind from one it produced earlier in the same run.
 
 v1.15.1 (2026-05-05)
 ====================

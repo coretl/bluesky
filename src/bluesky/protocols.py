@@ -166,6 +166,9 @@ class WritesStreamAssets(Protocol):
             docs will be collected from multiple streams and synchronised on the
             highest common stream index.
 
+            A device that also supports `EventCollectable` or `EventPageCollectable`
+            yields nothing here when it is producing Events or EventPages instead.
+
         Example yielded values:
 
         .. code-block:: python
@@ -331,6 +334,9 @@ class EventCollectable(Collectable, Protocol):
 
         They should contain the keys 'time', 'data', and 'timestamps'.
         A 'uid' is added by the RunEngine.
+
+        A device that also supports `WritesStreamAssets` yields nothing here when it
+        is writing stream assets instead.
         """
         ...
 
@@ -343,6 +349,9 @@ class EventPageCollectable(Collectable, Protocol):
 
         They should contain the keys 'time', 'data', and 'timestamps'.
         A 'uid' is added by the RunEngine.
+
+        A device that also supports `WritesStreamAssets` yields nothing here when it
+        is writing stream assets instead.
         """
         ...
 

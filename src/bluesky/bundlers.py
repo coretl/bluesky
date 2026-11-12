@@ -2,7 +2,7 @@ import asyncio
 import inspect
 import time as ttime
 from collections import defaultdict, deque
-from collections.abc import Callable, Iterable
+from collections.abc import AsyncIterator, Callable, Iterable
 from dataclasses import dataclass, field
 from itertools import combinations
 from logging import LoggerAdapter
@@ -21,7 +21,8 @@ from event_model import (
     compose_run,
     pack_event_page,
 )
-from event_model.documents.event import Event
+from event_model.documents.event import Event, PartialEvent
+from event_model.documents.event_page import PartialEventPage
 
 from .log import doc_logger
 from .protocols import (
@@ -57,8 +58,6 @@ from .utils import (
 ObjDict = dict[Any, dict[str, T]]
 ExternalAssetDoc: TypeAlias = Datum | Resource | StreamDatum | StreamResource
 
-# The kinds of data a collect object can report, used to choose which collect verb
-# ``RunBundler.collect`` calls, and to reject a device reporting both in one run
 STREAM_ASSETS = "stream assets"
 EVENTS_OR_PAGES = "Events or EventPages"
 
@@ -173,10 +172,9 @@ class RunBundler:
         self._monitor_params: dict[Subscribable, tuple[Callback, dict]] = dict()  # noqa: C408  # cache of {obj: (cb, kwargs)}
         # a cache of stream_resource uid to the data_keys that stream_resource collects for
         self._stream_resource_data_keys: dict[str, Iterable[str]] = dict()  # noqa: C408
-        # what each collect object has reported so far in this run, either STREAM_ASSETS
-        # or EVENTS_OR_PAGES, so that collect() can choose the collect verb from what the
-        # device produced rather than from the protocols it statically satisfies
-        self._reported_data_kinds: dict[HasName, str] = dict()  # noqa: C408
+        # which of STREAM_ASSETS or EVENTS_OR_PAGES each collect object that supports
+        # both has produced so far in this run
+        self._produced_data_kinds: dict[HasName, str] = dict()  # noqa: C408
         self.run_is_open = False
         self._uncollected: set[HasName] = set()  # objects after kickoff(), before collect()
         # we expect the RE to take care of the composition
@@ -970,8 +968,8 @@ class RunBundler:
         local_descriptors,
         return_payload: bool,
         message_stream_name: str | None,
-    ) -> tuple[list, int]:
-        """Emit an EventPage per set of data keys, returning the payload and how many."""
+        partial_events: AsyncIterator[PartialEvent] | None = None,
+    ):
         payload = []
         pages: dict[frozenset[str], list[Event]] = defaultdict(list)
 
@@ -980,7 +978,10 @@ class RunBundler:
             data_keys = self._descriptors[message_stream_name].descriptor_doc["data_keys"]
             objs_read = frozenset(data_keys.keys())
 
-        async for partial_event in iterate_maybe_async(collect_obj.collect()):
+        if partial_events is None:
+            partial_events = iterate_maybe_async(collect_obj.collect())
+
+        async for partial_event in partial_events:
             if return_payload:
                 payload.append(partial_event)
 
@@ -1012,7 +1013,7 @@ class RunBundler:
                 self._run_start_uid,
                 extra={"doc_name": "event_page", "run_uid": self._run_start_uid},
             )
-        return payload, len(pages)
+        return payload
 
     async def _collect_event_pages(
         self,
@@ -1020,16 +1021,18 @@ class RunBundler:
         local_descriptors,
         return_payload: bool,
         message_stream_name: str | None,
-    ) -> tuple[list, int]:
-        """Emit the EventPages the object produces, returning the payload and how many."""
+        partial_pages: AsyncIterator[PartialEventPage] | None = None,
+    ):
         payload = []
-        emitted = 0
 
         if message_stream_name:
             compose_event_page = self._descriptors[message_stream_name].compose_event_page
             data_keys = self._descriptors[message_stream_name].descriptor_doc["data_keys"]
 
-        async for ev_page in iterate_maybe_async(collect_obj.collect_pages()):
+        if partial_pages is None:
+            partial_pages = iterate_maybe_async(collect_obj.collect_pages())
+
+        async for ev_page in partial_pages:
             if return_payload:
                 payload.append(ev_page)
 
@@ -1054,46 +1057,24 @@ class RunBundler:
             )
 
             await self.emit(DocumentNames.event_page, ev_page)
-            emitted += 1
-        return payload, emitted
+        return payload
 
-    def _report_data_kind(self, collect_obj: HasName, kind: str):
-        """Record what kind of data a collect object produced in this run.
-
-        Only objects that obey ``WritesStreamAssets`` are recorded, since they are the
-        only ones that can report data two ways: their asset documents advance the
-        stream's sequence counter by the index difference they carry, while Events and
-        EventPages advance it as they are composed, so a device doing both in one run
-        would count every frame twice. Devices that obey the older
-        ``WritesExternalAssets`` protocol have no index of their own, and are expected
-        to report Datums alongside the Events that reference them.
-        """
-        if not isinstance(collect_obj, WritesStreamAssets):
-            return
-        reported = self._reported_data_kinds.setdefault(collect_obj, kind)
-        if reported != kind:
+    def _check_one_kind_per_run(self, collect_obj: HasName, has_assets: bool, has_partials: bool):
+        """Raise if a collect object produced both kinds of data, now or across collects."""
+        if has_assets and has_partials:
             raise RuntimeError(
-                f"Collect object {collect_obj.name!r} reported {reported} earlier in this run, "
-                f"but has now reported {kind}. A device must report its data the same way for "
-                "the whole of a run, so that the sequence numbers of the stream are counted "
-                "once: either emit stream assets from `collect_asset_docs()`, or Events or "
-                "EventPages from `collect()` or `collect_pages()`, but do not change which "
-                "part way through a run."
+                f"Collect object {collect_obj.name!r} produced both {STREAM_ASSETS} and {EVENTS_OR_PAGES} "
+                "in one collect. A device that supports both must produce only one of them."
             )
-
-    def _collects_events_or_pages(self, collect_obj: HasName) -> bool:
-        """Whether ``collect()`` should ask this object for Events or EventPages.
-
-        A device may obey both ``WritesStreamAssets`` and ``EventPageCollectable``,
-        deciding only when it is prepared which of them it will use for a given scan, so
-        the collect verb is chosen from what the device has reported in this run rather
-        than from the protocols it statically obeys. A device that has reported stream
-        assets keeps the sequence counter advanced from those assets, and a device that
-        can only write stream assets is never asked for Events or EventPages.
-        """
-        if not isinstance(collect_obj, (EventCollectable, EventPageCollectable)):
-            return False
-        return self._reported_data_kinds.get(collect_obj) != STREAM_ASSETS
+        if has_assets or has_partials:
+            kind = STREAM_ASSETS if has_assets else EVENTS_OR_PAGES
+            produced = self._produced_data_kinds.setdefault(collect_obj, kind)
+            if produced != kind:
+                raise RuntimeError(
+                    f"Collect object {collect_obj.name!r} produced {produced} earlier in this run "
+                    f"but has now produced {kind}. A device that supports both must produce only "
+                    "one of them in a run."
+                )
 
     async def collect(self, msg: Msg):
         """
@@ -1136,15 +1117,6 @@ class RunBundler:
         indices: list[Callable[[], SyncOrAsync[int]]] = []
         if len(collect_objects) > 1:
             indices = [check_supports(obj, WritesStreamAssets).get_index for obj in collect_objects]
-            # collect() can only compose Events or EventPages for a single object, so an
-            # object that has reported them in this run would have its data dropped here
-            for obj in collect_objects:
-                if self._reported_data_kinds.get(obj) == EVENTS_OR_PAGES:
-                    raise RuntimeError(
-                        f"Collect object {obj.name!r} reported {EVENTS_OR_PAGES} earlier in this "
-                        "run, so it cannot be collected alongside other objects. Collect it on "
-                        "its own, or make it report stream assets for the whole run."
-                    )
 
         # Warn for page collectable support
         for obj in collect_objects:
@@ -1196,22 +1168,30 @@ class RunBundler:
             # There is only one collect object, so don't pass an index down
             min_index = None
 
-        collected_asset_docs: list[Asset | StreamAsset] = []
-        for obj in collect_objects:
-            obj_asset_docs = [
-                x
-                async for x in maybe_collect_asset_docs(
-                    msg,
-                    obj,
-                    index=min_index,
+        collected_asset_docs = [
+            x
+            for obj in collect_objects
+            async for x in maybe_collect_asset_docs(
+                msg,
+                obj,
+                index=min_index,
+            )
+        ]
+
+        # A single object that supports both stream assets and Events or EventPages is
+        # asked both ways, and what comes back decides. Both kinds advance the same
+        # sequence counter, so nothing is emitted until we know it produced only one.
+        asked_partials: list | None = None
+        if len(collect_objects) == 1 and isinstance(collect_objects[0], WritesStreamAssets):
+            collect_obj = collect_objects[0]
+            if isinstance(collect_obj, EventPageCollectable):
+                asked_partials = [x async for x in iterate_maybe_async(collect_obj.collect_pages())]
+            elif isinstance(collect_obj, EventCollectable):
+                asked_partials = [x async for x in iterate_maybe_async(collect_obj.collect())]
+            if asked_partials is not None:
+                self._check_one_kind_per_run(
+                    cast(HasName, collect_obj), bool(collected_asset_docs), bool(asked_partials)
                 )
-            ]
-            if any(
-                name in (DocumentNames.stream_resource.value, DocumentNames.stream_datum.value)
-                for name, _ in obj_asset_docs
-            ):
-                self._report_data_kind(obj, STREAM_ASSETS)
-            collected_asset_docs.extend(obj_asset_docs)
 
         indices_difference = await self._pack_external_assets(
             collected_asset_docs, message_stream_name=stream_name
@@ -1219,7 +1199,10 @@ class RunBundler:
 
         # Make event pages for an object which is EventCollectable or EventPageCollectable
         # objects that are EventCollectable will now group the Events and Emit an Event Page
-        if len(collect_objects) == 1 and self._collects_events_or_pages(collect_objects[0]):
+        if len(collect_objects) == 1 and (
+            not isinstance(collect_objects[0], WritesStreamAssets)
+            or (asked_partials is not None and not collected_asset_docs)
+        ):
             local_descriptors: dict[frozenset[str], ComposeDescriptorBundle] = {}
             collect_obj = collect_objects[0]
 
@@ -1237,31 +1220,37 @@ class RunBundler:
             local_descriptors = self._local_descriptors[collect_obj]
 
             if isinstance(collect_obj, EventPageCollectable):
-                payload, emitted = await self._collect_event_pages(
-                    collect_obj, local_descriptors, return_payload, stream_name
+                payload = await self._collect_event_pages(
+                    collect_obj,
+                    local_descriptors,
+                    return_payload,
+                    stream_name,
+                    iterate_maybe_async(iter(asked_partials)) if asked_partials is not None else None,
                 )
                 # TODO: check that event pages have same length as indices_difference
-            else:
-                # `_collects_events_or_pages` has checked it is one or the other
-                payload, emitted = await self._collect_events(
-                    cast(EventCollectable, collect_obj), local_descriptors, return_payload, stream_name
+            elif isinstance(collect_obj, EventCollectable):
+                payload = await self._collect_events(
+                    collect_obj,
+                    local_descriptors,
+                    return_payload,
+                    stream_name,
+                    iterate_maybe_async(iter(asked_partials)) if asked_partials is not None else None,
                 )
                 # TODO: check that events have same length as indices_difference
-
-            # Only a device that produced something has reported this way, so a device
-            # with nothing to flush is still free to report stream assets later in the run
-            if emitted:
-                self._report_data_kind(collect_obj, EVENTS_OR_PAGES)
+            else:
+                return_payload = False
+                if not stream_name:
+                    raise RuntimeError(
+                        "A `collect` message on a device that isn't EventCollectable or EventPageCollectable "
+                        "requires a `name=stream_name` argument"
+                    )
+                # Since there are no events or event_pages incrementing the sequence counter, we do it ourselves.
+                self._sequence_counters[stream_name] += indices_difference
 
             if return_payload:
                 return payload
 
         else:
-            if not stream_name:
-                raise RuntimeError(
-                    "A `collect` message on a device that isn't EventCollectable or EventPageCollectable "
-                    "requires a `name=stream_name` argument"
-                )
             # Since there are no events or event_pages incrementing the sequence counter, we do it ourselves.
             self._sequence_counters[stream_name] += indices_difference
 
